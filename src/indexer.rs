@@ -31,8 +31,16 @@ pub struct Chunk {
 
 impl Indexer {
     pub fn new() -> Result<Self> {
+        let base_dirs = directories::BaseDirs::new().context("Cannot find base directories")?;
+        let cache_dir = base_dirs.home_dir().join(".rms-memory").join("cache").join("fastembed");
+        std::fs::create_dir_all(&cache_dir).ok();
+
         eprintln!("Initializing embedding model. Downloading ONNX model (~120MB) if not cached, this may take a minute...");
-        let model = TextEmbedding::try_new(InitOptions::new(EmbeddingModel::MultilingualE5Small).with_show_download_progress(true))?;
+        let model = TextEmbedding::try_new(
+            InitOptions::new(EmbeddingModel::MultilingualE5Small)
+                .with_cache_dir(cache_dir)
+                .with_show_download_progress(true)
+        )?;
         Ok(Self { model })
     }
 
