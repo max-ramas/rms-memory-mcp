@@ -1,88 +1,110 @@
 use std::path::{Path, PathBuf};
 use std::fs::{self, File};
 use anyhow::{Result, Context};
-use walkdir::WalkDir;
 use dialoguer::{MultiSelect, Confirm, Select, theme::ColorfulTheme};
 use similar::{ChangeTag, TextDiff};
 
-#[derive(Debug, Clone, PartialEq)]
-enum IdeType {
-    Cursor,
-    Zed,
-    ClaudeCode,
-    Unknown(String),
+#[derive(Debug, Clone)]
+struct IdeConfig {
+    name: &'static str,
+    paths: Vec<&'static str>, // relative to home dir
+    key: &'static str,
 }
 
-impl IdeType {
-    fn from_path(path: &Path) -> Self {
-        let p = path.to_string_lossy().to_lowercase();
-        if p.contains("cursor") {
-            IdeType::Cursor
-        } else if p.contains("zed") {
-            IdeType::Zed
-        } else if p.contains("claude") {
-            IdeType::ClaudeCode
-        } else {
-            IdeType::Unknown("Other".to_string())
-        }
+impl IdeConfig {
+    fn new(name: &'static str, paths: Vec<&'static str>, key: &'static str) -> Self {
+        Self { name, paths, key }
     }
+}
 
-    fn name(&self) -> &str {
-        match self {
-            IdeType::Cursor => "Cursor",
-            IdeType::Zed => "Zed",
-            IdeType::ClaudeCode => "Claude Desktop/Code",
-            IdeType::Unknown(name) => name,
-        }
-    }
+fn get_ide_registry() -> Vec<IdeConfig> {
+    vec![
+        IdeConfig::new("Claude Desktop", vec![
+            "Library/Application Support/Claude/claude_desktop_config.json",
+            ".config/Claude/claude_desktop_config.json", // linux
+        ], "mcpServers"),
+        IdeConfig::new("Cursor", vec![
+            "Library/Application Support/Cursor/User/settings.json",
+            ".config/Cursor/User/settings.json",
+        ], "mcpServers"),
+        IdeConfig::new("Zed", vec![
+            "Library/Application Support/Zed/settings.json",
+            ".config/zed/settings.json",
+        ], "context_servers"),
+        IdeConfig::new("VSCode (Roo Cline)", vec![
+            "Library/Application Support/Code/User/globalStorage/rooveterinaryinc.roo-cline/settings/mcp_settings.json",
+            ".config/Code/User/globalStorage/rooveterinaryinc.roo-cline/settings/mcp_settings.json",
+        ], "mcpServers"),
+        IdeConfig::new("Antigravity IDE (Roo Cline)", vec![
+            "Library/Application Support/Antigravity IDE/User/globalStorage/rooveterinaryinc.roo-cline/settings/mcp_settings.json",
+            ".config/Antigravity IDE/User/globalStorage/rooveterinaryinc.roo-cline/settings/mcp_settings.json",
+        ], "mcpServers"),
+        IdeConfig::new("Gemini CLI", vec![
+            ".gemini/config/mcp_config.json",
+            ".gemini/antigravity/mcp_config.json",
+            ".gemini/settings.json",
+        ], "mcpServers"),
+        IdeConfig::new("QwenCode", vec![
+            "Library/Application Support/Qwen/settings.json",
+            ".config/Qwen/settings.json",
+        ], "mcpServers"),
+        IdeConfig::new("OpenCode", vec![
+            "Library/Application Support/opencode/opencode.json",
+            "Library/Application Support/ai.opencode.desktop/settings.json",
+            ".config/opencode/opencode.json",
+        ], "mcp"),
+        IdeConfig::new("ZCode", vec![
+            "Library/Application Support/ZCode/settings.json",
+            ".config/ZCode/settings.json",
+        ], "mcpServers"),
+        IdeConfig::new("Nova", vec![
+            "Library/Application Support/Nova/settings.json",
+            "Library/Application Support/Nova/Workspaces/Metadata.json",
+        ], "mcpServers"),
+    ]
 }
 
 pub async fn run_installer(auto_yes: bool, dry_run: bool) -> Result<()> {
-    println!("[🔍] Scanning configuration directories...");
+    println!("[🔍] Scanning known configuration directories...");
 
     let base_dirs = directories::BaseDirs::new().context("Cannot find base directories")?;
-    let mut search_dirs = Vec::new();
-    
-    search_dirs.push(base_dirs.config_dir().to_path_buf());
-    search_dirs.push(base_dirs.data_dir().to_path_buf());
-    search_dirs.push(base_dirs.data_local_dir().to_path_buf());
-
     let home = base_dirs.home_dir();
-    let claude_dir = home.join(".claude");
-    if claude_dir.exists() { search_dirs.push(claude_dir); }
-    let cursor_dir = home.join(".cursor");
-    if cursor_dir.exists() { search_dirs.push(cursor_dir); }
     
-    let mut candidates = Vec::new();
-    
-    for base_dir in search_dirs {
-        if !base_dir.exists() { continue; }
-        for entry in WalkDir::new(&base_dir).max_depth(4).into_iter().filter_map(|e| e.ok()) {
-            let path = entry.path();
-            if !path.is_file() { continue; }
-            let file_name = path.file_name().unwrap_or_default().to_string_lossy().to_string();
-            if file_name == "mcp.json" || file_name == "settings.json" || file_name.ends_with("mcp.json") || file_name == "config.json" || file_name == "claude_desktop_config.json" {
-                candidates.push(path.to_path_buf());
-            }
-        }
-    }
-    
+    let registry = get_ide_registry();
     let mut valid_targets = Vec::new();
     let mut found_ides = std::collections::HashSet::new();
 
-    for candidate in candidates {
-        let content = match fs::read_to_string(&candidate) {
-            Ok(c) => c,
-            Err(_) => continue,
-        };
-        let json: serde_json::Value = match serde_json::from_str(&content) {
-            Ok(j) => j,
-            Err(_) => continue, 
-        };
-        if json.is_object() {
-            let ide_type = IdeType::from_path(&candidate);
-            found_ides.insert(ide_type.name().to_string());
-            valid_targets.push((candidate, json, ide_type, content));
+    for ide in &registry {
+        for rel_path in &ide.paths {
+            let candidate = home.join(rel_path);
+            if candidate.exists() && candidate.is_file() {
+                let content = match fs::read_to_string(&candidate) {
+                    Ok(c) => c,
+                    Err(_) => continue,
+                };
+                let json: serde_json::Value = match serde_json::from_str(&content) {
+                    Ok(j) => j,
+                    Err(_) => {
+                        // Create empty json object string if file is empty
+                        if content.trim().is_empty() {
+                            serde_json::json!({})
+                        } else {
+                            continue;
+                        }
+                    }
+                };
+                if json.is_object() {
+                    found_ides.insert(ide.name.to_string());
+                    valid_targets.push((candidate.clone(), json, ide.clone(), content));
+                    break; // Only pick the first valid path per IDE
+                }
+            } else if candidate.parent().map(|p| p.exists()).unwrap_or(false) {
+                // Base directory exists, but config file doesn't. Propose creating it.
+                // We'll treat this as a valid target with an empty JSON object.
+                found_ides.insert(ide.name.to_string());
+                valid_targets.push((candidate.clone(), serde_json::json!({}), ide.clone(), "{}".to_string()));
+                break; // Only pick the first path
+            }
         }
     }
 
@@ -91,8 +113,9 @@ pub async fn run_installer(auto_yes: bool, dry_run: bool) -> Result<()> {
         return Ok(());
     }
 
-    let ides_list = found_ides.into_iter().collect::<Vec<_>>().join(", ");
-    println!("[🔍] Found: {}", ides_list);
+    let mut ides_list: Vec<_> = found_ides.into_iter().collect();
+    ides_list.sort();
+    println!("[🔍] Found: {}", ides_list.join(", "));
 
     let mut selected_targets = Vec::new();
 
@@ -111,9 +134,9 @@ pub async fn run_installer(auto_yes: bool, dry_run: bool) -> Result<()> {
                 selected_targets = valid_targets;
             }
             1 => {
-                let items: Vec<String> = valid_targets.iter().map(|(p, _, i, _)| format!("{} ({})", i.name(), p.file_name().unwrap_or_default().to_string_lossy())).collect();
+                let items: Vec<String> = valid_targets.iter().map(|(p, _, i, _)| format!("{} ({})", i.name, p.display())).collect();
                 let chosen = MultiSelect::with_theme(&ColorfulTheme::default())
-                    .with_prompt("Select configuration files to patch")
+                    .with_prompt("Select configuration files to patch (Space to toggle, Enter to confirm)")
                     .items(&items)
                     .interact()?;
                 
@@ -135,67 +158,32 @@ pub async fn run_installer(auto_yes: bool, dry_run: bool) -> Result<()> {
     let my_exe = std::env::current_exe()?;
     let my_exe_str = my_exe.to_string_lossy().to_string();
 
-    for (candidate, mut json, _ide_type, original_content) in selected_targets {
-        let is_mcp_file = candidate.file_name().map(|n| n.to_string_lossy().contains("mcp")).unwrap_or(false);
-        let path_str = candidate.to_string_lossy().to_lowercase();
-        let mut patched = false;
+    for (candidate, mut json, ide, original_content) in selected_targets {
+        let config_payload = if ide.name == "OpenCode" {
+            serde_json::json!({
+                "enabled": true,
+                "type": "local",
+                "command": [my_exe_str.clone(), "serve"]
+            })
+        } else {
+            serde_json::json!({
+                "command": my_exe_str.clone(),
+                "args": ["serve"]
+            })
+        };
+
+        let patched_content = inject_jsonc(&original_content, ide.key, "rms-memory", &config_payload);
         
-        if let Some(obj) = json.as_object_mut() {
-            if obj.contains_key("mcpServers") {
-                if let Some(servers) = obj.get_mut("mcpServers").and_then(|v| v.as_object_mut()) {
-                    servers.insert("rms-memory".to_string(), serde_json::json!({
-                        "command": my_exe_str,
-                        "args": ["serve"]
-                    }));
-                    patched = true;
-                }
-            } else if obj.contains_key("context_servers") {
-                if let Some(servers) = obj.get_mut("context_servers").and_then(|v| v.as_object_mut()) {
-                    servers.insert("rms-memory".to_string(), serde_json::json!({
-                        "command": my_exe_str,
-                        "args": ["serve"]
-                    }));
-                    patched = true;
-                }
-            } else {
-                if path_str.contains("zed") {
-                    obj.insert("context_servers".to_string(), serde_json::json!({
-                        "rms-memory": {
-                            "command": my_exe_str,
-                            "args": ["serve"]
-                        }
-                    }));
-                    patched = true;
-                } else if is_mcp_file && !path_str.contains("settings") {
-                    obj.insert("mcpServers".to_string(), serde_json::json!({
-                        "rms-memory": {
-                            "command": my_exe_str,
-                            "args": ["serve"]
-                        }
-                    }));
-                    patched = true;
-                } else {
-                    obj.insert("mcpServers".to_string(), serde_json::json!({
-                        "rms-memory": {
-                            "command": my_exe_str,
-                            "args": ["serve"]
-                        }
-                    }));
-                    patched = true;
-                }
-            }
-        }
-        
-        if patched {
-            let out = serde_json::to_string_pretty(&json)?;
+        if let Some(out) = patched_content {
             if out == original_content {
-                println!("[✅] Already configured in {}", candidate.display());
+                println!("[✅] Already configured in {} ({})", ide.name, candidate.display());
                 continue;
             }
 
             if !auto_yes && !dry_run {
+                let display_name = format!("{} ({})", ide.name, candidate.file_name().unwrap_or_default().to_string_lossy());
                 let show_diff = Confirm::with_theme(&ColorfulTheme::default())
-                    .with_prompt(format!("[!] Found {}. Show diff before writing?", candidate.file_name().unwrap_or_default().to_string_lossy()))
+                    .with_prompt(format!("[!] Found {}. Show diff before writing?", display_name))
                     .default(false)
                     .interact()?;
                 
@@ -227,18 +215,181 @@ pub async fn run_installer(auto_yes: bool, dry_run: bool) -> Result<()> {
             if dry_run {
                 println!("\n[DRY-RUN] Planning to patch: {}", candidate.display());
             } else {
-                let backup_path = format!("{}.bak", candidate.to_string_lossy());
-                let _ = fs::copy(&candidate, &backup_path);
+                if candidate.exists() {
+                    let backup_path = format!("{}.bak", candidate.to_string_lossy());
+                    let _ = fs::copy(&candidate, &backup_path);
+                } else if let Some(p) = candidate.parent() {
+                    let _ = fs::create_dir_all(p);
+                }
                 
                 if let Err(e) = fs::write(&candidate, out) {
                     eprintln!("[❌] Failed to write to {}: {}", candidate.display(), e);
                 } else {
-                    println!("[✅] Successfully added to {}", candidate.display());
+                    println!("[✅] Successfully added to {} ({})", ide.name, candidate.display());
                 }
             }
+        } else {
+            eprintln!("[⚠️] Failed to safely patch {}. It might be malformed or use an unsupported format.", candidate.display());
         }
     }
     
     println!("[✅] Installation sweep completed.");
     Ok(())
+}
+
+
+fn strip_json_comments(json: &str) -> String {
+    let mut out = String::with_capacity(json.len());
+    let mut in_string = false;
+    let mut in_comment = false;
+    let mut in_multiline_comment = false;
+    let mut chars = json.chars().peekable();
+    
+    while let Some(c) = chars.next() {
+        if in_string {
+            out.push(c);
+            if c == '\\' {
+                if let Some(next_c) = chars.next() {
+                    out.push(next_c);
+                }
+            } else if c == '"' {
+                in_string = false;
+            }
+            continue;
+        }
+        if in_comment {
+            if c == '\n' {
+                in_comment = false;
+                out.push(c);
+            } else {
+                out.push(' ');
+            }
+            continue;
+        }
+        if in_multiline_comment {
+            if c == '*' {
+                if let Some(&'/') = chars.peek() {
+                    chars.next();
+                    in_multiline_comment = false;
+                    out.push_str("  ");
+                } else {
+                    out.push(' ');
+                }
+            } else if c == '\n' {
+                out.push('\n');
+            } else {
+                out.push(' ');
+            }
+            continue;
+        }
+        if c == '/' {
+            if let Some(&'/') = chars.peek() {
+                chars.next();
+                in_comment = true;
+                out.push_str("  ");
+                continue;
+            } else if let Some(&'*') = chars.peek() {
+                chars.next();
+                in_multiline_comment = true;
+                out.push_str("  ");
+                continue;
+            }
+        }
+        if c == '"' {
+            in_string = true;
+        }
+        out.push(c);
+    }
+    out
+}
+
+fn inject_jsonc(original: &str, key: &str, tool_name: &str, tool_config: &serde_json::Value) -> Option<String> {
+    if original.trim().is_empty() || original.trim() == "{}" {
+        let tool_config_str = serde_json::to_string_pretty(tool_config).unwrap().replace("\n", "\n      ");
+        let injection = format!("\"{}\": {}", tool_name, tool_config_str);
+        return Some(format!("{{\n  \"{}\": {{\n    {}\n  }}\n}}", key, injection.replace("      ", "    ")));
+    }
+
+    let stripped = strip_json_comments(original);
+    let mut json = serde_json::from_str::<serde_json::Value>(&stripped).ok()?;
+    
+    let obj = json.as_object_mut()?;
+    if let Some(mcp) = obj.get(key) {
+        if let Some(mcp_obj) = mcp.as_object() {
+            if mcp_obj.contains_key(tool_name) {
+                // Already exists — replace the existing block in-place
+                // Find "rms-memory": { ... } in the original text and replace it
+                let entry_pattern = format!(
+                    r#""{}"\s*:\s*\{{[^{{}}]*\}}"#,
+                    regex::escape(tool_name)
+                );
+                if let Ok(re) = regex::Regex::new(&entry_pattern) {
+                    if let Some(mat) = re.find(original) {
+                        // Detect indentation from the matched block
+                        let before_match = &original[..mat.start()];
+                        let indent = before_match
+                            .rfind('\n')
+                            .map(|nl| {
+                                let line_start = nl + 1;
+                                let spaces: String = before_match[line_start..]
+                                    .chars()
+                                    .take_while(|c| c.is_whitespace())
+                                    .collect();
+                                spaces
+                            })
+                            .unwrap_or_else(|| "    ".to_string());
+                        let inner_indent = format!("{}  ", indent);
+                        
+                        let new_config_str = serde_json::to_string_pretty(tool_config).unwrap();
+                        let new_config_indented = new_config_str.replace("\n", &format!("\n{}", inner_indent));
+                        let replacement = format!("\"{}\": {}", tool_name, new_config_indented);
+                        
+                        let mut patched = original.to_string();
+                        patched.replace_range(mat.range(), &replacement);
+                        return Some(patched);
+                    }
+                }
+                // Regex didn't match (nested braces?) — skip to avoid corruption
+                return Some(original.to_string());
+            }
+        }
+    }
+    
+    let tool_config_str = serde_json::to_string_pretty(tool_config).unwrap();
+    // indent it
+    let tool_config_str = tool_config_str.replace("\n", "\n      ");
+    let injection = format!("\"{}\": {}", tool_name, tool_config_str);
+    
+    if obj.contains_key(key) {
+        // Simple regex to find "key": {
+        let pattern = format!(r#"("{}"\s*:\s*\{{)"#, key);
+        let re = regex::Regex::new(&pattern).unwrap();
+        if let Some(mat) = re.find(original) {
+            let mut patched = original.to_string();
+            // check if the dictionary is empty
+            let after_brace = &original[mat.end()..];
+            let just_whitespace_then_close = after_brace.trim_start().starts_with("}");
+            if just_whitespace_then_close {
+                patched.insert_str(mat.end(), &format!("\n      {}\n    ", injection));
+            } else {
+                patched.insert_str(mat.end(), &format!("\n      {},", injection));
+            }
+            return Some(patched);
+        }
+    } else {
+        // Insert right before the last closing brace
+        if let Some(last_brace) = original.rfind('}') {
+            let mut patched = original[..last_brace].to_string();
+            let trimmed = patched.trim_end();
+            patched.truncate(trimmed.len());
+            let needs_comma = !patched.ends_with(',') && !patched.ends_with('{');
+            if needs_comma {
+                patched.push(',');
+            }
+            patched.push_str(&format!("\n  \"{}\": {{\n    {}\n  }}\n}}", key, injection.replace("      ", "    ")));
+            return Some(patched);
+        }
+    }
+    
+    None
 }

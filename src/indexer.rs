@@ -32,15 +32,31 @@ pub struct Chunk {
 impl Indexer {
     pub fn new() -> Result<Self> {
         let base_dirs = directories::BaseDirs::new().context("Cannot find base directories")?;
-        let cache_dir = base_dirs.home_dir().join(".rms-memory").join("cache").join("fastembed");
-        std::fs::create_dir_all(&cache_dir).ok();
+        let mut cache_dir = base_dirs.home_dir().join(".rms-memory").join("cache").join("fastembed");
+        
+        // If we cannot create the primary cache dir (e.g. HOME is read-only or sandboxed), fallback to temp dir
+        if let Err(e) = std::fs::create_dir_all(&cache_dir) {
+            eprintln!("Warning: Failed to create primary cache dir {:?}: {}. Falling back to temp directory.", cache_dir, e);
+            cache_dir = std::env::temp_dir().join("rms-memory").join("cache").join("fastembed");
+            std::fs::create_dir_all(&cache_dir).context("Failed to create fallback cache directory")?;
+        }
 
-        eprintln!("Initializing embedding model. Downloading ONNX model (~120MB) if not cached, this may take a minute...");
-        let model = TextEmbedding::try_new(
+        // Workaround: Claude Desktop might set cwd to `/` which is read-only.
+        let original_dir = std::env::current_dir().ok();
+        std::env::set_current_dir(&cache_dir).ok();
+
+        eprintln!("Initializing embedding model (Cache: {:?}). Downloading ONNX model (~120MB) if not cached, this may take a minute...", cache_dir);
+        let result = TextEmbedding::try_new(
             InitOptions::new(EmbeddingModel::MultilingualE5Small)
-                .with_cache_dir(cache_dir)
+                .with_cache_dir(cache_dir.clone())
                 .with_show_download_progress(true)
-        )?;
+        );
+
+        if let Some(orig) = original_dir {
+            std::env::set_current_dir(orig).ok();
+        }
+
+        let model = result.context("Failed to initialize fastembed model")?;
         Ok(Self { model })
     }
 
