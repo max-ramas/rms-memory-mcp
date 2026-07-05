@@ -216,8 +216,10 @@ impl ImportService {
             "rules"
         } else if rel_path.contains("plan") || rel_path.contains("roadmap") {
             "architecture"
+        } else if rel_path.contains("changelog") || rel_path.contains("history") || rel_path.contains("walkthrough") || rel_path.contains("task.md") || rel_path.contains("implementation_plan") || rel_path.contains("architecture_analysis") {
+            "artifacts"
         } else {
-            "guides"
+            "docs"
         };
         
         self.vault_path.join(category)

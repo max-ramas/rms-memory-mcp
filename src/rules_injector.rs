@@ -32,19 +32,35 @@ pub fn inject_rules(project_root: &Path, options: InjectOptions) -> Result<()> {
         (".zed/assistant.md", ZED_RULES),
     ];
 
-    let mut injected_files = Vec::new();
+    let mut existing_count = 0;
+    let mut files_to_inject = Vec::new();
 
     for (file_path_str, template) in target_files {
         let file_path = project_root.join(file_path_str);
+        if file_path.exists() {
+            existing_count += 1;
+            files_to_inject.push((file_path_str, template, true));
+        }
+    }
+
+    // If no rule files exist, just create AGENT.md as a fallback
+    if existing_count == 0 {
+        files_to_inject.push(("AGENT.md", GENERAL_RULES, false));
+    }
+
+    let mut injected_files = Vec::new();
+
+    for (file_path_str, template, exists) in files_to_inject {
+        let file_path = project_root.join(file_path_str);
         
-        // Ensure parent directories exist (e.g. for .github/ or .zed/)
+        // Ensure parent directories exist
         if let Some(parent) = file_path.parent() {
             if !parent.exists() {
                 let _ = std::fs::create_dir_all(parent);
             }
         }
 
-        if file_path.exists() {
+        if exists {
             if append_or_replace_block(&file_path, template, options)? {
                 injected_files.push(file_path_str.to_string());
             }
@@ -183,8 +199,6 @@ fn append_or_replace_block(file_path: &Path, template: &str, options: InjectOpti
         }
     }
 
-    let bak_path = file_path.with_extension(format!("{}.bak", file_path.extension().unwrap_or_default().to_string_lossy()));
-    let _ = fs::copy(file_path, &bak_path);
     fs::write(file_path, new_content)?;
     Ok(true)
 }
