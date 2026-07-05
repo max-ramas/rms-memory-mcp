@@ -98,6 +98,7 @@ impl<E: crate::indexer::Embedder + 'static> McpServer<E> {
     async fn handle_request(&mut self, method: &str, params: Option<Value>) -> Result<Value> {
         match method {
             "initialize" => {
+                let mut path = None;
                 if let Some(params_obj) = params.as_ref().and_then(|p| p.as_object()) {
                     if let Some(root_uri) = params_obj.get("rootUri").and_then(|v| v.as_str()) {
                         let path_str = if root_uri.starts_with("file://") {
@@ -105,24 +106,30 @@ impl<E: crate::indexer::Embedder + 'static> McpServer<E> {
                         } else {
                             root_uri
                         };
-                        
-                        let path = std::path::PathBuf::from(path_str);
-                        if let Ok(workspace) = crate::workspace::Workspace::discover(&path, None) {
-                            self.workspace_root = Some(workspace.root.clone());
-                            
-                            if let Ok(store) = workspace.get_store().await {
-                                let sync_workspace = workspace.clone();
-                                let sync_store = store.clone();
-                                if let Ok(sync_indexer) = crate::indexer::Indexer::new() {
-                                    tokio::spawn(async move {
-                                        let _ = crate::indexer::sync_vault(&sync_workspace, &sync_store, sync_indexer).await;
-                                    });
-                                }
-                                self.store = Some(store);
-                            }
+                        if path_str != "/" && !path_str.is_empty() {
+                            path = Some(std::path::PathBuf::from(path_str));
                         }
                     }
                 }
+                
+                // Fallback to current working directory if rootUri is missing or "/"
+                let path = path.unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("/")));
+                
+                if let Ok(workspace) = crate::workspace::Workspace::discover(&path, None) {
+                    self.workspace_root = Some(workspace.root.clone());
+                    
+                    if let Ok(store) = workspace.get_store().await {
+                        let sync_workspace = workspace.clone();
+                        let sync_store = store.clone();
+                        if let Ok(sync_indexer) = crate::indexer::Indexer::new() {
+                            tokio::spawn(async move {
+                                let _ = crate::indexer::sync_vault(&sync_workspace, &sync_store, sync_indexer).await;
+                            });
+                        }
+                        self.store = Some(store);
+                    }
+                }
+                
                 Ok(json!({
                     "protocolVersion": "2024-11-05",
                     "serverInfo": {

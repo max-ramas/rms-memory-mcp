@@ -18,48 +18,79 @@ pub struct InjectOptions {
 }
 
 pub fn inject_rules(project_root: &Path, options: InjectOptions) -> Result<()> {
-    let mut injected = false;
+    // List of files to inject rules into
+    let target_files = vec![
+        (".cursorrules", CURSOR_RULES),
+        (".windsurfrules", CURSOR_RULES),
+        (".clinerules", CURSOR_RULES),
+        (".rules", GENERAL_RULES),
+        (".github/copilot-instructions.md", CURSOR_RULES),
+        ("AGENT.md", GENERAL_RULES),
+        ("AGENTS.md", GENERAL_RULES),
+        ("CLAUDE.md", CLAUDE_RULES),
+        ("GEMINI.md", GENERAL_RULES),
+        (".zed/assistant.md", ZED_RULES),
+    ];
 
-    // 1. Cursor
-    let cursor_path = project_root.join(".cursorrules");
-    if cursor_path.exists() {
-        if append_or_replace_block(&cursor_path, CURSOR_RULES, options)? { injected = true; }
-    }
+    let mut injected_files = Vec::new();
 
-    // 2. Claude Code
-    let claude_dir = project_root.join(".claude");
-    let claude_path = claude_dir.join("CLAUDE.md");
-    if claude_path.exists() {
-        if append_or_replace_block(&claude_path, CLAUDE_RULES, options)? { injected = true; }
-    } else if claude_dir.exists() {
-        if create_and_write(&claude_path, CLAUDE_RULES, options)? { injected = true; }
-    } else {
-        // Also check if CLAUDE.md is in the root
-        let root_claude_path = project_root.join("CLAUDE.md");
-        if root_claude_path.exists() {
-            if append_or_replace_block(&root_claude_path, CLAUDE_RULES, options)? { injected = true; }
+    for (file_path_str, template) in target_files {
+        let file_path = project_root.join(file_path_str);
+        
+        // Ensure parent directories exist (e.g. for .github/ or .zed/)
+        if let Some(parent) = file_path.parent() {
+            if !parent.exists() {
+                let _ = std::fs::create_dir_all(parent);
+            }
         }
-    }
 
-    // 3. Zed
-    let zed_dir = project_root.join(".zed");
-    let zed_path = zed_dir.join("assistant.md");
-    if zed_path.exists() {
-        if append_or_replace_block(&zed_path, ZED_RULES, options)? { injected = true; }
-    } else if zed_dir.exists() {
-        if create_and_write(&zed_path, ZED_RULES, options)? { injected = true; }
-    }
-
-    // 4. Fallback if no IDE specific config was found
-    if !injected {
-        let fallback_path = project_root.join("RMS_MEMORY_GUIDE.md");
-        if fallback_path.exists() {
-            append_or_replace_block(&fallback_path, GENERAL_RULES, options)?;
+        if file_path.exists() {
+            if append_or_replace_block(&file_path, template, options)? {
+                injected_files.push(file_path_str.to_string());
+            }
         } else {
-            create_and_write(&fallback_path, GENERAL_RULES, options)?;
+            if create_and_write(&file_path, template, options)? {
+                injected_files.push(file_path_str.to_string());
+            }
         }
     }
 
+    if !injected_files.is_empty() {
+        append_to_gitignore(project_root, &injected_files)?;
+    }
+
+    Ok(())
+}
+
+fn append_to_gitignore(project_root: &Path, files: &[String]) -> Result<()> {
+    let gitignore_path = project_root.join(".gitignore");
+    let mut content = if gitignore_path.exists() {
+        fs::read_to_string(&gitignore_path).unwrap_or_default()
+    } else {
+        String::new()
+    };
+
+    let mut needs_update = false;
+    let mut to_append = String::new();
+
+    for file in files {
+        let line = format!("/{}", file);
+        if !content.lines().any(|l| l.trim() == line || l.trim() == file) {
+            to_append.push_str(&line);
+            to_append.push('\n');
+            needs_update = true;
+        }
+    }
+
+    if needs_update {
+        if !content.is_empty() && !content.ends_with('\n') {
+            content.push('\n');
+        }
+        content.push_str("\n# RMS Memory Agent Rules\n");
+        content.push_str(&to_append);
+        fs::write(&gitignore_path, content)?;
+    }
+    
     Ok(())
 }
 

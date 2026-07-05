@@ -239,7 +239,7 @@ impl Cli {
                 crate::install::run_installer(*yes, *dry_run).await?;
             }
             Commands::Log => {
-                let log_file = crate::workspace::project_dirs().data_dir().join("rms.log");
+                let log_file = crate::workspace::base_dir().join("rms.log");
                 if !log_file.exists() {
                     println!("Log file does not exist yet.");
                     return Ok(());
@@ -252,7 +252,7 @@ impl Cli {
             }
             Commands::Gc => {
                 let registry = crate::workspace::Registry::load()?;
-                let dbs_dir = crate::workspace::project_dirs().data_dir().join("dbs");
+                let dbs_dir = crate::workspace::base_dir().join("dbs");
                 if !dbs_dir.exists() {
                     println!("No databases found.");
                     return Ok(());

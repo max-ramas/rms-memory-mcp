@@ -5,7 +5,8 @@ All notable changes to this project will be documented in this file.
 ## [1.0.0] - 2026-07-05
 
 ### Fixed
-- **MCP Initialization Bug:** Changed MCP workspace provisioning to lazily parse the `rootUri` directly from the IDE's JSON-RPC `initialize` handshake instead of eager extraction from `current_dir`. This resolves issues where global context servers running under `/` (like Zed) would create disconnected `UnknownProject` vaults.
+- **MCP Initialization Bug:** Changed MCP workspace provisioning to fallback to the process's current working directory (`cwd`) when the IDE (like Zed) fails to pass a valid `rootUri` in the JSON-RPC `initialize` handshake. Furthermore, strict validation now rejects root paths (`/`) to entirely prevent the generation of orphaned `UnknownProject` vaults.
+- **Config Directory Isolation:** Removed the `directories::ProjectDirs` abstraction which defaulted to messy system paths (e.g., `~/Library/Application Support/`). All configs, databases, and logs are now strictly bound to a cross-platform `~/.rms-memory/` directory to ensure clean disk usage.
 
 ### Added
 - **MCP Stdio Server:** Full implementation of JSON-RPC protocol over standard I/O for `read`, `write`, and `search_memory` tooling.

@@ -5,8 +5,8 @@ RMS Memory is a specialized Model Context Protocol (MCP) server that acts as a l
 ## Core Architecture Highlights
 
 ### 1. Unified Configuration & Knowledge Isolation
-- **Global Registry:** No more polluting code repositories with `.mcp` or `RMS.toml` files. The routing logic uses a central `~/.config/rms-memory/registry.toml`.
-- **Auto-Discovery & Provisioning:** The server reads the `rootUri` dynamically from the MCP `initialize` request sent by the IDE. It then calculates a unique hash and seamlessly routes agents to an isolated external Markdown vault (`~/.rms-memory/vaults/ProjectName`). If it doesn't exist, it is cleanly provisioned with structured directories (`rules/`, `decisions/`, `architecture/`, `artifacts/`). This lazy initialization enables global MCP servers (like Zed's `settings.json`) to accurately target specific workspaces.
+- **Global Registry:** No more polluting code repositories with `.mcp` or `RMS.toml` files. The routing logic uses a central `~/.rms-memory/registry.toml`.
+- **Auto-Discovery & Provisioning:** The server reads the `rootUri` dynamically from the MCP `initialize` request sent by the IDE (falling back to the current working directory if missing). It then calculates a unique hash and seamlessly routes agents to an isolated external Markdown vault (`/user/defined/path/ProjectName`). If it doesn't exist, it is cleanly provisioned with structured directories (`rules/`, `decisions/`, `architecture/`, `artifacts/`). This lazy initialization enables global MCP servers (like Zed's `settings.json`) to accurately target specific workspaces.
 
 ### 2. Hybrid Search Engine (LanceDB)
 - **Local Embedded DB:** Uses the blazingly fast embedded LanceDB (v0.31.0) stored locally at `~/.rms-memory/dbs/`.
@@ -41,7 +41,7 @@ To transition from a "toy server" to an instrumental platform, 5 resilience prot
 5. **Dedicated Telemetry Logging:** MCP stdio pipelines are preserved strictly for JSON-RPC. All diagnostics, sync logs, and internal errors are securely routed to `~/.rms-memory/rms.log` using standard `tracing-appender` streams. Tail it using `rms-memory log`.
 
 ### 7. CI/CD and Cross-Platform Distribution
-- **Zero-Friction `directories` Implementation:** Refactored the core configuration logic away from hardcoded Unix paths (`~/.config`). Leverages the `directories` crate to achieve strict `ProjectDirs` mapping. Configuration effortlessly spans `%APPDATA%\rms-memory` (Windows), `~/Library/Application Support/rms-memory` (macOS), and `~/.config/rms-memory` (Linux) flawlessly.
+- **Strict User-Scoped Isolation:** The core configuration logic was overhauled to enforce a rigid `~/.rms-memory/` standard across all platforms. By utilizing the `directories` crate exclusively to locate the user's home folder, the program correctly targets `C:\Users\username\.rms-memory\` on Windows, `/Users/username/.rms-memory/` on macOS, and `/home/username/.rms-memory/` on Linux without polluting generic OS domains like `AppData/Roaming` or `Library/Application Support/`.
 - **GitHub Actions Matrix:** Engineered a seamless `release.yml` pipeline that triggers on repository version tags.
   - Compiles optimized native binaries for `x86_64-unknown-linux-gnu`, `x86_64-pc-windows-msvc`, `x86_64-apple-darwin`, and `aarch64-apple-darwin`.
   - Packages and uploads them instantly as GitHub Release assets.

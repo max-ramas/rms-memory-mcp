@@ -39,13 +39,16 @@ fn default_exclude() -> Vec<String> {
     vec!["node_modules/**".to_string(), "vendor/**".to_string(), ".git/**".to_string()]
 }
 
-pub fn project_dirs() -> directories::ProjectDirs {
-    directories::ProjectDirs::from("com", "rms-memory", "rms-memory").expect("Failed to determine project directories")
+pub fn base_dir() -> PathBuf {
+    let home = directories::BaseDirs::new()
+        .map(|dirs| dirs.home_dir().to_path_buf())
+        .unwrap_or_else(|| PathBuf::from("/"));
+    home.join(".rms-memory")
 }
 
 impl Registry {
     pub fn config_path() -> PathBuf {
-        project_dirs().config_dir().join("registry.toml")
+        base_dir().join("registry.toml")
     }
 
     pub fn load() -> Result<Self> {
@@ -83,16 +86,44 @@ impl Workspace {
         let start_canon = fs::canonicalize(start_dir).unwrap_or_else(|_| start_dir.to_path_buf());
         let start_str = start_canon.to_string_lossy().to_string();
 
-        // Find existing project
+        if start_str == "/" {
+            return Err(anyhow::anyhow!("Cannot discover or auto-add root directory '/' as a project. The MCP client must provide a valid workspace path."));
+        }
+
+        // Find existing project using longest prefix match
+        let mut best_match: Option<(&String, &ProjectConfig)> = None;
         for (name, project) in &registry.projects {
-            if start_str.starts_with(&project.code_path) {
-                return Ok(Workspace {
-                    root: PathBuf::from(&project.vault_path),
-                    code_path: PathBuf::from(&project.code_path),
-                    include: project.include.clone(),
-                    exclude: project.exclude.clone(),
-                });
+            // Ignore corrupted root-level catch-all projects
+            if project.code_path == "/" {
+                continue;
             }
+            if start_str.starts_with(&project.code_path) {
+                if let Some((_, best_proj)) = best_match {
+                    if project.code_path.len() > best_proj.code_path.len() {
+                        best_match = Some((name, project));
+                    }
+                } else {
+                    best_match = Some((name, project));
+                }
+            }
+        }
+
+        if let Some((_, project)) = best_match {
+            // For existing projects, check if we need to re-inject rules
+            if registry.global.inject_rules.unwrap_or(false) {
+                let inject_opts = options.unwrap_or_default();
+                let proj_path = PathBuf::from(&project.code_path);
+                if proj_path.exists() {
+                    let _ = crate::rules_injector::inject_rules(&proj_path, inject_opts);
+                }
+            }
+            
+            return Ok(Workspace {
+                root: PathBuf::from(&project.vault_path),
+                code_path: PathBuf::from(&project.code_path),
+                include: project.include.clone(),
+                exclude: project.exclude.clone(),
+            });
         }
 
         // Auto-add logic
@@ -190,7 +221,7 @@ impl Workspace {
 
     pub async fn get_store(&self) -> Result<crate::store::Store> {
         let hash = self.project_hash()?;
-        let db_path = project_dirs().data_dir().join("dbs").join(hash);
+        let db_path = base_dir().join("dbs").join(hash);
         crate::store::Store::init(&db_path.to_string_lossy(), "memory").await
     }
 }

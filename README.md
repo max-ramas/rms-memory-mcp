@@ -2,11 +2,11 @@
 
 **RMS Memory MCP** is a localized, production-grade Model Context Protocol (MCP) server designed to solve AI-agent context fragmentation. 
 
-If you are developing a single project but switching between different agents (Cursor, Zed, Claude Code, OpenCode), they frequently lose context of architectural decisions, system requirements, and user preferences. RMS Memory bridges this gap by maintaining an isolated, centralized markdown Vault (`~/.rms-memory/vaults/ProjectName`) perfectly configured for LLM consumption, effectively serving as an external memory bank for all your IDEs.
+If you are developing a single project but switching between different agents (Cursor, Zed, Claude Code, OpenCode), they frequently lose context of architectural decisions, system requirements, and user preferences. RMS Memory bridges this gap by maintaining an isolated, centralized markdown Vault perfectly configured for LLM consumption, effectively serving as an external memory bank for all your IDEs.
 
 ## Key Features
 
-- **Global Centralized Vaults:** Codebases remain clean. Project context is automatically routed to `~/.rms-memory/vaults/` without polluting repositories with `.mcp` files.
+- **Global Centralized Vaults:** Codebases remain clean. Project context is automatically routed to an external, user-defined Vault directory without polluting repositories with `.mcp` files.
 - **LanceDB Hybrid Retrieval:** Powered by an embedded LanceDB engine enabling zero-fail retrieval through parallel Vector Search + Tantivy Full-Text Search.
 - **Multilingual Semantic Parsing:** The `fastembed-rs` pipeline uses `multilingual-e5-small` to understand both Russian and English context perfectly.
 - **AST Markdown Chunker:** Context is king. `pulldown-cmark` is used to split documents along their logical Abstract Syntax Tree bounds, keeping code blocks and lists tightly bound to their parent Headings.
