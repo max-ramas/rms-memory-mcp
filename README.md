@@ -45,7 +45,7 @@ First, configure your global master settings (where all your knowledge will live
 rms-memory config --vault-path ~/MyVaults/ --auto-add true
 ```
 
-When you navigate to any code project and start your IDE, the server detects your project hash. Because `--auto-add true` is enabled, the server will dynamically provision a perfectly structured folder ready to accept memory:
+When you navigate to any code project and start your IDE, the server reads the `rootUri` sent during the MCP `initialize` request. Because `--auto-add true` is enabled, the server will dynamically provision a perfectly structured folder ready to accept memory:
 ```text
 ~/MyVaults/
   └── <ProjectHash>/
@@ -57,7 +57,7 @@ When you navigate to any code project and start your IDE, the server detects you
 
 ### CLI Commands
 
-- `rms-memory serve` - Initialize the JSON-RPC Stdio server (Automatically triggered by your IDE).
+- `rms-memory serve` - Initialize the JSON-RPC Stdio server (Automatically triggered by your IDE). It connects to the project sent in the `initialize` message.
 - `rms-memory init` - Manually register a project into the global registry (Supports `--dry-run`).
 - `rms-memory install` - Hook the server into supported IDEs interactively (Supports `--dry-run`).
 - `rms-memory config` - Set global settings (`--vault-path`, `--auto-add`, `--inject-rules`).

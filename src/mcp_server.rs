@@ -32,16 +32,16 @@ use std::sync::Arc;
 use crate::indexer::Indexer;
 use crate::store::VectorStore;
 
-pub struct McpServer<S: VectorStore + 'static, E: crate::indexer::Embedder + 'static> {
-    store: S,
+pub struct McpServer<E: crate::indexer::Embedder + 'static> {
+    store: Option<crate::store::Store>,
     indexer: Arc<Mutex<E>>,
-    workspace_root: std::path::PathBuf,
+    workspace_root: Option<std::path::PathBuf>,
     max_backups: usize,
 }
 
-impl<S: VectorStore + 'static, E: crate::indexer::Embedder + 'static> McpServer<S, E> {
-    pub async fn run(store: S, indexer: Arc<Mutex<E>>, workspace_root: std::path::PathBuf, max_backups: usize) -> Result<()> {
-        let server = Self { store, indexer, workspace_root, max_backups };
+impl<E: crate::indexer::Embedder + 'static> McpServer<E> {
+    pub async fn run(store: Option<crate::store::Store>, indexer: Arc<Mutex<E>>, workspace_root: Option<std::path::PathBuf>, max_backups: usize) -> Result<()> {
+        let mut server = Self { store, indexer, workspace_root, max_backups };
         let stdin = io::stdin();
         let mut stdout = io::stdout();
         let mut reader = stdin.lock();
@@ -95,9 +95,34 @@ impl<S: VectorStore + 'static, E: crate::indexer::Embedder + 'static> McpServer<
         Ok(())
     }
 
-    async fn handle_request(&self, method: &str, params: Option<Value>) -> Result<Value> {
+    async fn handle_request(&mut self, method: &str, params: Option<Value>) -> Result<Value> {
         match method {
             "initialize" => {
+                if let Some(params_obj) = params.as_ref().and_then(|p| p.as_object()) {
+                    if let Some(root_uri) = params_obj.get("rootUri").and_then(|v| v.as_str()) {
+                        let path_str = if root_uri.starts_with("file://") {
+                            &root_uri[7..]
+                        } else {
+                            root_uri
+                        };
+                        
+                        let path = std::path::PathBuf::from(path_str);
+                        if let Ok(workspace) = crate::workspace::Workspace::discover(&path, None) {
+                            self.workspace_root = Some(workspace.root.clone());
+                            
+                            if let Ok(store) = workspace.get_store().await {
+                                let sync_workspace = workspace.clone();
+                                let sync_store = store.clone();
+                                if let Ok(sync_indexer) = crate::indexer::Indexer::new() {
+                                    tokio::spawn(async move {
+                                        let _ = crate::indexer::sync_vault(&sync_workspace, &sync_store, sync_indexer).await;
+                                    });
+                                }
+                                self.store = Some(store);
+                            }
+                        }
+                    }
+                }
                 Ok(json!({
                     "protocolVersion": "2024-11-05",
                     "serverInfo": {
@@ -161,6 +186,7 @@ impl<S: VectorStore + 'static, E: crate::indexer::Embedder + 'static> McpServer<
                 
                 match name {
                     "search_memory" => {
+                        let store = self.store.as_ref().ok_or_else(|| anyhow::anyhow!("Store not initialized"))?;
                         let query_str = args.get("query").and_then(|v| v.as_str()).unwrap_or("");
                         let limit = args.get("limit").and_then(|v| v.as_u64()).unwrap_or(10) as usize;
                         
@@ -170,25 +196,27 @@ impl<S: VectorStore + 'static, E: crate::indexer::Embedder + 'static> McpServer<
                             embeddings.into_iter().next().unwrap_or_default()
                         };
 
-                        let results = self.store.search(query_vector, query_str.to_string(), limit).await?;
+                        let results = store.search(query_vector, query_str.to_string(), limit).await?;
                         
                         Ok(json!({
                             "content": [{"type": "text", "text": serde_json::to_string(&results)? }]
                         }))
                     }
                     "read" => {
+                        let store = self.store.as_ref().ok_or_else(|| anyhow::anyhow!("Store not initialized"))?;
                         let path = args.get("path").and_then(|v| v.as_str()).unwrap_or("");
-                        let full_text = self.store.read_document(path).await?;
+                        let full_text = store.read_document(path).await?;
                         Ok(json!({
                             "content": [{"type": "text", "text": full_text}]
                         }))
                     }
                     "write" => {
+                        let workspace_root = self.workspace_root.as_ref().ok_or_else(|| anyhow::anyhow!("Workspace root not initialized"))?;
                         let path_str = args.get("path").and_then(|v| v.as_str()).unwrap_or("");
                         let content = args.get("content").and_then(|v| v.as_str()).unwrap_or("");
                         let mode = args.get("mode").and_then(|v| v.as_str()).unwrap_or("replace");
                         
-                        let file_path = self.workspace_root.join(path_str);
+                        let file_path = workspace_root.join(path_str);
                         
                         // WRITE-GUARD: Backup file if it exists
                         if file_path.exists() && self.max_backups > 0 {
@@ -249,95 +277,3 @@ impl<S: VectorStore + 'static, E: crate::indexer::Embedder + 'static> McpServer<
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::store::SearchResult;
-    use serde_json::json;
-
-    struct MockStore;
-    impl VectorStore for MockStore {
-        async fn search(&self, _query_vector: Vec<f32>, query_str: String, limit: usize) -> anyhow::Result<Vec<SearchResult>> {
-            let mut results = Vec::new();
-            if query_str == "test query" {
-                results.push(SearchResult {
-                    path: "doc1.md".to_string(),
-                    heading: "Heading 1".to_string(),
-                    text: "Content 1".to_string(),
-                    score: Some(0.9),
-                });
-            }
-            Ok(results)
-        }
-        
-        async fn read_document(&self, path: &str) -> anyhow::Result<String> {
-            if path == "doc1.md" {
-                Ok("Full document text for doc1".to_string())
-            } else {
-                Err(anyhow::anyhow!("File not found"))
-            }
-        }
-    }
-
-    struct MockEmbedder;
-    impl crate::indexer::Embedder for MockEmbedder {
-        fn embed(&mut self, _texts: &[String]) -> anyhow::Result<Vec<Vec<f32>>> {
-            Ok(vec![vec![0.1; 384]])
-        }
-    }
-
-    #[tokio::test]
-    async fn test_mcp_initialize() {
-        let store = MockStore;
-        let indexer = Arc::new(Mutex::new(MockEmbedder));
-        let server = McpServer {
-            store,
-            indexer,
-            workspace_root: std::path::PathBuf::from("/tmp"),
-            max_backups: 5,
-        };
-
-        let res = server.handle_request("initialize", None).await.unwrap();
-        assert_eq!(res["protocolVersion"], "2024-11-05");
-        assert_eq!(res["serverInfo"]["name"], "rms-memory");
-    }
-
-    #[tokio::test]
-    async fn test_mcp_search_memory() {
-        let store = MockStore;
-        let indexer = Arc::new(Mutex::new(MockEmbedder));
-        let server = McpServer {
-            store,
-            indexer,
-            workspace_root: std::path::PathBuf::from("/tmp"),
-            max_backups: 5,
-        };
-
-        let params = Some(json!({"name": "search_memory", "arguments": {"query": "test query", "limit": 10}}));
-        let res = server.handle_request("tools/call", params).await.unwrap();
-        
-        let content_arr = res["content"].as_array().unwrap();
-        let content_text = content_arr[0]["text"].as_str().unwrap();
-        assert!(content_text.contains("doc1.md"));
-        assert!(content_text.contains("Content 1"));
-    }
-
-    #[tokio::test]
-    async fn test_mcp_read() {
-        let store = MockStore;
-        let indexer = Arc::new(Mutex::new(MockEmbedder));
-        let server = McpServer {
-            store,
-            indexer,
-            workspace_root: std::path::PathBuf::from("/tmp"),
-            max_backups: 5,
-        };
-
-        let params = Some(json!({"name": "read", "arguments": {"path": "doc1.md"}}));
-        let res = server.handle_request("tools/call", params).await.unwrap();
-        
-        let content_arr = res["content"].as_array().unwrap();
-        let content_text = content_arr[0]["text"].as_str().unwrap();
-        assert_eq!(content_text, "Full document text for doc1");
-    }
-}

@@ -6,7 +6,7 @@ RMS Memory is a specialized Model Context Protocol (MCP) server that acts as a l
 
 ### 1. Unified Configuration & Knowledge Isolation
 - **Global Registry:** No more polluting code repositories with `.mcp` or `RMS.toml` files. The routing logic uses a central `~/.config/rms-memory/registry.toml`.
-- **Auto-Discovery & Provisioning:** The server automatically identifies the current working directory, calculates a unique hash, and seamlessly routes agents to an isolated external Markdown vault (`~/.rms-memory/vaults/ProjectName`). If it doesn't exist, it is cleanly provisioned with structured directories (`rules/`, `decisions/`, `architecture/`, `artifacts/`).
+- **Auto-Discovery & Provisioning:** The server reads the `rootUri` dynamically from the MCP `initialize` request sent by the IDE. It then calculates a unique hash and seamlessly routes agents to an isolated external Markdown vault (`~/.rms-memory/vaults/ProjectName`). If it doesn't exist, it is cleanly provisioned with structured directories (`rules/`, `decisions/`, `architecture/`, `artifacts/`). This lazy initialization enables global MCP servers (like Zed's `settings.json`) to accurately target specific workspaces.
 
 ### 2. Hybrid Search Engine (LanceDB)
 - **Local Embedded DB:** Uses the blazingly fast embedded LanceDB (v0.31.0) stored locally at `~/.rms-memory/dbs/`.

@@ -4,6 +4,9 @@ All notable changes to this project will be documented in this file.
 
 ## [1.0.0] - 2026-07-05
 
+### Fixed
+- **MCP Initialization Bug:** Changed MCP workspace provisioning to lazily parse the `rootUri` directly from the IDE's JSON-RPC `initialize` handshake instead of eager extraction from `current_dir`. This resolves issues where global context servers running under `/` (like Zed) would create disconnected `UnknownProject` vaults.
+
 ### Added
 - **MCP Stdio Server:** Full implementation of JSON-RPC protocol over standard I/O for `read`, `write`, and `search_memory` tooling.
 - **Global Vault Registry:** Added `registry.toml` routing logic allowing the server to automatically detect the current code directory and isolate contextual documentation into a unified, secure system-level vault (`~/.rms-memory/vaults/ProjectName`).

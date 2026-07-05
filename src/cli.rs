@@ -211,29 +211,12 @@ impl Cli {
                 }
             }
             Commands::Serve => {
-                let workspace = Workspace::discover(&current_dir, None)?;
-                let store = workspace.get_store().await?;
-                
                 let indexer = Indexer::new()?;
                 let indexer_arc = std::sync::Arc::new(tokio::sync::Mutex::new(indexer));
 
-                // Spawn background sync
-                let sync_workspace = workspace.clone();
-                let sync_store = store.clone();
-                let sync_indexer = Indexer::new()?;
-                tokio::spawn(async move {
-                    tracing::info!("Starting background index sync...");
-                    if let Err(e) = crate::indexer::sync_vault(&sync_workspace, &sync_store, sync_indexer).await {
-                        tracing::error!("Background sync failed: {}", e);
-                    } else {
-                        tracing::info!("Index sync complete.");
-                    }
-                });
-
-                // Pass workspace.root (the vault path) to the server
                 let registry = crate::workspace::Registry::load().unwrap_or_default();
                 let max_backups = registry.global.max_backups.unwrap_or(5);
-                crate::mcp_server::McpServer::run(store, indexer_arc, workspace.root.clone(), max_backups).await?;
+                crate::mcp_server::McpServer::run(None, indexer_arc, None, max_backups).await?;
             }
             Commands::Reindex => {
                 let workspace = Workspace::discover(&current_dir, None)?;
