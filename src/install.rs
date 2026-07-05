@@ -24,11 +24,9 @@ fn get_ide_registry() -> Vec<IdeConfig> {
             ".config/Claude/claude_desktop_config.json", // linux
         ], "mcpServers"),
         IdeConfig::new("Cursor", vec![
-            "Library/Application Support/Cursor/User/settings.json",
-            ".config/Cursor/User/settings.json",
+            ".cursor/mcp.json",
         ], "mcpServers"),
         IdeConfig::new("Zed", vec![
-            "Library/Application Support/Zed/settings.json",
             ".config/zed/settings.json",
         ], "context_servers"),
         IdeConfig::new("VSCode (Roo Cline)", vec![
