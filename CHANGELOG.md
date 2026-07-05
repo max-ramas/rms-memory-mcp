@@ -1,0 +1,26 @@
+# Changelog
+
+All notable changes to this project will be documented in this file.
+
+## [1.0.0] - 2026-07-05
+
+### Added
+- **MCP Stdio Server:** Full implementation of JSON-RPC protocol over standard I/O for `read`, `write`, and `search_memory` tooling.
+- **Global Vault Registry:** Added `registry.toml` routing logic allowing the server to automatically detect the current code directory and isolate contextual documentation into a unified, secure system-level vault (`~/.rms-memory/vaults/ProjectName`).
+- **Hybrid LanceDB Retrieval:** Deployed local embedded `LanceDB` (v0.31.0) configured with multi-threaded Vector Search and Tantivy FTS indices to guarantee zero-fail context hits.
+- **Multilingual-E5-Small FastEmbed Pipeline:** Native ONNX AST embedding for dual-language (Russian & English) documentation support directly integrated into the ingest flow.
+- **Semantic AST Markdown Chunking:** Precision boundary preservation (1500 chars limit) via `pulldown-cmark`. It attaches hierarchical headings to paragraphs and enforces smart sliding-window truncation for large code blocks.
+- **Dynamic IDE Auto-Installer (`rms-memory install`):** Interactive recursive scanner spanning `~/.config/` and `~/Library/Application Support/` to auto-inject the `mcpServers` JSON object directly into Cursor, Zed, OpenCode, VS Code, and Claude Code configurations.
+- **Rules-as-Code IDE Patching:** Non-destructive AST block-patching (`<!-- RMS-MEMORY-START -->`) to automatically inject contextual guide instructions into `.cursorrules`, `.claude/CLAUDE.md`, `.zed/assistant.md`, and `RMS_MEMORY_GUIDE.md`.
+- **Dry-Run & System Auditing (`--dry-run`):** Execution previews for `install` and `init` commands to visualize JSON modifications and Markdown AST patches without corrupting host files. Generates automated `.bak` backups before any writes.
+- **Background Incremental Sync (`rms-memory sync`):** Zero-latency startup sync task performing `Delete-then-Insert` vector replacement based on `mtime` bound metadata.
+- **Garbage Collection (`rms-memory gc`):** Prunes orphaned LanceDB data caches matching deleted Vault boundaries.
+- **LLMs.txt Export Hook:** Enables one-shot compilation of a project Vault into standard flat structures.
+- **Write-Guard Snapshotting:** Captures local `fs::copy` `.bak` state preservation automatically before an AI is permitted to execute JSON-RPC `.md` replace/append mutations.
+- **Dedicated Telemetry Logging:** Integrated `tracing` streams routed directly to `~/.rms-memory/rms.log` shielding MCP stdio channels from standard output noise.
+
+### Fixed
+- **Safe Auto-Inject Default:** `auto-inject` configuration now defaults to `false`, preventing implicit modification of `.cursorrules`, `CLAUDE.md`, etc., upon first repository discovery without explicit user consent.
+- **Write-Guard Rolling Backups:** Added `max_backups` parameter to prevent disk pollution. Ensures backup files are gracefully rotated and limited (default 5).
+- **Embedding Dimension Safety:** Hardened `Store::init` to properly validate existing table schema dimension arrays against the current embedding model dimension. Returns a loud `INDEX_REBUILD_REQUIRED` error instead of a runtime vector search panic.
+- **Dependency Inversion (DIP) & Testing:** Extracted `VectorStore` and `Embedder` traits from `McpServer`, establishing a robust Mock architecture for the JSON-RPC layer and cleanly eliminating LanceDB `RecordBatch` leaky abstractions.
