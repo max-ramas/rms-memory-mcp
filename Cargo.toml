@@ -8,7 +8,9 @@ anyhow = "1.0.103"
 blake3 = "1.8.5"
 chrono = "0.4.45"
 clap = { version = "4.6.1", features = ["derive"] }
+dialoguer = "0.12.0"
 directories = "5.0.1"
+dirs = "6.0.0"
 fastembed = "5.17.2"
 futures = "0.3.32"
 glob = "0.3.3"
@@ -20,6 +22,7 @@ regex = "1.12.4"
 serde = { version = "1.0.228", features = ["derive"] }
 serde_json = "1.0.150"
 serde_yaml = "0.9.34"
+similar = "3.1.1"
 tokio = { version = "1.52.3", features = ["full"] }
 toml = "1.1.2"
 tracing = "0.1.44"

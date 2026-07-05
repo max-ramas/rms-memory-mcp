@@ -64,20 +64,106 @@ impl Cli {
 
         match &cli.command {
             Commands::Config { vault_path, auto_add, inject_rules } => {
-                let mut registry = crate::workspace::Registry::load()?;
-                if let Some(path) = vault_path {
-                    registry.global.global_vault_path = Some(path.clone());
-                    println!("Set global_vault_path to: {}", path);
+                let mut registry = crate::workspace::Registry::load().unwrap_or_default();
+                let mut updated = false;
+
+                if vault_path.is_none() && auto_add.is_none() && inject_rules.is_none() {
+                    let cv = registry.global.global_vault_path.as_deref().unwrap_or("Not Set");
+                    let ca = registry.global.auto_add_projects.unwrap_or(true);
+                    let ci = registry.global.inject_rules.unwrap_or(false);
+                    let cb = registry.global.max_backups.unwrap_or(5);
+
+                    println!("+-------------------+------------------------------------------------------------------+");
+                    println!("| Setting           | Value                                                            |");
+                    println!("+-------------------+------------------------------------------------------------------+");
+                    println!("| Vault Path        | {:<64} |", cv);
+                    println!("| Auto Add Projects | {:<64} |", ca);
+                    println!("| Inject Rules      | {:<64} |", ci);
+                    println!("| Max Backups       | {:<64} |", cb);
+                    println!("+-------------------+------------------------------------------------------------------+\n");
+
+                    let edit = dialoguer::Confirm::new()
+                        .with_prompt("Do you want to edit these settings interactively?")
+                        .default(false)
+                        .interact()?;
+                    
+                    if !edit {
+                        return Ok(());
+                    }
                 }
-                if let Some(auto) = auto_add {
-                    registry.global.auto_add_projects = Some(*auto);
-                    println!("Set auto_add_projects to: {}", auto);
+
+                // 1. Vault Path
+                let current_vault = registry.global.global_vault_path.clone().unwrap_or_else(|| {
+                    let mut p = dirs::home_dir().unwrap_or_default();
+                    p.push(".rms-memory");
+                    p.push("vaults");
+                    p.to_string_lossy().to_string()
+                });
+
+                let new_vault: String = if let Some(path) = vault_path {
+                    path.clone()
+                } else {
+                    dialoguer::Input::new()
+                        .with_prompt("Path to master vault storage")
+                        .default(current_vault)
+                        .interact_text()?
+                };
+                if Some(&new_vault) != registry.global.global_vault_path.as_ref() {
+                    registry.global.global_vault_path = Some(new_vault.clone());
+                    println!("Set global_vault_path to: {}", new_vault);
+                    updated = true;
                 }
-                if let Some(inject) = inject_rules {
-                    registry.global.inject_rules = Some(*inject);
-                    println!("Set inject_rules to: {}", inject);
+
+                // 2. Auto Add Projects
+                let current_auto = registry.global.auto_add_projects.unwrap_or(true);
+                let new_auto = if let Some(auto) = auto_add {
+                    *auto
+                } else {
+                    dialoguer::Confirm::new()
+                        .with_prompt("Automatically add new projects to memory when discovered?")
+                        .default(current_auto)
+                        .interact()?
+                };
+                if registry.global.auto_add_projects != Some(new_auto) {
+                    registry.global.auto_add_projects = Some(new_auto);
+                    println!("Set auto_add_projects to: {}", new_auto);
+                    updated = true;
                 }
-                registry.save()?;
+
+                // 3. Inject Rules (False by default per user requirements)
+                let current_inject = registry.global.inject_rules.unwrap_or(false);
+                let new_inject = if let Some(inject) = inject_rules {
+                    *inject
+                } else {
+                    dialoguer::Confirm::new()
+                        .with_prompt("Automatically inject cursor/zed rules when a project is added?")
+                        .default(current_inject)
+                        .interact()?
+                };
+                if registry.global.inject_rules != Some(new_inject) {
+                    registry.global.inject_rules = Some(new_inject);
+                    println!("Set inject_rules to: {}", new_inject);
+                    updated = true;
+                }
+
+                // 4. Max Backups
+                let current_backups = registry.global.max_backups.unwrap_or(5);
+                let new_backups: usize = dialoguer::Input::new()
+                    .with_prompt("Maximum number of index backups to keep (Write-Guard)")
+                    .default(current_backups)
+                    .interact_text()?;
+                if registry.global.max_backups != Some(new_backups) {
+                    registry.global.max_backups = Some(new_backups);
+                    println!("Set max_backups to: {}", new_backups);
+                    updated = true;
+                }
+
+                if updated {
+                    registry.save()?;
+                    println!("Configuration saved successfully.");
+                } else {
+                    println!("No changes made to configuration.");
+                }
             }
             Commands::Init { dry_run, force } => {
                 let current_dir = std::env::current_dir()?;
@@ -112,6 +198,7 @@ impl Cli {
                         let opts = crate::rules_injector::InjectOptions {
                             dry_run: *dry_run,
                             force: *force,
+                            interactive: true,
                         };
                         if let Err(e) = crate::rules_injector::inject_rules(&start_canon, opts) {
                             eprintln!("Warning: Failed to inject rules: {}", e);
@@ -195,20 +282,40 @@ impl Cli {
                     active_hashes.insert(hash);
                 }
                 
-                let mut deleted = 0;
+                let mut to_delete = Vec::new();
                 for entry in std::fs::read_dir(&dbs_dir)? {
                     let entry = entry?;
                     let path = entry.path();
                     if path.is_dir() {
                         let name = path.file_name().unwrap().to_string_lossy().to_string();
                         if !active_hashes.contains(&name) {
-                            println!("Deleting orphaned database: {}", name);
-                            std::fs::remove_dir_all(&path)?;
-                            deleted += 1;
+                            to_delete.push((name, path));
                         }
                     }
                 }
-                println!("GC complete. Deleted {} orphaned databases.", deleted);
+
+                if to_delete.is_empty() {
+                    println!("GC complete. No orphaned databases found.");
+                    return Ok(());
+                }
+
+                println!("Found {} orphaned databases.", to_delete.len());
+                let confirm = dialoguer::Confirm::new()
+                    .with_prompt(format!("Are you sure you want to permanently delete {} orphaned databases?", to_delete.len()))
+                    .default(false)
+                    .interact()?;
+                
+                if confirm {
+                    let mut deleted = 0;
+                    for (name, path) in to_delete {
+                        println!("Deleting: {}", name);
+                        std::fs::remove_dir_all(&path)?;
+                        deleted += 1;
+                    }
+                    println!("GC complete. Deleted {} orphaned databases.", deleted);
+                } else {
+                    println!("GC cancelled.");
+                }
             }
             Commands::ExportLlms { out } => {
                 let workspace = Workspace::discover(&current_dir, None)?;

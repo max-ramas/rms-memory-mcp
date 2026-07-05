@@ -14,6 +14,7 @@ const END_MARKER: &str = "<!-- RMS-MEMORY-END -->";
 pub struct InjectOptions {
     pub dry_run: bool,
     pub force: bool,
+    pub interactive: bool,
 }
 
 pub fn inject_rules(project_root: &Path, options: InjectOptions) -> Result<()> {
@@ -22,25 +23,21 @@ pub fn inject_rules(project_root: &Path, options: InjectOptions) -> Result<()> {
     // 1. Cursor
     let cursor_path = project_root.join(".cursorrules");
     if cursor_path.exists() {
-        append_or_replace_block(&cursor_path, CURSOR_RULES, options)?;
-        injected = true;
+        if append_or_replace_block(&cursor_path, CURSOR_RULES, options)? { injected = true; }
     }
 
     // 2. Claude Code
     let claude_dir = project_root.join(".claude");
     let claude_path = claude_dir.join("CLAUDE.md");
     if claude_path.exists() {
-        append_or_replace_block(&claude_path, CLAUDE_RULES, options)?;
-        injected = true;
+        if append_or_replace_block(&claude_path, CLAUDE_RULES, options)? { injected = true; }
     } else if claude_dir.exists() {
-        create_and_write(&claude_path, CLAUDE_RULES, options)?;
-        injected = true;
+        if create_and_write(&claude_path, CLAUDE_RULES, options)? { injected = true; }
     } else {
         // Also check if CLAUDE.md is in the root
         let root_claude_path = project_root.join("CLAUDE.md");
         if root_claude_path.exists() {
-            append_or_replace_block(&root_claude_path, CLAUDE_RULES, options)?;
-            injected = true;
+            if append_or_replace_block(&root_claude_path, CLAUDE_RULES, options)? { injected = true; }
         }
     }
 
@@ -48,11 +45,9 @@ pub fn inject_rules(project_root: &Path, options: InjectOptions) -> Result<()> {
     let zed_dir = project_root.join(".zed");
     let zed_path = zed_dir.join("assistant.md");
     if zed_path.exists() {
-        append_or_replace_block(&zed_path, ZED_RULES, options)?;
-        injected = true;
+        if append_or_replace_block(&zed_path, ZED_RULES, options)? { injected = true; }
     } else if zed_dir.exists() {
-        create_and_write(&zed_path, ZED_RULES, options)?;
-        injected = true;
+        if create_and_write(&zed_path, ZED_RULES, options)? { injected = true; }
     }
 
     // 4. Fallback if no IDE specific config was found
@@ -68,21 +63,32 @@ pub fn inject_rules(project_root: &Path, options: InjectOptions) -> Result<()> {
     Ok(())
 }
 
-fn create_and_write(file_path: &Path, template: &str, options: InjectOptions) -> Result<()> {
+fn create_and_write(file_path: &Path, template: &str, options: InjectOptions) -> Result<bool> {
     let display_path = file_path.file_name().unwrap_or_default().to_string_lossy();
     if options.dry_run {
         println!("\n[DRY-RUN] Planning to patch: {}", display_path);
         println!("- Destination: {}", file_path.display());
         println!("- Action: Create new file");
         println!("- Preview:\n  + {}", template.replace('\n', "\n  + "));
-        return Ok(());
+        return Ok(false);
+    }
+
+    if options.interactive && !options.force {
+        let confirm = dialoguer::Confirm::new()
+            .with_prompt(format!("Create new file {} with RMS-Memory rules?", display_path))
+            .default(true)
+            .interact()?;
+        if !confirm {
+            println!("Skipping {}", display_path);
+            return Ok(false);
+        }
     }
 
     fs::write(file_path, template)?;
-    Ok(())
+    Ok(true)
 }
 
-fn append_or_replace_block(file_path: &Path, template: &str, options: InjectOptions) -> Result<()> {
+fn append_or_replace_block(file_path: &Path, template: &str, options: InjectOptions) -> Result<bool> {
     let content = fs::read_to_string(file_path)?;
     let display_path = file_path.file_name().unwrap_or_default().to_string_lossy();
 
@@ -97,27 +103,57 @@ fn append_or_replace_block(file_path: &Path, template: &str, options: InjectOpti
             let after = &content[end_idx + END_MARKER.len()..];
             format!("{}{}{}", before, template, after)
         } else {
-            // Malformed markers, just append
             format!("{}\n\n{}", content, template)
         }
     } else {
-        // No markers found, append
         let prefix = if content.ends_with('\n') { "\n" } else { "\n\n" };
         format!("{}{}{}", content, prefix, template)
     };
+
+    if new_content == content {
+        return Ok(false);
+    }
 
     if options.dry_run {
         println!("\n[DRY-RUN] Planning to patch: {}", display_path);
         println!("- Destination: {}", file_path.display());
         println!("- Action: {}", action);
-        println!("- Preview:\n  + {}", template.replace('\n', "\n  + "));
-        return Ok(());
+        return Ok(false);
     }
 
-    // Execution: Create backup
-    let bak_path = file_path.with_extension(format!("{}.bak", file_path.extension().unwrap_or_default().to_string_lossy()));
-    fs::copy(file_path, &bak_path)?;
+    if options.interactive && !options.force {
+        let show_diff = dialoguer::Confirm::new()
+            .with_prompt(format!("[!] Found {}. Show diff before writing?", display_path))
+            .default(false)
+            .interact()?;
+        
+        if show_diff {
+            let diff = similar::TextDiff::from_lines(&content, &new_content);
+            println!("\n--- Diff for {} ---", file_path.display());
+            for change in diff.iter_all_changes() {
+                let sign = match change.tag() {
+                    similar::ChangeTag::Delete => "-",
+                    similar::ChangeTag::Insert => "+",
+                    similar::ChangeTag::Equal => " ",
+                };
+                print!("{}{}", sign, change);
+            }
+            println!("-------------------\n");
+        }
 
+        let write_changes = dialoguer::Confirm::new()
+            .with_prompt("Write changes?")
+            .default(true)
+            .interact()?;
+        
+        if !write_changes {
+            println!("Skipping {}", display_path);
+            return Ok(false);
+        }
+    }
+
+    let bak_path = file_path.with_extension(format!("{}.bak", file_path.extension().unwrap_or_default().to_string_lossy()));
+    let _ = fs::copy(file_path, &bak_path);
     fs::write(file_path, new_content)?;
-    Ok(())
+    Ok(true)
 }
