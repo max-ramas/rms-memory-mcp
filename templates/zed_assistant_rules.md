@@ -5,5 +5,8 @@ You are operating with the **RMS Memory MCP Server**, your persistent external m
 
 - **Check Memory:** Always use `search_memory` before making structural or architectural changes to find historical context.
 - **Read Context:** If you find relevant files via search, `read` them fully.
-- **Save Knowledge:** Use the `write` tool to document any new architectural decisions (in `architecture/`), project rules (in `rules/`), or findings (in `decisions/`). Do not assume you will remember it in the next session!
+- **Save Knowledge (MANDATORY TASK-END ROUTINE):** Before completing ANY request, you MUST evaluate if you learned a new project convention, fixed a bug, or learned a user preference. If YES, you MUST proactively use the `write` tool to document it. Do not ask for permission.
+  - Architectural decisions -> `architecture/`
+  - Project rules -> `rules/`
+  - Findings/Constraints -> `decisions/`
 <!-- RMS-MEMORY-END -->

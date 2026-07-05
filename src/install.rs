@@ -231,6 +231,31 @@ pub async fn run_installer(auto_yes: bool, dry_run: bool) -> Result<()> {
         }
     }
     
+    
+    #[cfg(target_os = "macos")]
+    {
+        println!("[🔒] Applying macOS entitlements to bypass Library Validation (prevents crashes in sandboxed IDEs)...");
+        let entitlements = r#"<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>com.apple.security.cs.disable-library-validation</key>
+    <true/>
+</dict>
+</plist>"#;
+        let entitlements_path = std::env::temp_dir().join("rms_entitlements.plist");
+        if let Ok(_) = fs::write(&entitlements_path, entitlements) {
+            let status = std::process::Command::new("codesign")
+                .args(&["-s", "-", "-f", "--entitlements", entitlements_path.to_str().unwrap(), &my_exe_str])
+                .status();
+            match status {
+                Ok(s) if s.success() => println!("[✅] Successfully signed executable with entitlements."),
+                _ => eprintln!("[⚠️] Failed to sign executable. You may experience crashes in Claude Desktop. Try running: codesign -s - -f --entitlements path/to/entitlements.plist {}", my_exe_str),
+            }
+            let _ = fs::remove_file(entitlements_path);
+        }
+    }
+
     println!("[✅] Installation sweep completed.");
     Ok(())
 }

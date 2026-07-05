@@ -32,15 +32,15 @@ use std::sync::Arc;
 use crate::indexer::Indexer;
 use crate::store::VectorStore;
 
-pub struct McpServer<E: crate::indexer::Embedder + 'static> {
+pub struct McpServer {
     store: Option<crate::store::Store>,
-    indexer: Arc<Mutex<E>>,
+    indexer: Option<Arc<Mutex<Indexer>>>,
     workspace_root: Option<std::path::PathBuf>,
     max_backups: usize,
 }
 
-impl<E: crate::indexer::Embedder + 'static> McpServer<E> {
-    pub async fn run(store: Option<crate::store::Store>, indexer: Arc<Mutex<E>>, workspace_root: Option<std::path::PathBuf>, max_backups: usize) -> Result<()> {
+impl McpServer {
+    pub async fn run(store: Option<crate::store::Store>, indexer: Option<Arc<Mutex<Indexer>>>, workspace_root: Option<std::path::PathBuf>, max_backups: usize) -> Result<()> {
         let mut server = Self { store, indexer, workspace_root, max_backups };
         let stdin = io::stdin();
         let mut stdout = io::stdout();
@@ -118,16 +118,21 @@ impl<E: crate::indexer::Embedder + 'static> McpServer<E> {
                 if let Ok(workspace) = crate::workspace::Workspace::discover(&path, None) {
                     self.workspace_root = Some(workspace.root.clone());
                     
-                    if let Ok(store) = workspace.get_store().await {
-                        let sync_workspace = workspace.clone();
-                        let sync_store = store.clone();
-                        if let Ok(sync_indexer) = crate::indexer::Indexer::new() {
+                    match workspace.get_store().await {
+                        Ok(store) => {
+                            let sync_workspace = workspace.clone();
+                            let sync_store = store.clone();
                             tokio::spawn(async move {
-                                let _ = crate::indexer::sync_vault(&sync_workspace, &sync_store, sync_indexer).await;
+                                if let Ok(sync_indexer) = tokio::task::spawn_blocking(|| crate::indexer::Indexer::new()).await.unwrap_or(Err(anyhow::anyhow!("spawn_blocking failed"))) {
+                                    let _ = crate::indexer::sync_vault(&sync_workspace, &sync_store, sync_indexer).await;
+                                }
                             });
+                            self.store = Some(store);
                         }
-                        self.store = Some(store);
+                        Err(e) => {
+                        }
                     }
+                } else {
                 }
                 
                 Ok(json!({
@@ -139,6 +144,7 @@ impl<E: crate::indexer::Embedder + 'static> McpServer<E> {
                     "capabilities": {
                         "tools": {}
                     }
+
                 }))
             }
             "tools/list" => {
@@ -180,7 +186,7 @@ impl<E: crate::indexer::Embedder + 'static> McpServer<E> {
                                     "content": { "type": "string" },
                                     "mode": { "type": "string", "enum": ["create", "append", "replace"] }
                                 },
-                                "required": ["mode", "content"]
+                                "required": ["path", "mode", "content"]
                             }
                         }
                     ]
@@ -198,7 +204,11 @@ impl<E: crate::indexer::Embedder + 'static> McpServer<E> {
                         let limit = args.get("limit").and_then(|v| v.as_u64()).unwrap_or(10) as usize;
                         
                         let query_vector = {
-                            let mut indexer = self.indexer.lock().await;
+                            if self.indexer.is_none() {
+                                let idx = tokio::task::spawn_blocking(|| crate::indexer::Indexer::new()).await.unwrap_or_else(|_| Err(anyhow::anyhow!("Indexer spawn blocked")))?;
+                                self.indexer = Some(Arc::new(Mutex::new(idx)));
+                            }
+                            let mut indexer = self.indexer.as_ref().unwrap().lock().await;
                             let embeddings = indexer.embed(&[query_str.to_string()]).map_err(|e| anyhow::anyhow!("Embed failed: {}", e))?;
                             embeddings.into_iter().next().unwrap_or_default()
                         };

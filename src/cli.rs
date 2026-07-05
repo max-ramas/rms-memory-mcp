@@ -262,12 +262,9 @@ impl Cli {
                 }
             }
             Commands::Serve => {
-                let indexer = Indexer::new()?;
-                let indexer_arc = std::sync::Arc::new(tokio::sync::Mutex::new(indexer));
-
                 let registry = crate::workspace::Registry::load().unwrap_or_default();
                 let max_backups = registry.global.max_backups.unwrap_or(5);
-                crate::mcp_server::McpServer::run(None, indexer_arc, None, max_backups).await?;
+                crate::mcp_server::McpServer::run(None, None, None, max_backups).await?;
             }
             Commands::Reindex => {
                 let workspace = Workspace::discover(&current_dir, None)?;

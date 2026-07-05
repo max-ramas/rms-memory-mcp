@@ -202,15 +202,13 @@ pub trait VectorStore: Send + Sync {
 }
 
 impl VectorStore for Store {
-    async fn search(&self, query_vector: Vec<f32>, query_str: String, limit: usize) -> Result<Vec<SearchResult>> {
+    async fn search(&self, query_vector: Vec<f32>, _query_str: String, limit: usize) -> Result<Vec<SearchResult>> {
         use lancedb::query::{ExecutableQuery, QueryBase};
         use futures::stream::StreamExt;
-        use lance_index::scalar::FullTextSearchQuery;
 
         let table = self.db.open_table(&self.table_name).execute().await?;
 
-        let mut query_builder = table.vector_search(query_vector).unwrap();
-        let query_builder = query_builder.full_text_search(FullTextSearchQuery::new(query_str)).limit(limit);
+        let query_builder = table.vector_search(query_vector).unwrap().limit(limit);
         let mut stream = query_builder.execute().await?;
         
         let mut results = Vec::new();

@@ -22,3 +22,15 @@ Thumbs.db
 *.swp
 *.swo
 *~
+
+# RMS Memory Agent Rules
+/.cursorrules
+/.windsurfrules
+/.clinerules
+/.rules
+/.github/copilot-instructions.md
+/AGENT.md
+/AGENTS.md
+/CLAUDE.md
+/GEMINI.md
+/.zed/assistant.md

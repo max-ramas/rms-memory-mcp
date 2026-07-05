@@ -5711,6 +5711,7 @@ dependencies = [
  "lance-index",
  "lancedb",
  "notify",
+ "ort",
  "pathdiff",
  "pulldown-cmark",
  "regex",

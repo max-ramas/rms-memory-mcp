@@ -175,12 +175,12 @@ impl Workspace {
             if registry.global.inject_rules.unwrap_or(false) {
                 let inject_opts = options.unwrap_or_default();
                 if let Err(e) = crate::rules_injector::inject_rules(&start_canon, inject_opts) {
-                    eprintln!("Warning: Failed to inject rules into repository: {}", e);
+                    tracing::warn!("Failed to inject rules into repository: {}", e);
                 } else {
-                    println!("Successfully injected RMS Memory rules into IDE configs.");
+                    tracing::info!("Successfully injected RMS Memory rules into IDE configs.");
                 }
             } else {
-                println!("[INFO] Rules injection disabled by default, skipping auto-configuration of repository rules. Run `rms-memory init` to explicitly enable.");
+                tracing::info!("Rules injection disabled by default, skipping auto-configuration of repository rules. Run `rms-memory init` to explicitly enable.");
             }
             
             if let Some(strategy) = &registry.global.auto_import_strategy {

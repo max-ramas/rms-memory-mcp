@@ -40,7 +40,16 @@ impl Indexer {
             std::fs::create_dir_all(&cache_dir).context("Failed to create fallback cache directory")?;
         }
 
-        // Workaround: Claude Desktop might set cwd to `/` which is read-only.
+        // Workaround: Claude Desktop sandbox might make the system temp_dir read-only.
+        // fastembed (via hf-hub and tempfile) uses the system temp directory for atomic downloads.
+        // We override TMPDIR to our cache directory which we know is writable.
+        let tmp_dir = cache_dir.join("tmp");
+        std::fs::create_dir_all(&tmp_dir).ok();
+        let original_tmp = std::env::var_os("TMPDIR");
+        unsafe {
+            std::env::set_var("TMPDIR", &tmp_dir);
+        }
+
         let original_dir = std::env::current_dir().ok();
         std::env::set_current_dir(&cache_dir).ok();
 
@@ -48,11 +57,19 @@ impl Indexer {
         let result = TextEmbedding::try_new(
             InitOptions::new(EmbeddingModel::MultilingualE5Small)
                 .with_cache_dir(cache_dir.clone())
-                .with_show_download_progress(true)
+                .with_show_download_progress(false)
         );
 
         if let Some(orig) = original_dir {
             std::env::set_current_dir(orig).ok();
+        }
+        
+        unsafe {
+            if let Some(orig_tmp) = original_tmp {
+                std::env::set_var("TMPDIR", orig_tmp);
+            } else {
+                std::env::remove_var("TMPDIR");
+            }
         }
 
         let model = result.context("Failed to initialize fastembed model")?;
