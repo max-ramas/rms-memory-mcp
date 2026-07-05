@@ -58,9 +58,10 @@ When you navigate to any code project and start your IDE, the server reads the `
 ### CLI Commands
 
 - `rms-memory serve` - Initialize the JSON-RPC Stdio server (Automatically triggered by your IDE). It connects to the project sent in the `initialize` message.
-- `rms-memory init` - Manually register a project into the global registry (Supports `--dry-run`).
+- `rms-memory init` - Manually register a project into the global registry (Supports `--dry-run`). Prompts for existing documentation import.
+- `rms-memory import` - Scan the project for existing documentation (`README.md`, `docs/`, `ADR/`, etc.) and import them into the Vault interactively (Import, Import & Organize, Link Only).
 - `rms-memory install` - Hook the server into supported IDEs interactively (Supports `--dry-run`).
-- `rms-memory config` - Set global settings (`--vault-path`, `--auto-add`, `--inject-rules`).
+- `rms-memory config` - Set global settings (`--vault-path`, `--auto-add`, `--inject-rules`, `--auto-import`).
 - `rms-memory reindex` - Force a monolithic re-indexing of the current project vault.
 - `rms-memory sync` - Perform an incremental LanceDB "Delete-then-Insert" sync (runs automatically in background during `serve`).
 - `rms-memory gc` - Prune orphaned LanceDB indices that belong to deleted vaults.

@@ -6,6 +6,8 @@ mod mcp_server;
 mod rules_injector;
 mod store;
 mod workspace;
+mod link;
+mod import;
 
 use anyhow::Result;
 

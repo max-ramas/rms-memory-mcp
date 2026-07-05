@@ -22,6 +22,8 @@ pub enum Commands {
         auto_add: Option<bool>,
         #[arg(long)]
         inject_rules: Option<bool>,
+        #[arg(long)]
+        auto_import: Option<String>,
     },
     /// Initialize local project in the global registry manually
     Init {
@@ -30,6 +32,8 @@ pub enum Commands {
         #[arg(long)]
         force: bool,
     },
+    /// Import existing documentation into the Vault
+    Import,
     /// Serve the MCP server via stdio
     Serve,
     /// Manually trigger a full reindex of the workspace
@@ -63,15 +67,16 @@ impl Cli {
         let current_dir = std::env::current_dir()?;
 
         match &cli.command {
-            Commands::Config { vault_path, auto_add, inject_rules } => {
+            Commands::Config { vault_path, auto_add, inject_rules, auto_import } => {
                 let mut registry = crate::workspace::Registry::load().unwrap_or_default();
                 let mut updated = false;
 
-                if vault_path.is_none() && auto_add.is_none() && inject_rules.is_none() {
+                if vault_path.is_none() && auto_add.is_none() && inject_rules.is_none() && auto_import.is_none() {
                     let cv = registry.global.global_vault_path.as_deref().unwrap_or("Not Set");
                     let ca = registry.global.auto_add_projects.unwrap_or(true);
                     let ci = registry.global.inject_rules.unwrap_or(false);
                     let cb = registry.global.max_backups.unwrap_or(5);
+                    let cs = registry.global.auto_import_strategy.as_deref().unwrap_or("skip");
 
                     println!("+-------------------+------------------------------------------------------------------+");
                     println!("| Setting           | Value                                                            |");
@@ -80,6 +85,7 @@ impl Cli {
                     println!("| Auto Add Projects | {:<64} |", ca);
                     println!("| Inject Rules      | {:<64} |", ci);
                     println!("| Max Backups       | {:<64} |", cb);
+                    println!("| Auto Import Strat | {:<64} |", cs);
                     println!("+-------------------+------------------------------------------------------------------+\n");
 
                     let edit = dialoguer::Confirm::new()
@@ -158,6 +164,26 @@ impl Cli {
                     updated = true;
                 }
 
+                // 5. Auto Import Strategy
+                let current_strategy = registry.global.auto_import_strategy.clone().unwrap_or_else(|| "skip".to_string());
+                let new_strategy = if let Some(strat) = auto_import {
+                    strat.clone()
+                } else {
+                    let items = vec!["skip", "link", "import_organize", "import"];
+                    let default_idx = items.iter().position(|&s| s == current_strategy).unwrap_or(0);
+                    let selection = dialoguer::Select::new()
+                        .with_prompt("Strategy for handling existing documents on auto-add")
+                        .items(&items)
+                        .default(default_idx)
+                        .interact()?;
+                    items[selection].to_string()
+                };
+                if registry.global.auto_import_strategy != Some(new_strategy.clone()) {
+                    registry.global.auto_import_strategy = Some(new_strategy.clone());
+                    println!("Set auto_import_strategy to: {}", new_strategy);
+                    updated = true;
+                }
+
                 if updated {
                     registry.save()?;
                     println!("Configuration saved successfully.");
@@ -183,7 +209,7 @@ impl Cli {
                     
                     registry.projects.insert(folder_name.clone(), crate::workspace::ProjectConfig {
                         code_path: start_canon.to_string_lossy().to_string(),
-                        vault_path,
+                        vault_path: vault_path.clone(),
                         include: vec!["rules/**/*.md".to_string(), "decisions/**/*.md".to_string(), "architecture/**/*.md".to_string(), "artifacts/**/*.md".to_string(), "**/*.md".to_string()],
                         exclude: vec!["node_modules/**".to_string(), "vendor/**".to_string(), ".git/**".to_string()],
                     });
@@ -206,8 +232,33 @@ impl Cli {
                             println!("Successfully injected RMS Memory rules into IDE configs.");
                         }
                     }
+
+                    if !dry_run {
+                        let import_service = crate::import::ImportService::new(start_canon, std::path::PathBuf::from(&vault_path));
+                        let docs = import_service.detect_existing_docs();
+                        if !docs.is_empty() {
+                            if let Ok(action) = import_service.prompt_action(&docs) {
+                                if let Err(e) = import_service.execute(action, docs) {
+                                    eprintln!("Warning: Failed to import documents: {}", e);
+                                }
+                            }
+                        }
+                    }
+
                 } else {
                     println!("Please set global_vault_path first using: rms-memory config --vault-path <PATH>");
+                }
+            }
+            Commands::Import => {
+                let current_dir = std::env::current_dir()?;
+                let workspace = Workspace::discover(&current_dir, None)?;
+                let import_service = crate::import::ImportService::new(workspace.code_path.clone(), workspace.root.clone());
+                let docs = import_service.detect_existing_docs();
+                if docs.is_empty() {
+                    println!("No existing project knowledge files found to import.");
+                } else {
+                    let action = import_service.prompt_action(&docs)?;
+                    import_service.execute(action, docs)?;
                 }
             }
             Commands::Serve => {

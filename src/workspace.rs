@@ -19,6 +19,7 @@ pub struct GlobalConfig {
     pub auto_add_projects: Option<bool>,
     pub inject_rules: Option<bool>,
     pub max_backups: Option<usize>,
+    pub auto_import_strategy: Option<String>,
 }
 
 #[derive(Deserialize, Serialize, Debug, Clone)]
@@ -40,10 +41,26 @@ fn default_exclude() -> Vec<String> {
 }
 
 pub fn base_dir() -> PathBuf {
-    let home = directories::BaseDirs::new()
-        .map(|dirs| dirs.home_dir().to_path_buf())
-        .unwrap_or_else(|| PathBuf::from("/"));
-    home.join(".rms-memory")
+    if let Some(base_dirs) = directories::BaseDirs::new() {
+        let path = base_dirs.home_dir().join(".rms-memory");
+        if std::fs::create_dir_all(&path).is_ok() {
+            let test_file = path.join(".write_test");
+            if std::fs::write(&test_file, b"").is_ok() {
+                let _ = std::fs::remove_file(test_file);
+                return path;
+            } else {
+                eprintln!("[WARN] ~/.rms-memory is not writable (sandbox restriction?). Falling back to temp_dir.");
+            }
+        } else {
+            eprintln!("[WARN] Cannot create ~/.rms-memory (sandbox restriction?). Falling back to temp_dir.");
+        }
+    } else {
+        eprintln!("[WARN] Cannot find HOME directory. Falling back to temp_dir.");
+    }
+    
+    let fallback = std::env::temp_dir().join("rms-memory");
+    let _ = std::fs::create_dir_all(&fallback);
+    fallback
 }
 
 impl Registry {
@@ -164,6 +181,28 @@ impl Workspace {
                 }
             } else {
                 println!("[INFO] Rules injection disabled by default, skipping auto-configuration of repository rules. Run `rms-memory init` to explicitly enable.");
+            }
+            
+            if let Some(strategy) = &registry.global.auto_import_strategy {
+                if strategy != "skip" {
+                    let import_service = crate::import::ImportService::new(start_canon.clone(), PathBuf::from(&vault_path));
+                    let docs = import_service.detect_existing_docs();
+                    if !docs.is_empty() {
+                        let action = match strategy.as_str() {
+                            "link" => crate::import::ImportAction::LinkOnly,
+                            "import_organize" => crate::import::ImportAction::ImportAndOrganize,
+                            "import" => crate::import::ImportAction::Import,
+                            _ => crate::import::ImportAction::Skip,
+                        };
+                        if let Err(e) = import_service.execute(action, docs) {
+                            tracing::warn!("Auto-import failed: {}", e);
+                        } else {
+                            tracing::info!("Auto-import completed using strategy: {}", strategy);
+                        }
+                    }
+                }
+            } else {
+                tracing::info!("Auto-initialized vault. Run 'rms-memory import' to import existing docs.");
             }
             
             Ok(Workspace {

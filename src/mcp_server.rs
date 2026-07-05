@@ -210,12 +210,21 @@ impl<E: crate::indexer::Embedder + 'static> McpServer<E> {
                         }))
                     }
                     "read" => {
-                        let store = self.store.as_ref().ok_or_else(|| anyhow::anyhow!("Store not initialized"))?;
-                        let path = args.get("path").and_then(|v| v.as_str()).unwrap_or("");
-                        let full_text = store.read_document(path).await?;
-                        Ok(json!({
-                            "content": [{"type": "text", "text": full_text}]
-                        }))
+                        let workspace_root = self.workspace_root.as_ref().ok_or_else(|| anyhow::anyhow!("Workspace root not initialized"))?;
+                        let path_str = args.get("path").and_then(|v| v.as_str()).unwrap_or("");
+                        let file_path = workspace_root.join(path_str);
+                        
+                        if let Some(linked_content) = crate::link::get_linked_content(&file_path) {
+                            Ok(json!({
+                                "content": [{"type": "text", "text": linked_content}]
+                            }))
+                        } else {
+                            let store = self.store.as_ref().ok_or_else(|| anyhow::anyhow!("Store not initialized"))?;
+                            let full_text = store.read_document(path_str).await?;
+                            Ok(json!({
+                                "content": [{"type": "text", "text": full_text}]
+                            }))
+                        }
                     }
                     "write" => {
                         let workspace_root = self.workspace_root.as_ref().ok_or_else(|| anyhow::anyhow!("Workspace root not initialized"))?;
@@ -223,7 +232,8 @@ impl<E: crate::indexer::Embedder + 'static> McpServer<E> {
                         let content = args.get("content").and_then(|v| v.as_str()).unwrap_or("");
                         let mode = args.get("mode").and_then(|v| v.as_str()).unwrap_or("replace");
                         
-                        let file_path = workspace_root.join(path_str);
+                        let initial_file_path = workspace_root.join(path_str);
+                        let file_path = crate::link::resolve_link(&initial_file_path);
                         
                         // WRITE-GUARD: Backup file if it exists
                         if file_path.exists() && self.max_backups > 0 {

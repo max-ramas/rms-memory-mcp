@@ -20,6 +20,9 @@ All notable changes to this project will be documented in this file.
 - **Background Incremental Sync (`rms-memory sync`):** Zero-latency startup sync task performing `Delete-then-Insert` vector replacement based on `mtime` bound metadata.
 - **Garbage Collection (`rms-memory gc`):** Prunes orphaned LanceDB data caches matching deleted Vault boundaries.
 - **LLMs.txt Export Hook:** Enables one-shot compilation of a project Vault into standard flat structures.
+- **Linked Documents Architecture:** Introduced native support for "Link Files"—standard Markdown Vault entries containing a `link: <source_path>` frontmatter property. The LanceDB indexer, `read` and `write` endpoints seamlessly trace and operate on the original repository file while enforcing strict path constraints within the Vault directory structure.
+- **Interactive Documentation Importer (`rms-memory import`):** Added a powerful CLI importer to scan project repositories for existing legacy documentation (`README.md`, `CLAUDE.md`, `.cursorrules`, `docs/`, `ADR/`). Features 5 user-selectable strategies including `Link Only` (creates zero-copy linked stubs) and `Import & Organize` (deterministically categorizes files into the Vault).
+- **Auto-Import Integration:** Added `--auto-import` flag to `rms-memory config` (`auto_import_strategy` in `registry.toml`). When `auto_add_projects` triggers in the background, the server can now silently resolve legacy documentation into the Vault using the pre-configured strategy without blocking the MCP connection.
 - **Write-Guard Snapshotting:** Captures local `fs::copy` `.bak` state preservation automatically before an AI is permitted to execute JSON-RPC `.md` replace/append mutations.
 - **Dedicated Telemetry Logging:** Integrated `tracing` streams routed directly to `~/.rms-memory/rms.log` shielding MCP stdio channels from standard output noise.
 

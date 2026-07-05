@@ -21,6 +21,7 @@ pub struct Frontmatter {
     #[serde(rename = "type")]
     pub doc_type: Option<String>,
     pub status: Option<String>,
+    pub link: Option<String>,
 }
 
 impl Document {

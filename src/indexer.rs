@@ -31,8 +31,7 @@ pub struct Chunk {
 
 impl Indexer {
     pub fn new() -> Result<Self> {
-        let base_dirs = directories::BaseDirs::new().context("Cannot find base directories")?;
-        let mut cache_dir = base_dirs.home_dir().join(".rms-memory").join("cache").join("fastembed");
+        let mut cache_dir = crate::workspace::base_dir().join("cache").join("fastembed");
         
         // If we cannot create the primary cache dir (e.g. HOME is read-only or sandboxed), fallback to temp dir
         if let Err(e) = std::fs::create_dir_all(&cache_dir) {
@@ -192,8 +191,9 @@ pub async fn sync_vault(workspace: &crate::workspace::Workspace, store: &crate::
     let mut current_doc_ids = std::collections::HashSet::new();
 
     for file_path in files {
-        // Read file mtime
-        let mtime = std::fs::metadata(&file_path)
+        // Read file mtime. For linked documents, this will read the mtime of the source.
+        let resolved_path = crate::link::resolve_link(&file_path);
+        let mtime = std::fs::metadata(&resolved_path)
             .and_then(|m| m.modified())
             .map(|t| chrono::DateTime::<chrono::Utc>::from(t).to_rfc3339())
             .unwrap_or_else(|_| chrono::Utc::now().to_rfc3339());
@@ -206,6 +206,11 @@ pub async fn sync_vault(workspace: &crate::workspace::Workspace, store: &crate::
             Ok(id) => id,
             Err(_) => continue,
         };
+        
+        // If it's a linked document, swap the content with the source file content
+        if let Some(linked_content) = crate::link::get_linked_content(&file_path) {
+            doc.content = linked_content;
+        }
         
         current_doc_ids.insert(doc_id.clone());
 

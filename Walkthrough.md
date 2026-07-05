@@ -8,7 +8,16 @@ RMS Memory is a specialized Model Context Protocol (MCP) server that acts as a l
 - **Global Registry:** No more polluting code repositories with `.mcp` or `RMS.toml` files. The routing logic uses a central `~/.rms-memory/registry.toml`.
 - **Auto-Discovery & Provisioning:** The server reads the `rootUri` dynamically from the MCP `initialize` request sent by the IDE (falling back to the current working directory if missing). It then calculates a unique hash and seamlessly routes agents to an isolated external Markdown vault (`/user/defined/path/ProjectName`). If it doesn't exist, it is cleanly provisioned with structured directories (`rules/`, `decisions/`, `architecture/`, `artifacts/`). This lazy initialization enables global MCP servers (like Zed's `settings.json`) to accurately target specific workspaces.
 
-### 2. Hybrid Search Engine (LanceDB)
+### 2. Linked Documents & Documentation Import
+- **Intelligent Importer:** The server features a native `import` module (`rms-memory import`) that scans the target codebase for existing documentation (`README.md`, `CLAUDE.md`, `.cursorrules`, `docs/`, `ADR/`).
+- **Interactive & Auto Integration:** Users can interactively choose how to handle existing knowledge during `rms-memory init` or let the server auto-import during `auto_add` based on the `--auto-import` config strategy.
+- **Linked Documents (No Duplication):** The recommended `Link Only` and `Import & Organize` flows utilize a unique Linked Document architecture. Instead of duplicating project files into the Vault, the system creates a lightweight "Link File" (a markdown file containing standard Frontmatter with a `link: <relative/path/to/source>` property).
+- **Guaranteed Consistency:** 
+  - **Reads:** Intercepted by the server to return the live source file content.
+  - **Writes:** Intercepted and rerouted back to the source file, guaranteeing the Vault link file metadata is never overwritten by an autonomous agent.
+  - **Indexing:** The LanceDB chunker traces the link, indexing the source file content but retaining the Vault's directory structure for vector metadata (`architecture/auth.md`).
+
+### 3. Hybrid Search Engine (LanceDB)
 - **Local Embedded DB:** Uses the blazingly fast embedded LanceDB (v0.31.0) stored locally at `~/.rms-memory/dbs/`.
 - **Hybrid Retrieval:** Fully implements combined Vector Search + Tantivy Full-Text Search (FTS). It avoids keyword matching failures by falling back to precise vector similarities.
 - **Multilingual Semantic Parsing:** Driven by `fastembed-rs` utilizing the `multilingual-e5-small` model (384 dimensions) natively handling both English and Russian code documentation contexts.
