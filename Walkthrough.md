@@ -26,6 +26,7 @@ RMS Memory is a specialized Model Context Protocol (MCP) server that acts as a l
 - **AST Markdown Chunker:** Raw token truncation destroys structured knowledge. This server uses `pulldown-cmark` to parse the Markdown Abstract Syntax Tree (AST) directly.
 - **Heading-Preservation:** Code blocks, paragraphs, and list elements are recursively accumulated under their direct parent `Heading` to generate perfectly contextualized vector chunks.
 - **Sliding-Window Fallback:** Enforces a strict 1500-character boundary to protect context windows. Monolithic code blocks are split sequentially with an overlapping ~200-character window.
+- **Batched Semantic Indexing:** To prevent Out-Of-Memory (OOM) crashes and CPU starvation on large files, the indexer pipelines all text chunks into the embedding model in strictly controlled batches (`batch_size = 32`). This maintains a flat memory footprint and guarantees stable parallel throughput.
 
 ### 4. Dynamic MCP Auto-Installer (`rms-memory install`)
 - Eradicates manual configuration. Run `rms-memory install` and a strict bounding crawler scans `~/.config/` and `~/Library/Application Support/` across your OS.
@@ -43,11 +44,12 @@ RMS Memory is a specialized Model Context Protocol (MCP) server that acts as a l
 
 ### 6. Production-Grade System Resiliency
 To transition from a "toy server" to an instrumental platform, 5 resilience protocols are enforced:
-1. **Garbage Collection (`rms-memory gc`):** Detects and purges orphaned LanceDB vector stores belonging to deprecated project vaults.
-2. **Incremental Sync (`rms-memory sync`):** Background `tokio` indexing on MCP launch. Uses a strict LanceDB `Delete-then-Insert` pipeline against file `mtime` bounds to cleanly sync vectors without RAG pollution.
-3. **Write-Guard Snapshotting:** JSON-RPC `write` events triggered by autonomous agents are intercepted. The server automatically issues an `fs::copy` artifact backup to `.bak` before permitting the agent's modification. Includes a rolling backup system (`max_backups` config, default 5) to prevent unbounded disk pollution from continuous AI revisions.
-4. **LLMs.txt Export (`export-llms`):** Compiles the entire isolated Vault structure into a standardized `llms.txt` digest for decoupled LLM ingestion or raw curl queries.
-5. **Dedicated Telemetry Logging:** MCP stdio pipelines are preserved strictly for JSON-RPC. All diagnostics, sync logs, and internal errors are securely routed to `~/.rms-memory/rms.log` using standard `tracing-appender` streams. Tail it using `rms-memory log`.
+4. **Garbage Collection (`rms-memory gc`):** Detects and purges orphaned LanceDB vector stores belonging to deprecated project vaults.
+5. **Incremental Sync (`rms-memory sync`):** Background `tokio` indexing on MCP launch. Uses a strict LanceDB `Delete-then-Insert` pipeline against file `mtime` bounds to cleanly sync vectors without RAG pollution.
+6. **Real-time File Watcher:** Background `notify` service instantly detects IDE saves (`Modify` filesystem events). Triggers a trailing-edge debounced (3s) incremental `sync_vault` to guarantee persistent memory seamlessly stays aligned with local workspace changes without requiring manual explicit syncs or server restarts.
+7. **Write-Guard Snapshotting:** JSON-RPC `write` events triggered by autonomous agents are intercepted. The server automatically issues an `fs::copy` artifact backup to `.bak` before permitting the agent's modification. Includes a rolling backup system (`max_backups` config, default 5) to prevent unbounded disk pollution from continuous AI revisions.
+8. **LLMs.txt Export (`export-llms`):** Compiles the entire isolated Vault structure into a standardized `llms.txt` digest for decoupled LLM ingestion or raw curl queries.
+9. **Dedicated Telemetry Logging:** MCP stdio pipelines are preserved strictly for JSON-RPC. All diagnostics, sync logs, and internal errors are securely routed to `~/.rms-memory/rms.log` using standard `tracing-appender` streams. Tail it using `rms-memory log`.
 
 ### 7. CI/CD and Cross-Platform Distribution
 - **Strict User-Scoped Isolation:** The core configuration logic was overhauled to enforce a rigid `~/.rms-memory/` standard across all platforms. By utilizing the `directories` crate exclusively to locate the user's home folder, the program correctly targets `C:\Users\username\.rms-memory\` on Windows, `/Users/username/.rms-memory/` on macOS, and `/home/username/.rms-memory/` on Linux without polluting generic OS domains like `AppData/Roaming` or `Library/Application Support/`.

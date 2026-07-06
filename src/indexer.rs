@@ -53,7 +53,7 @@ impl Indexer {
         let original_dir = std::env::current_dir().ok();
         std::env::set_current_dir(&cache_dir).ok();
 
-        eprintln!("Initializing embedding model (Cache: {:?}). Downloading ONNX model (~120MB) if not cached, this may take a minute...", cache_dir);
+        eprintln!("Loading embedding model (Cache: {:?})...", cache_dir);
         let result = TextEmbedding::try_new(
             InitOptions::new(EmbeddingModel::MultilingualE5Small)
                 .with_cache_dir(cache_dir.clone())
@@ -284,14 +284,25 @@ pub async fn sync_vault(workspace: &crate::workspace::Workspace, store: &crate::
         let chunks = Indexer::chunk_text(&doc.content);
         if chunks.is_empty() { continue; }
         
+        let mut embeddings = Vec::with_capacity(chunks.len());
         let chunk_texts: Vec<String> = chunks.iter().map(|c| c.text.clone()).collect();
-        let embeddings = match indexer.embed(&chunk_texts) {
-            Ok(e) => e,
-            Err(err) => {
-                tracing::error!("Failed to embed {}: {}", title, err);
-                continue;
+        let batch_size = 32;
+        let mut failed = false;
+        
+        for batch in chunk_texts.chunks(batch_size) {
+            match indexer.embed(batch) {
+                Ok(mut e) => embeddings.append(&mut e),
+                Err(err) => {
+                    tracing::error!("Failed to embed batch for {}: {}", title, err);
+                    failed = true;
+                    break;
+                }
             }
-        };
+        }
+        
+        if failed {
+            continue;
+        }
         
         for (i, (chunk, vector)) in chunks.into_iter().zip(embeddings).enumerate() {
             records.push(crate::store::ChunkRecord {
@@ -343,6 +354,13 @@ pub async fn index_vault_full(workspace: &crate::workspace::Workspace, store: &c
             Err(_) => continue,
         };
         
+        // If it's a linked document, swap the content with the source file content
+        if let Some(linked_content) = crate::link::get_linked_content(&file_path) {
+            doc.content = linked_content;
+        }
+        
+        if doc.content.trim().is_empty() { continue; }
+        
         let rel_path = file_path.strip_prefix(&workspace.root).unwrap_or(&file_path);
         let title = rel_path.file_stem().unwrap_or_default().to_string_lossy().to_string();
         let doc_type = doc.frontmatter.as_ref().and_then(|fm| fm.doc_type.clone()).unwrap_or_else(|| "note".to_string());
@@ -360,14 +378,25 @@ pub async fn index_vault_full(workspace: &crate::workspace::Workspace, store: &c
         let chunks = Indexer::chunk_text(&doc.content);
         if chunks.is_empty() { continue; }
         
+        let mut embeddings = Vec::with_capacity(chunks.len());
         let chunk_texts: Vec<String> = chunks.iter().map(|c| c.text.clone()).collect();
-        let embeddings = match indexer.embed(&chunk_texts) {
-            Ok(e) => e,
-            Err(err) => {
-                tracing::error!("Failed to embed {}: {}", title, err);
-                continue;
+        let batch_size = 32;
+        let mut failed = false;
+        
+        for batch in chunk_texts.chunks(batch_size) {
+            match indexer.embed(batch) {
+                Ok(mut e) => embeddings.append(&mut e),
+                Err(err) => {
+                    tracing::error!("Failed to embed batch for {}: {}", title, err);
+                    failed = true;
+                    break;
+                }
             }
-        };
+        }
+        
+        if failed {
+            continue;
+        }
         
         for (i, (chunk, vector)) in chunks.into_iter().zip(embeddings).enumerate() {
             records.push(crate::store::ChunkRecord {
@@ -390,6 +419,8 @@ pub async fn index_vault_full(workspace: &crate::workspace::Workspace, store: &c
     if !records.is_empty() {
         store.insert_batch(&table, records).await?;
         tracing::info!("Full Reindex complete.");
+    } else {
+        tracing::info!("Full Reindex: No indexable content found.");
     }
     
     Ok(())

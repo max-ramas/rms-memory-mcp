@@ -39,6 +39,64 @@ pub struct McpServer {
     max_backups: usize,
 }
 
+
+fn spawn_sync_watcher(workspace: crate::workspace::Workspace, store: crate::store::Store) {
+    tokio::spawn(async move {
+        // Initial sync
+        if let Ok(sync_indexer) = tokio::task::spawn_blocking(|| crate::indexer::Indexer::new()).await.unwrap_or(Err(anyhow::anyhow!("spawn_blocking failed"))) {
+            let _ = crate::indexer::sync_vault(&workspace, &store, sync_indexer).await;
+        }
+        
+        // File Watcher
+        let (tx, mut rx) = tokio::sync::mpsc::channel(100);
+        let mut watcher = match notify::RecommendedWatcher::new(
+            move |res: notify::Result<notify::Event>| {
+                if let Ok(event) = res {
+                    if matches!(event.kind, notify::EventKind::Modify(_) | notify::EventKind::Create(_) | notify::EventKind::Remove(_)) {
+                        let _ = tx.blocking_send(());
+                    }
+                }
+            },
+            notify::Config::default()
+        ) {
+            Ok(w) => w,
+            Err(e) => {
+                tracing::error!("Failed to create watcher: {}", e);
+                return;
+            }
+        };
+
+        use notify::Watcher;
+        if let Err(e) = watcher.watch(&workspace.root, notify::RecursiveMode::Recursive) {
+            tracing::error!("Failed to watch workspace: {}", e);
+            return;
+        }
+
+        let mut debounce_timer = tokio::time::sleep(tokio::time::Duration::from_secs(3));
+        tokio::pin!(debounce_timer);
+        
+        let mut pending_sync = false;
+        
+        loop {
+            tokio::select! {
+                recv = rx.recv() => {
+                    if recv.is_none() { break; } // channel closed
+                    debounce_timer.as_mut().reset(tokio::time::Instant::now() + tokio::time::Duration::from_secs(3));
+                    pending_sync = true;
+                }
+                _ = &mut debounce_timer, if pending_sync => {
+                    pending_sync = false;
+                    if let Ok(sync_indexer) = tokio::task::spawn_blocking(|| crate::indexer::Indexer::new()).await.unwrap_or(Err(anyhow::anyhow!("spawn_blocking failed"))) {
+                        let _ = crate::indexer::sync_vault(&workspace, &store, sync_indexer).await;
+                    }
+                }
+            }
+        }
+        
+        drop(watcher);
+    });
+}
+
 impl McpServer {
     pub async fn run(store: Option<crate::store::Store>, indexer: Option<Arc<Mutex<Indexer>>>, workspace_root: Option<std::path::PathBuf>, max_backups: usize) -> Result<()> {
         let mut server = Self { store, indexer, workspace_root, max_backups };
@@ -120,19 +178,34 @@ impl McpServer {
                     
                     match workspace.get_store().await {
                         Ok(store) => {
-                            let sync_workspace = workspace.clone();
-                            let sync_store = store.clone();
-                            tokio::spawn(async move {
-                                if let Ok(sync_indexer) = tokio::task::spawn_blocking(|| crate::indexer::Indexer::new()).await.unwrap_or(Err(anyhow::anyhow!("spawn_blocking failed"))) {
-                                    let _ = crate::indexer::sync_vault(&sync_workspace, &sync_store, sync_indexer).await;
-                                }
-                            });
+                            spawn_sync_watcher(workspace.clone(), store.clone());
                             self.store = Some(store);
                         }
                         Err(e) => {
                         }
                     }
                 } else {
+                    // Fallback: use global vault when no project is registered for this path
+                    tracing::warn!("No project registered for path: {:?}. Trying global vault fallback.", path);
+                    if let Ok(registry) = crate::workspace::Registry::load() {
+                        if let Some(global_vault) = &registry.global.global_vault_path {
+                            let vault_path = std::path::PathBuf::from(global_vault);
+                            if vault_path.exists() {
+                                self.workspace_root = Some(vault_path.clone());
+                                let workspace = crate::workspace::Workspace {
+                                    root: vault_path,
+                                    code_path: path.clone(),
+                                    include: vec!["**/*.md".to_string()],
+                                    exclude: vec!["node_modules/**".to_string(), ".git/**".to_string()],
+                                };
+                                if let Ok(store) = workspace.get_store().await {
+                                    spawn_sync_watcher(workspace.clone(), store.clone());
+                                    self.store = Some(store);
+                                    tracing::info!("Initialized with global vault fallback.");
+                                }
+                            }
+                        }
+                    }
                 }
                 
                 Ok(json!({
@@ -151,13 +224,12 @@ impl McpServer {
                 Ok(json!({
                     "tools": [
                         {
-                            "name": "search_memory",
+                            "name": "rms_search",
                             "description": "Search the knowledge graph.",
                             "inputSchema": {
                                 "type": "object",
                                 "properties": {
                                     "query": { "type": "string" },
-                                    "type": { "type": "string" },
                                     "limit": { "type": "integer" },
                                     "include_content": { "type": "boolean" }
                                 },
@@ -165,18 +237,19 @@ impl McpServer {
                             }
                         },
                         {
-                            "name": "read",
+                            "name": "rms_read",
                             "description": "Read a markdown document.",
                             "inputSchema": {
                                 "type": "object",
                                 "properties": {
                                     "id": { "type": "string" },
                                     "path": { "type": "string" }
-                                }
+                                },
+                                "required": ["path"]
                             }
                         },
                         {
-                            "name": "write",
+                            "name": "rms_write",
                             "description": "Write a markdown document.",
                             "inputSchema": {
                                 "type": "object",
@@ -198,7 +271,7 @@ impl McpServer {
                 let args = params["arguments"].as_object().cloned().unwrap_or_default();
                 
                 match name {
-                    "search_memory" => {
+                    "rms_search" => {
                         let store = self.store.as_ref().ok_or_else(|| anyhow::anyhow!("Store not initialized"))?;
                         let query_str = args.get("query").and_then(|v| v.as_str()).unwrap_or("");
                         let limit = args.get("limit").and_then(|v| v.as_u64()).unwrap_or(10) as usize;
@@ -219,7 +292,7 @@ impl McpServer {
                             "content": [{"type": "text", "text": serde_json::to_string(&results)? }]
                         }))
                     }
-                    "read" => {
+                    "rms_read" => {
                         let workspace_root = self.workspace_root.as_ref().ok_or_else(|| anyhow::anyhow!("Workspace root not initialized"))?;
                         let path_str = args.get("path").and_then(|v| v.as_str()).unwrap_or("");
                         let file_path = workspace_root.join(path_str);
@@ -236,7 +309,7 @@ impl McpServer {
                             }))
                         }
                     }
-                    "write" => {
+                    "rms_write" => {
                         let workspace_root = self.workspace_root.as_ref().ok_or_else(|| anyhow::anyhow!("Workspace root not initialized"))?;
                         let path_str = args.get("path").and_then(|v| v.as_str()).unwrap_or("");
                         let content = args.get("content").and_then(|v| v.as_str()).unwrap_or("");

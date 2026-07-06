@@ -2,7 +2,7 @@
 
 All notable changes to this project will be documented in this file.
 
-## [1.0.0] - 2026-07-05
+## [1.0.0] - 2026-07-05 
 
 ### Fixed
 - **MCP Initialization Bug:** Changed MCP workspace provisioning to fallback to the process's current working directory (`cwd`) when the IDE (like Zed) fails to pass a valid `rootUri` in the JSON-RPC `initialize` handshake. Furthermore, strict validation now rejects root paths (`/`) to entirely prevent the generation of orphaned `UnknownProject` vaults.
@@ -11,6 +11,7 @@ All notable changes to this project will be documented in this file.
 - **macOS Sandboxing Crashes:** `rms-memory install` now automatically applies `codesign` with entitlements to the installed binary, bypassing Library Validation crashes in sandboxed IDEs (e.g., Claude Desktop).
 - **Agent Rule Templates:** Updated all MCP injected templates (`general_mcp_guide.md`, `cursor_rules.md`, `claude_code_rules.md`, `zed_assistant_rules.md`) to explicitly document the `artifacts/`, `docs/`, and `api/` directories so agents know exactly where to read and write.
 - **Repository Pollution:** Removed the generation of `.bak` files during agent rule injection (`rules_injector.rs`) to prevent flooding user workspaces with backup files.
+- **Batched Vector Indexing (OOM Fix):** Replaced monolithic embedding calls with a batched chunking architecture (`batch_size = 32`) in `sync_vault` and `index_vault_full`. This entirely resolves extreme CPU/RAM spikes and process deadlocks (OOM) when indexing exceptionally large files, allowing the `fastembed` ONNX Runtime to efficiently ingest 100% of the file content without truncation.
 
 ### Changed
 - **Default Vault Structure:** Vault initialization (`cli.rs`, `workspace.rs`) now explicitly creates `docs/` and `api/` directories alongside `rules/`, `decisions/`, `architecture/`, and `artifacts/`.
