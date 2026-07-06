@@ -246,39 +246,39 @@ impl McpServer {
                 "tools": [
                     {
                         "name": "rms_search",
-                        "description": "Search the knowledge graph.",
+                        "description": "Search the local RMS Memory vector database (LanceDB) for project documentation, architectural decisions, and context rules using semantic similarity. Use this tool FIRST to understand the repository's background, past decisions, or rules before making changes. Provide a detailed semantic query.",
                         "inputSchema": {
                             "type": "object",
                             "properties": {
-                                "query": { "type": "string" },
-                                "limit": { "type": "integer" },
-                                "include_content": { "type": "boolean" }
+                                "query": { "type": "string", "description": "The semantic query string to search for." },
+                                "limit": { "type": "integer", "description": "Maximum number of chunks to return. Default is 10." },
+                                "include_content": { "type": "boolean", "description": "Whether to include full chunk text in results." }
                             },
                             "required": ["query"]
                         }
                     },
                     {
                         "name": "rms_read",
-                        "description": "Read a markdown document.",
+                        "description": "Read the full contents of a markdown document from the RMS Memory vault. Provide the relative path (e.g., 'rules/api.md'). Use this to retrieve the full context of a document found via rms_search.",
                         "inputSchema": {
                             "type": "object",
                             "properties": {
                                 "id": { "type": "string" },
-                                "path": { "type": "string" }
+                                "path": { "type": "string", "description": "Relative path to the markdown document in the vault." }
                             },
                             "required": ["path"]
                         }
                     },
                     {
                         "name": "rms_write",
-                        "description": "Write a markdown document.",
+                        "description": "Save new architectural decisions, constraints, development rules, or project context to the RMS Memory vault. Use this tool PROACTIVELY at the end of a task if you learned a new user preference, solved a tricky bug, or made a new architectural decision.",
                         "inputSchema": {
                             "type": "object",
                             "properties": {
                                 "id": { "type": "string" },
-                                "path": { "type": "string" },
-                                "content": { "type": "string" },
-                                "mode": { "type": "string", "enum": ["create", "append", "replace"] }
+                                "path": { "type": "string", "description": "Relative path to save the document (e.g., 'decisions/001-db.md')." },
+                                "content": { "type": "string", "description": "The markdown content to write." },
+                                "mode": { "type": "string", "enum": ["create", "append", "replace"], "description": "Write mode." }
                             },
                             "required": ["path", "mode", "content"]
                         }
