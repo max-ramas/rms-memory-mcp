@@ -1,9 +1,9 @@
-use std::path::{Path, PathBuf};
+use anyhow::Result;
+use regex::Regex;
 use serde::{Deserialize, Serialize};
 use std::fs;
-use anyhow::Result;
+use std::path::{Path, PathBuf};
 use uuid::Uuid;
-use regex::Regex;
 
 #[derive(Debug, Clone)]
 pub struct Document {
@@ -31,17 +31,23 @@ impl Document {
         let mut content = text.clone();
 
         if (text.starts_with("---\n") || text.starts_with("---\r\n"))
-            && let Some(end_idx) = text.find("\n---\n").or_else(|| text.find("\r\n---\r\n")) {
-                let fm_text = &text[4..end_idx];
-                if let Ok(fm) = serde_yaml::from_str::<Frontmatter>(fm_text) {
-                    frontmatter = Some(fm);
-                }
-                
-                let content_start = end_idx + if text[end_idx..].starts_with("\r\n") { 7 } else { 5 };
-                if content_start <= text.len() {
-                    content = text[content_start..].to_string();
-                }
+            && let Some(end_idx) = text.find("\n---\n").or_else(|| text.find("\r\n---\r\n"))
+        {
+            let fm_text = &text[4..end_idx];
+            if let Ok(fm) = serde_yaml::from_str::<Frontmatter>(fm_text) {
+                frontmatter = Some(fm);
             }
+
+            let content_start = end_idx
+                + if text[end_idx..].starts_with("\r\n") {
+                    7
+                } else {
+                    5
+                };
+            if content_start <= text.len() {
+                content = text[content_start..].to_string();
+            }
+        }
 
         Ok(Document {
             path: path.to_path_buf(),
@@ -53,15 +59,19 @@ impl Document {
 
     pub fn ensure_id(&mut self) -> Result<String> {
         if let Some(fm) = &self.frontmatter
-            && let Some(id) = &fm.id {
-                return Ok(id.clone());
-            }
+            && let Some(id) = &fm.id
+        {
+            return Ok(id.clone());
+        }
 
         let new_id = Uuid::new_v4().to_string();
-        
-        let new_text = if self.original_text.starts_with("---\n") || self.original_text.starts_with("---\r\n") {
+
+        let new_text = if self.original_text.starts_with("---\n")
+            || self.original_text.starts_with("---\r\n")
+        {
             let id_line = format!("id: {}\n", new_id);
-            self.original_text.replacen("---\n", &format!("---\n{}", id_line), 1)
+            self.original_text
+                .replacen("---\n", &format!("---\n{}", id_line), 1)
                 .replacen("---\r\n", &format!("---\r\n{}", id_line), 1)
         } else {
             format!("---\nid: {}\n---\n\n{}", new_id, self.original_text)
@@ -69,7 +79,7 @@ impl Document {
 
         fs::write(&self.path, &new_text)?;
         self.original_text = new_text;
-        
+
         // Re-parse to update frontmatter
         let updated = Self::parse(&self.path)?;
         self.frontmatter = updated.frontmatter;

@@ -1,5 +1,5 @@
-use std::path::{Path, PathBuf};
 use crate::document::Document;
+use std::path::{Path, PathBuf};
 
 /// Resolves a linked document.
 /// If the file at `file_path` contains a `link` in its frontmatter,
@@ -8,15 +8,16 @@ use crate::document::Document;
 pub fn resolve_link(file_path: &Path) -> PathBuf {
     if let Ok(doc) = Document::parse(file_path)
         && let Some(fm) = doc.frontmatter
-            && let Some(link) = fm.link
-                && let Some(parent) = file_path.parent() {
-                    let resolved = parent.join(&link);
-                    // Try to canonicalize if it exists, otherwise return joined path
-                    if let Ok(canon) = resolved.canonicalize() {
-                        return canon;
-                    }
-                    return resolved;
-                }
+        && let Some(link) = fm.link
+        && let Some(parent) = file_path.parent()
+    {
+        let resolved = parent.join(&link);
+        // Try to canonicalize if it exists, otherwise return joined path
+        if let Ok(canon) = resolved.canonicalize() {
+            return canon;
+        }
+        return resolved;
+    }
     file_path.to_path_buf()
 }
 
@@ -25,13 +26,14 @@ pub fn resolve_link(file_path: &Path) -> PathBuf {
 pub fn get_linked_content(file_path: &Path) -> Option<String> {
     if let Ok(doc) = Document::parse(file_path)
         && let Some(fm) = doc.frontmatter
-            && let Some(link) = fm.link
-                && let Some(parent) = file_path.parent() {
-                    let resolved = parent.join(&link);
-                    if let Ok(content) = std::fs::read_to_string(&resolved) {
-                        return Some(content);
-                    }
-                }
+        && let Some(link) = fm.link
+        && let Some(parent) = file_path.parent()
+    {
+        let resolved = parent.join(&link);
+        if let Ok(content) = std::fs::read_to_string(&resolved) {
+            return Some(content);
+        }
+    }
     None
 }
 
@@ -56,7 +58,7 @@ mod tests {
         let dir = tempdir().unwrap();
         let source_path = dir.path().join("source.md");
         let target_path = dir.path().join("target.md");
-        
+
         fs::write(&source_path, "Source content").unwrap();
         fs::write(&target_path, "---\nlink: source.md\n---\nLinked content").unwrap();
 

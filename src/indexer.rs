@@ -1,7 +1,7 @@
+use anyhow::{Context, Result};
+use fastembed::{EmbeddingModel, InitOptions, TextEmbedding};
+use pulldown_cmark::{Event, Options, Parser, Tag};
 use std::path::Path;
-use fastembed::{TextEmbedding, InitOptions, EmbeddingModel};
-use anyhow::{Result, Context};
-use pulldown_cmark::{Parser, Options, Event, Tag};
 
 #[allow(dead_code)]
 pub trait Embedder: Send + Sync {
@@ -27,12 +27,19 @@ pub struct Chunk {
 impl Indexer {
     pub fn new() -> Result<Self> {
         let mut cache_dir = crate::workspace::base_dir().join("cache").join("fastembed");
-        
+
         // If we cannot create the primary cache dir (e.g. HOME is read-only or sandboxed), fallback to temp dir
         if let Err(e) = std::fs::create_dir_all(&cache_dir) {
-            eprintln!("Warning: Failed to create primary cache dir {:?}: {}. Falling back to temp directory.", cache_dir, e);
-            cache_dir = std::env::temp_dir().join("rms-memory").join("cache").join("fastembed");
-            std::fs::create_dir_all(&cache_dir).context("Failed to create fallback cache directory")?;
+            eprintln!(
+                "Warning: Failed to create primary cache dir {:?}: {}. Falling back to temp directory.",
+                cache_dir, e
+            );
+            cache_dir = std::env::temp_dir()
+                .join("rms-memory")
+                .join("cache")
+                .join("fastembed");
+            std::fs::create_dir_all(&cache_dir)
+                .context("Failed to create fallback cache directory")?;
         }
 
         // Workaround: Claude Desktop sandbox might make the system temp_dir read-only.
@@ -52,13 +59,13 @@ impl Indexer {
         let result = TextEmbedding::try_new(
             InitOptions::new(EmbeddingModel::MultilingualE5Small)
                 .with_cache_dir(cache_dir.clone())
-                .with_show_download_progress(false)
+                .with_show_download_progress(false),
         );
 
         if let Some(orig) = original_dir {
             std::env::set_current_dir(orig).ok();
         }
-        
+
         unsafe {
             if let Some(orig_tmp) = original_tmp {
                 std::env::set_var("TMPDIR", orig_tmp);
@@ -74,33 +81,33 @@ impl Indexer {
     fn split_large_node(heading: &str, text: &str, chunks: &mut Vec<Chunk>) {
         let lines: Vec<&str> = text.lines().collect();
         let mut current_idx = 0;
-        
+
         while current_idx < lines.len() {
             let mut chunk_text = String::new();
             let next_idx = current_idx + 1;
             let mut overlap_idx = current_idx;
-            
+
             while current_idx < lines.len() {
                 let line = lines[current_idx];
                 chunk_text.push_str(line);
                 chunk_text.push('\n');
-                
+
                 // Mark potential overlap start (~1200 chars from beginning of chunk)
                 if chunk_text.len() >= 1200 && overlap_idx == next_idx - 1 {
                     overlap_idx = current_idx;
                 }
-                
+
                 if chunk_text.len() >= 1500 {
                     break;
                 }
                 current_idx += 1;
             }
-            
+
             chunks.push(Chunk {
                 heading: heading.to_string(),
                 text: chunk_text.trim().to_string(),
             });
-            
+
             if current_idx < lines.len() {
                 current_idx = std::cmp::max(overlap_idx, next_idx);
             }
@@ -110,27 +117,28 @@ impl Indexer {
     pub fn chunk_text(text: &str) -> Vec<Chunk> {
         let mut chunks = Vec::new();
         let parser = Parser::new_ext(text, Options::all());
-        
+
         let mut current_heading = String::new();
         let mut current_chunk_text = String::new();
         let mut depth = 0;
         let mut in_heading = false;
         let mut heading_text = String::new();
 
-        let push_current = |current_chunk_text: &mut String, current_heading: &str, chunks: &mut Vec<Chunk>| {
-            let trimmed = current_chunk_text.trim();
-            if !trimmed.is_empty() {
-                if trimmed.len() > 1500 {
-                    Self::split_large_node(current_heading, trimmed, chunks);
-                } else {
-                    chunks.push(Chunk {
-                        heading: current_heading.to_string(),
-                        text: trimmed.to_string(),
-                    });
+        let push_current =
+            |current_chunk_text: &mut String, current_heading: &str, chunks: &mut Vec<Chunk>| {
+                let trimmed = current_chunk_text.trim();
+                if !trimmed.is_empty() {
+                    if trimmed.len() > 1500 {
+                        Self::split_large_node(current_heading, trimmed, chunks);
+                    } else {
+                        chunks.push(Chunk {
+                            heading: current_heading.to_string(),
+                            text: trimmed.to_string(),
+                        });
+                    }
                 }
-            }
-            current_chunk_text.clear();
-        };
+                current_chunk_text.clear();
+            };
 
         for (event, range) in parser.into_offset_iter() {
             match event {
@@ -159,21 +167,22 @@ impl Indexer {
                     depth -= 1;
                     if depth == 0 {
                         let node_text = &text[range.clone()];
-                        if !current_chunk_text.trim().is_empty() && current_chunk_text.len() + node_text.len() > 1500 {
+                        if !current_chunk_text.trim().is_empty()
+                            && current_chunk_text.len() + node_text.len() > 1500
+                        {
                             push_current(&mut current_chunk_text, &current_heading, &mut chunks);
                         }
                         current_chunk_text.push_str(node_text);
                         current_chunk_text.push_str("\n\n");
                     }
                 }
-                Event::Text(t) | Event::Code(t)
-                    if in_heading => {
-                        heading_text.push_str(&t);
-                    }
+                Event::Text(t) | Event::Code(t) if in_heading => {
+                    heading_text.push_str(&t);
+                }
                 _ => {}
             }
         }
-        
+
         push_current(&mut current_chunk_text, &current_heading, &mut chunks);
         chunks
     }
@@ -184,7 +193,11 @@ impl Indexer {
     }
 }
 
-pub async fn sync_vault(workspace: &crate::workspace::Workspace, store: &crate::store::Store, mut indexer: Indexer) -> Result<()> {
+pub async fn sync_vault(
+    workspace: &crate::workspace::Workspace,
+    store: &crate::store::Store,
+    mut indexer: Indexer,
+) -> Result<()> {
     // Try to open existing table
     let table = match store.open_table().await {
         Ok(t) => t,
@@ -194,7 +207,10 @@ pub async fn sync_vault(workspace: &crate::workspace::Workspace, store: &crate::
         }
     };
 
-    let existing_docs = store.get_all_document_timestamps(&table).await.unwrap_or_default();
+    let existing_docs = store
+        .get_all_document_timestamps(&table)
+        .await
+        .unwrap_or_default();
     let mut to_delete = Vec::new();
     let mut to_index = Vec::new();
 
@@ -208,7 +224,7 @@ pub async fn sync_vault(workspace: &crate::workspace::Workspace, store: &crate::
             .and_then(|m| m.modified())
             .map(|t| chrono::DateTime::<chrono::Utc>::from(t).to_rfc3339())
             .unwrap_or_else(|_| chrono::Utc::now().to_rfc3339());
-            
+
         let mut doc = match crate::document::Document::parse(&file_path) {
             Ok(d) => d,
             Err(_) => continue,
@@ -217,12 +233,12 @@ pub async fn sync_vault(workspace: &crate::workspace::Workspace, store: &crate::
             Ok(id) => id,
             Err(_) => continue,
         };
-        
+
         // If it's a linked document, swap the content with the source file content
         if let Some(linked_content) = crate::link::get_linked_content(&file_path) {
             doc.content = linked_content;
         }
-        
+
         current_doc_ids.insert(doc_id.clone());
 
         let needs_update = if let Some(stored_time) = existing_docs.get(&doc_id) {
@@ -261,28 +277,44 @@ pub async fn sync_vault(workspace: &crate::workspace::Workspace, store: &crate::
     tracing::info!("Sync: Indexing {} modified/new files...", to_index.len());
     let mut records = Vec::new();
     for (file_path, doc, mtime, doc_id) in to_index {
-        let rel_path = file_path.strip_prefix(&workspace.root).unwrap_or(&file_path);
-        let title = rel_path.file_stem().unwrap_or_default().to_string_lossy().to_string();
-        let doc_type = doc.frontmatter.as_ref().and_then(|fm| fm.doc_type.clone()).unwrap_or_else(|| "note".to_string());
+        let rel_path = file_path
+            .strip_prefix(&workspace.root)
+            .unwrap_or(&file_path);
+        let title = rel_path
+            .file_stem()
+            .unwrap_or_default()
+            .to_string_lossy()
+            .to_string();
+        let doc_type = doc
+            .frontmatter
+            .as_ref()
+            .and_then(|fm| fm.doc_type.clone())
+            .unwrap_or_else(|| "note".to_string());
         let content_hash = blake3::hash(doc.content.as_bytes()).to_string();
-        
+
         let raw_links = doc.extract_links();
         let mut normalized_links = Vec::new();
         for link in raw_links {
-            normalized_links.push(crate::indexer::normalize_link(&workspace.root, &file_path, &link));
+            normalized_links.push(crate::indexer::normalize_link(
+                &workspace.root,
+                &file_path,
+                &link,
+            ));
         }
-        
+
         let links_raw_str = serde_json::to_string(&normalized_links)?;
         let links_resolved_str = "[]".to_string();
 
         let chunks = Indexer::chunk_text(&doc.content);
-        if chunks.is_empty() { continue; }
-        
+        if chunks.is_empty() {
+            continue;
+        }
+
         let mut embeddings = Vec::with_capacity(chunks.len());
         let chunk_texts: Vec<String> = chunks.iter().map(|c| c.text.clone()).collect();
         let batch_size = 32;
         let mut failed = false;
-        
+
         for batch in chunk_texts.chunks(batch_size) {
             match indexer.embed(batch) {
                 Ok(mut e) => embeddings.append(&mut e),
@@ -293,11 +325,11 @@ pub async fn sync_vault(workspace: &crate::workspace::Workspace, store: &crate::
                 }
             }
         }
-        
+
         if failed {
             continue;
         }
-        
+
         for (i, (chunk, vector)) in chunks.into_iter().zip(embeddings).enumerate() {
             records.push(crate::store::ChunkRecord {
                 document_id: doc_id.clone(),
@@ -320,25 +352,29 @@ pub async fn sync_vault(workspace: &crate::workspace::Workspace, store: &crate::
         store.insert_batch(&table, records).await?;
         tracing::info!("Sync: Upsert complete.");
     }
-    
+
     Ok(())
 }
 
-pub async fn index_vault_full(workspace: &crate::workspace::Workspace, store: &crate::store::Store, mut indexer: Indexer) -> Result<()> {
+pub async fn index_vault_full(
+    workspace: &crate::workspace::Workspace,
+    store: &crate::store::Store,
+    mut indexer: Indexer,
+) -> Result<()> {
     let _ = store.db.drop_table(&store.table_name, &[]).await;
     let table = store.create_table().await?;
     store.create_fts_index(&table).await?;
-    
+
     let files = workspace.find_markdown_files()?;
     tracing::info!("Full Reindex: Found {} markdown files", files.len());
-    
+
     let mut records = Vec::new();
     for file_path in files {
         let mtime = std::fs::metadata(&file_path)
             .and_then(|m| m.modified())
             .map(|t| chrono::DateTime::<chrono::Utc>::from(t).to_rfc3339())
             .unwrap_or_else(|_| chrono::Utc::now().to_rfc3339());
-            
+
         let mut doc = match crate::document::Document::parse(&file_path) {
             Ok(d) => d,
             Err(_) => continue,
@@ -347,36 +383,54 @@ pub async fn index_vault_full(workspace: &crate::workspace::Workspace, store: &c
             Ok(id) => id,
             Err(_) => continue,
         };
-        
+
         // If it's a linked document, swap the content with the source file content
         if let Some(linked_content) = crate::link::get_linked_content(&file_path) {
             doc.content = linked_content;
         }
-        
-        if doc.content.trim().is_empty() { continue; }
-        
-        let rel_path = file_path.strip_prefix(&workspace.root).unwrap_or(&file_path);
-        let title = rel_path.file_stem().unwrap_or_default().to_string_lossy().to_string();
-        let doc_type = doc.frontmatter.as_ref().and_then(|fm| fm.doc_type.clone()).unwrap_or_else(|| "note".to_string());
+
+        if doc.content.trim().is_empty() {
+            continue;
+        }
+
+        let rel_path = file_path
+            .strip_prefix(&workspace.root)
+            .unwrap_or(&file_path);
+        let title = rel_path
+            .file_stem()
+            .unwrap_or_default()
+            .to_string_lossy()
+            .to_string();
+        let doc_type = doc
+            .frontmatter
+            .as_ref()
+            .and_then(|fm| fm.doc_type.clone())
+            .unwrap_or_else(|| "note".to_string());
         let content_hash = blake3::hash(doc.content.as_bytes()).to_string();
-        
+
         let raw_links = doc.extract_links();
         let mut normalized_links = Vec::new();
         for link in raw_links {
-            normalized_links.push(crate::indexer::normalize_link(&workspace.root, &file_path, &link));
+            normalized_links.push(crate::indexer::normalize_link(
+                &workspace.root,
+                &file_path,
+                &link,
+            ));
         }
-        
+
         let links_raw_str = serde_json::to_string(&normalized_links)?;
         let links_resolved_str = "[]".to_string();
 
         let chunks = Indexer::chunk_text(&doc.content);
-        if chunks.is_empty() { continue; }
-        
+        if chunks.is_empty() {
+            continue;
+        }
+
         let mut embeddings = Vec::with_capacity(chunks.len());
         let chunk_texts: Vec<String> = chunks.iter().map(|c| c.text.clone()).collect();
         let batch_size = 32;
         let mut failed = false;
-        
+
         for batch in chunk_texts.chunks(batch_size) {
             match indexer.embed(batch) {
                 Ok(mut e) => embeddings.append(&mut e),
@@ -387,11 +441,11 @@ pub async fn index_vault_full(workspace: &crate::workspace::Workspace, store: &c
                 }
             }
         }
-        
+
         if failed {
             continue;
         }
-        
+
         for (i, (chunk, vector)) in chunks.into_iter().zip(embeddings).enumerate() {
             records.push(crate::store::ChunkRecord {
                 document_id: doc_id.clone(),
@@ -416,7 +470,7 @@ pub async fn index_vault_full(workspace: &crate::workspace::Workspace, store: &c
     } else {
         tracing::info!("Full Reindex: No indexable content found.");
     }
-    
+
     Ok(())
 }
 
@@ -431,7 +485,7 @@ pub fn normalize_link(workspace_root: &Path, current_file: &Path, link: &str) ->
             current_dir.push(part);
         }
     }
-    
+
     if let Ok(rel) = current_dir.strip_prefix(workspace_root) {
         rel.to_string_lossy().to_string()
     } else {

@@ -1,6 +1,6 @@
-use std::path::{Path, PathBuf};
 use anyhow::Result;
 use std::fs;
+use std::path::{Path, PathBuf};
 
 pub enum ImportAction {
     Import,
@@ -25,33 +25,43 @@ impl ImportService {
 
     pub fn detect_existing_docs(&self) -> Vec<PathBuf> {
         let mut found = Vec::new();
-        
+
         // 1. Explicit directory targets and rule files without .md
         let targets = vec![
-            "docs", "ADR", "adr", ".cursorrules", ".windsurfrules", ".clinerules", ".rules", "architecture", "decisions"
+            "docs",
+            "ADR",
+            "adr",
+            ".cursorrules",
+            ".windsurfrules",
+            ".clinerules",
+            ".rules",
+            "architecture",
+            "decisions",
         ];
-        
+
         for t in targets {
             let path = self.workspace_root.join(t);
             if path.exists() {
                 found.push(path);
             }
         }
-        
+
         // 2. All .md files in the root directory
         if let Ok(entries) = fs::read_dir(&self.workspace_root) {
             for entry in entries.flatten() {
                 if let Ok(file_type) = entry.file_type()
-                    && file_type.is_file() {
-                        let path = entry.path();
-                        if path.extension().and_then(|s| s.to_str()) == Some("md")
-                            && !found.contains(&path) {
-                                found.push(path);
-                            }
+                    && file_type.is_file()
+                {
+                    let path = entry.path();
+                    if path.extension().and_then(|s| s.to_str()) == Some("md")
+                        && !found.contains(&path)
+                    {
+                        found.push(path);
                     }
+                }
             }
         }
-        
+
         found
     }
 
@@ -111,7 +121,12 @@ impl ImportService {
         if src.is_file() {
             let ext = src.extension().and_then(|s| s.to_str()).unwrap_or("");
             let fname = src.file_name().unwrap_or_default().to_string_lossy();
-            if ext == "md" || fname.starts_with(".cursorrules") || fname.starts_with(".windsurfrules") || fname.starts_with(".clinerules") || fname == ".rules" {
+            if ext == "md"
+                || fname.starts_with(".cursorrules")
+                || fname.starts_with(".windsurfrules")
+                || fname.starts_with(".clinerules")
+                || fname == ".rules"
+            {
                 self.import_single_file(src, organize)?;
             }
         } else if src.is_dir() {
@@ -137,7 +152,11 @@ impl ImportService {
 
         fs::create_dir_all(&dest_dir)?;
         let file_name = src.file_name().unwrap().to_string_lossy();
-        let safe_name = if file_name.starts_with(".cursorrules") || file_name.starts_with(".windsurfrules") || file_name.starts_with(".clinerules") || file_name == ".rules" {
+        let safe_name = if file_name.starts_with(".cursorrules")
+            || file_name.starts_with(".windsurfrules")
+            || file_name.starts_with(".clinerules")
+            || file_name == ".rules"
+        {
             format!("{}.md", file_name)
         } else {
             file_name.to_string()
@@ -159,7 +178,12 @@ impl ImportService {
         if src.is_file() {
             let ext = src.extension().and_then(|s| s.to_str()).unwrap_or("");
             let fname = src.file_name().unwrap_or_default().to_string_lossy();
-            if ext == "md" || fname.starts_with(".cursorrules") || fname.starts_with(".windsurfrules") || fname.starts_with(".clinerules") || fname == ".rules" {
+            if ext == "md"
+                || fname.starts_with(".cursorrules")
+                || fname.starts_with(".windsurfrules")
+                || fname.starts_with(".clinerules")
+                || fname == ".rules"
+            {
                 self.create_link_file(src)?;
             }
         } else if src.is_dir() {
@@ -174,34 +198,43 @@ impl ImportService {
     fn create_link_file(&self, src: &Path) -> Result<()> {
         let category = self.map_category(src);
         fs::create_dir_all(&category)?;
-        
+
         let file_name = src.file_name().unwrap().to_string_lossy();
-        let safe_name = if file_name.starts_with(".cursorrules") || file_name.starts_with(".windsurfrules") || file_name.starts_with(".clinerules") || file_name == ".rules" {
+        let safe_name = if file_name.starts_with(".cursorrules")
+            || file_name.starts_with(".windsurfrules")
+            || file_name.starts_with(".clinerules")
+            || file_name == ".rules"
+        {
             format!("{}.md", file_name)
         } else {
             file_name.to_string()
         };
-        
+
         let dest_file = category.join(safe_name);
-        
-        let rel_source = pathdiff::diff_paths(src, &category)
-            .unwrap_or_else(|| src.to_path_buf());
-            
+
+        let rel_source = pathdiff::diff_paths(src, &category).unwrap_or_else(|| src.to_path_buf());
+
         let id = uuid::Uuid::new_v4().to_string();
         let doc_type = category.file_name().unwrap_or_default().to_string_lossy();
-        
+
         let frontmatter = format!(
             "---\nmemory_version: 1\nid: {}\ntype: {}\nlink: {}\n---\n",
-            id, doc_type, rel_source.display()
+            id,
+            doc_type,
+            rel_source.display()
         );
-        
+
         fs::write(dest_file, frontmatter)?;
         Ok(())
     }
 
     fn map_category(&self, src: &Path) -> PathBuf {
-        let rel_path = src.strip_prefix(&self.workspace_root).unwrap_or(src).to_string_lossy().to_lowercase();
-        
+        let rel_path = src
+            .strip_prefix(&self.workspace_root)
+            .unwrap_or(src)
+            .to_string_lossy()
+            .to_lowercase();
+
         let category = if rel_path.starts_with("readme") {
             "guides"
         } else if rel_path.starts_with("adr") || rel_path.starts_with("decisions") {
@@ -210,16 +243,29 @@ impl ImportService {
             "api"
         } else if rel_path.starts_with("docs/architecture") {
             "architecture"
-        } else if rel_path.ends_with(".cursorrules") || rel_path.ends_with(".windsurfrules") || rel_path.ends_with(".clinerules") || rel_path.ends_with(".rules") || rel_path.contains("claude.md") || rel_path.contains("gemini.md") || rel_path.contains("agent") {
+        } else if rel_path.ends_with(".cursorrules")
+            || rel_path.ends_with(".windsurfrules")
+            || rel_path.ends_with(".clinerules")
+            || rel_path.ends_with(".rules")
+            || rel_path.contains("claude.md")
+            || rel_path.contains("gemini.md")
+            || rel_path.contains("agent")
+        {
             "rules"
         } else if rel_path.contains("plan") || rel_path.contains("roadmap") {
             "architecture"
-        } else if rel_path.contains("changelog") || rel_path.contains("history") || rel_path.contains("walkthrough") || rel_path.contains("task.md") || rel_path.contains("implementation_plan") || rel_path.contains("architecture_analysis") {
+        } else if rel_path.contains("changelog")
+            || rel_path.contains("history")
+            || rel_path.contains("walkthrough")
+            || rel_path.contains("task.md")
+            || rel_path.contains("implementation_plan")
+            || rel_path.contains("architecture_analysis")
+        {
             "artifacts"
         } else {
             "docs"
         };
-        
+
         self.vault_path.join(category)
     }
 }

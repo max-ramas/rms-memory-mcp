@@ -1,13 +1,13 @@
 mod cli;
 mod document;
+mod import;
 mod indexer;
 mod install;
+mod link;
 mod mcp_server;
 mod rules_injector;
 mod store;
 mod workspace;
-mod link;
-mod import;
 
 use anyhow::Result;
 
@@ -17,7 +17,7 @@ async fn main() -> Result<()> {
     std::fs::create_dir_all(&log_dir)?;
     let file_appender = tracing_appender::rolling::never(&log_dir, "rms.log");
     let (non_blocking, _guard) = tracing_appender::non_blocking(file_appender);
-    
+
     tracing_subscriber::fmt()
         .with_writer(non_blocking)
         .with_ansi(false)

@@ -1,8 +1,8 @@
-use std::path::{Path, PathBuf};
+use anyhow::{Result, anyhow};
 use serde::{Deserialize, Serialize};
-use std::fs;
 use std::collections::HashMap;
-use anyhow::{anyhow, Result};
+use std::fs;
+use std::path::{Path, PathBuf};
 
 #[derive(Deserialize, Serialize, Debug, Clone, Default)]
 pub struct Registry {
@@ -32,11 +32,21 @@ pub struct ProjectConfig {
 }
 
 fn default_include() -> Vec<String> {
-    vec!["rules/**/*.md".to_string(), "decisions/**/*.md".to_string(), "architecture/**/*.md".to_string(), "artifacts/**/*.md".to_string(), "**/*.md".to_string()]
+    vec![
+        "rules/**/*.md".to_string(),
+        "decisions/**/*.md".to_string(),
+        "architecture/**/*.md".to_string(),
+        "artifacts/**/*.md".to_string(),
+        "**/*.md".to_string(),
+    ]
 }
 
 fn default_exclude() -> Vec<String> {
-    vec!["node_modules/**".to_string(), "vendor/**".to_string(), ".git/**".to_string()]
+    vec![
+        "node_modules/**".to_string(),
+        "vendor/**".to_string(),
+        ".git/**".to_string(),
+    ]
 }
 
 pub fn base_dir() -> PathBuf {
@@ -48,15 +58,19 @@ pub fn base_dir() -> PathBuf {
                 let _ = std::fs::remove_file(test_file);
                 return path;
             } else {
-                eprintln!("[WARN] ~/.rms-memory is not writable (sandbox restriction?). Falling back to temp_dir.");
+                eprintln!(
+                    "[WARN] ~/.rms-memory is not writable (sandbox restriction?). Falling back to temp_dir."
+                );
             }
         } else {
-            eprintln!("[WARN] Cannot create ~/.rms-memory (sandbox restriction?). Falling back to temp_dir.");
+            eprintln!(
+                "[WARN] Cannot create ~/.rms-memory (sandbox restriction?). Falling back to temp_dir."
+            );
         }
     } else {
         eprintln!("[WARN] Cannot find HOME directory. Falling back to temp_dir.");
     }
-    
+
     let fallback = std::env::temp_dir().join("rms-memory");
     let _ = std::fs::create_dir_all(&fallback);
     fallback
@@ -97,13 +111,18 @@ pub struct Workspace {
 }
 
 impl Workspace {
-    pub fn discover(start_dir: &Path, options: Option<crate::rules_injector::InjectOptions>) -> Result<Self> {
+    pub fn discover(
+        start_dir: &Path,
+        options: Option<crate::rules_injector::InjectOptions>,
+    ) -> Result<Self> {
         let mut registry = Registry::load()?;
         let start_canon = fs::canonicalize(start_dir).unwrap_or_else(|_| start_dir.to_path_buf());
         let start_str = start_canon.to_string_lossy().to_string();
 
         if start_str == "/" {
-            return Err(anyhow::anyhow!("Cannot discover or auto-add root directory '/' as a project. The MCP client must provide a valid workspace path."));
+            return Err(anyhow::anyhow!(
+                "Cannot discover or auto-add root directory '/' as a project. The MCP client must provide a valid workspace path."
+            ));
         }
 
         // Find existing project using longest prefix match
@@ -133,7 +152,7 @@ impl Workspace {
                     let _ = crate::rules_injector::inject_rules(&proj_path, inject_opts);
                 }
             }
-            
+
             return Ok(Workspace {
                 root: PathBuf::from(&project.vault_path),
                 code_path: PathBuf::from(&project.code_path),
@@ -144,17 +163,22 @@ impl Workspace {
 
         // Auto-add logic
         if registry.global.auto_add_projects == Some(true) {
-            let global_vault = registry.global.global_vault_path
-                .as_ref()
-                .ok_or_else(|| anyhow!("global_vault_path is not configured in registry.toml"))?;
-                
-            let folder_name = start_canon.file_name()
+            let global_vault =
+                registry.global.global_vault_path.as_ref().ok_or_else(|| {
+                    anyhow!("global_vault_path is not configured in registry.toml")
+                })?;
+
+            let folder_name = start_canon
+                .file_name()
                 .and_then(|n| n.to_str())
                 .unwrap_or("UnknownProject")
                 .to_string();
-                
-            let vault_path = Path::new(global_vault).join(&folder_name).to_string_lossy().to_string();
-            
+
+            let vault_path = Path::new(global_vault)
+                .join(&folder_name)
+                .to_string_lossy()
+                .to_string();
+
             // Create the vault folders
             fs::create_dir_all(Path::new(&vault_path).join("rules"))?;
             fs::create_dir_all(Path::new(&vault_path).join("decisions"))?;
@@ -169,8 +193,10 @@ impl Workspace {
                 include: default_include(),
                 exclude: default_exclude(),
             };
-            
-            registry.projects.insert(folder_name, project_config.clone());
+
+            registry
+                .projects
+                .insert(folder_name, project_config.clone());
             registry.save()?;
 
             if registry.global.inject_rules.unwrap_or(false) {
@@ -181,12 +207,17 @@ impl Workspace {
                     tracing::info!("Successfully injected RMS Memory rules into IDE configs.");
                 }
             } else {
-                tracing::info!("Rules injection disabled by default, skipping auto-configuration of repository rules. Run `rms-memory init` to explicitly enable.");
+                tracing::info!(
+                    "Rules injection disabled by default, skipping auto-configuration of repository rules. Run `rms-memory init` to explicitly enable."
+                );
             }
-            
+
             if let Some(strategy) = &registry.global.auto_import_strategy {
                 if strategy != "skip" {
-                    let import_service = crate::import::ImportService::new(start_canon.clone(), PathBuf::from(&vault_path));
+                    let import_service = crate::import::ImportService::new(
+                        start_canon.clone(),
+                        PathBuf::from(&vault_path),
+                    );
                     let docs = import_service.detect_existing_docs();
                     if !docs.is_empty() {
                         let action = match strategy.as_str() {
@@ -203,9 +234,11 @@ impl Workspace {
                     }
                 }
             } else {
-                tracing::info!("Auto-initialized vault. Run 'rms-memory import' to import existing docs.");
+                tracing::info!(
+                    "Auto-initialized vault. Run 'rms-memory import' to import existing docs."
+                );
             }
-            
+
             Ok(Workspace {
                 root: PathBuf::from(&project_config.vault_path),
                 code_path: PathBuf::from(&project_config.code_path),
@@ -213,7 +246,9 @@ impl Workspace {
                 exclude: project_config.exclude.clone(),
             })
         } else {
-            Err(anyhow!("Project not found in registry and auto_add_projects is false or unset"))
+            Err(anyhow!(
+                "Project not found in registry and auto_add_projects is false or unset"
+            ))
         }
     }
 
@@ -229,7 +264,7 @@ impl Workspace {
     }
 
     pub fn find_markdown_files(&self) -> Result<Vec<PathBuf>> {
-        use glob::{glob, Pattern};
+        use glob::{Pattern, glob};
         let mut include_patterns = Vec::new();
         for inc in &self.include {
             let pat = self.root.join(inc).to_string_lossy().to_string();

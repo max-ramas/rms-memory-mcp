@@ -1,7 +1,7 @@
-use std::fs::{self};
-use anyhow::{Result, Context};
-use dialoguer::{MultiSelect, Confirm, Select, theme::ColorfulTheme};
+use anyhow::{Context, Result};
+use dialoguer::{Confirm, MultiSelect, Select, theme::ColorfulTheme};
 use similar::{ChangeTag, TextDiff};
+use std::fs::{self};
 
 #[derive(Debug, Clone)]
 struct IdeConfig {
@@ -18,46 +18,74 @@ impl IdeConfig {
 
 fn get_ide_registry() -> Vec<IdeConfig> {
     vec![
-        IdeConfig::new("Claude Desktop", vec![
-            "Library/Application Support/Claude/claude_desktop_config.json",
-            ".config/Claude/claude_desktop_config.json", // linux
-        ], "mcpServers"),
-        IdeConfig::new("Cursor", vec![
-            ".cursor/mcp.json",
-        ], "mcpServers"),
-        IdeConfig::new("Zed", vec![
-            ".config/zed/settings.json",
-        ], "context_servers"),
-        IdeConfig::new("VSCode (Roo Cline)", vec![
-            "Library/Application Support/Code/User/globalStorage/rooveterinaryinc.roo-cline/settings/mcp_settings.json",
-            ".config/Code/User/globalStorage/rooveterinaryinc.roo-cline/settings/mcp_settings.json",
-        ], "mcpServers"),
-        IdeConfig::new("Antigravity IDE (Roo Cline)", vec![
-            "Library/Application Support/Antigravity IDE/User/globalStorage/rooveterinaryinc.roo-cline/settings/mcp_settings.json",
-            ".config/Antigravity IDE/User/globalStorage/rooveterinaryinc.roo-cline/settings/mcp_settings.json",
-        ], "mcpServers"),
-        IdeConfig::new("Gemini CLI", vec![
-            ".gemini/config/mcp_config.json",
-            ".gemini/antigravity/mcp_config.json",
-            ".gemini/settings.json",
-        ], "mcpServers"),
-        IdeConfig::new("QwenCode", vec![
-            "Library/Application Support/Qwen/settings.json",
-            ".config/Qwen/settings.json",
-        ], "mcpServers"),
-        IdeConfig::new("OpenCode", vec![
-            "Library/Application Support/opencode/opencode.json",
-            "Library/Application Support/ai.opencode.desktop/settings.json",
-            ".config/opencode/opencode.json",
-        ], "mcp"),
-        IdeConfig::new("ZCode", vec![
-            "Library/Application Support/ZCode/settings.json",
-            ".config/ZCode/settings.json",
-        ], "mcpServers"),
-        IdeConfig::new("Nova", vec![
-            "Library/Application Support/Nova/settings.json",
-            "Library/Application Support/Nova/Workspaces/Metadata.json",
-        ], "mcpServers"),
+        IdeConfig::new(
+            "Claude Desktop",
+            vec![
+                "Library/Application Support/Claude/claude_desktop_config.json",
+                ".config/Claude/claude_desktop_config.json", // linux
+            ],
+            "mcpServers",
+        ),
+        IdeConfig::new("Cursor", vec![".cursor/mcp.json"], "mcpServers"),
+        IdeConfig::new("Zed", vec![".config/zed/settings.json"], "context_servers"),
+        IdeConfig::new(
+            "VSCode (Roo Cline)",
+            vec![
+                "Library/Application Support/Code/User/globalStorage/rooveterinaryinc.roo-cline/settings/mcp_settings.json",
+                ".config/Code/User/globalStorage/rooveterinaryinc.roo-cline/settings/mcp_settings.json",
+            ],
+            "mcpServers",
+        ),
+        IdeConfig::new(
+            "Antigravity IDE (Roo Cline)",
+            vec![
+                "Library/Application Support/Antigravity IDE/User/globalStorage/rooveterinaryinc.roo-cline/settings/mcp_settings.json",
+                ".config/Antigravity IDE/User/globalStorage/rooveterinaryinc.roo-cline/settings/mcp_settings.json",
+            ],
+            "mcpServers",
+        ),
+        IdeConfig::new(
+            "Gemini CLI",
+            vec![
+                ".gemini/config/mcp_config.json",
+                ".gemini/antigravity/mcp_config.json",
+                ".gemini/settings.json",
+            ],
+            "mcpServers",
+        ),
+        IdeConfig::new(
+            "QwenCode",
+            vec![
+                "Library/Application Support/Qwen/settings.json",
+                ".config/Qwen/settings.json",
+            ],
+            "mcpServers",
+        ),
+        IdeConfig::new(
+            "OpenCode",
+            vec![
+                "Library/Application Support/opencode/opencode.json",
+                "Library/Application Support/ai.opencode.desktop/settings.json",
+                ".config/opencode/opencode.json",
+            ],
+            "mcp",
+        ),
+        IdeConfig::new(
+            "ZCode",
+            vec![
+                "Library/Application Support/ZCode/settings.json",
+                ".config/ZCode/settings.json",
+            ],
+            "mcpServers",
+        ),
+        IdeConfig::new(
+            "Nova",
+            vec![
+                "Library/Application Support/Nova/settings.json",
+                "Library/Application Support/Nova/Workspaces/Metadata.json",
+            ],
+            "mcpServers",
+        ),
     ]
 }
 
@@ -66,7 +94,7 @@ pub async fn run_installer(auto_yes: bool, dry_run: bool) -> Result<()> {
 
     let base_dirs = directories::BaseDirs::new().context("Cannot find base directories")?;
     let home = base_dirs.home_dir();
-    
+
     let registry = get_ide_registry();
     let mut valid_targets = Vec::new();
     let mut found_ides = std::collections::HashSet::new();
@@ -99,7 +127,12 @@ pub async fn run_installer(auto_yes: bool, dry_run: bool) -> Result<()> {
                 // Base directory exists, but config file doesn't. Propose creating it.
                 // We'll treat this as a valid target with an empty JSON object.
                 found_ides.insert(ide.name.to_string());
-                valid_targets.push((candidate.clone(), serde_json::json!({}), ide.clone(), "{}".to_string()));
+                valid_targets.push((
+                    candidate.clone(),
+                    serde_json::json!({}),
+                    ide.clone(),
+                    "{}".to_string(),
+                ));
                 break; // Only pick the first path
             }
         }
@@ -131,12 +164,17 @@ pub async fn run_installer(auto_yes: bool, dry_run: bool) -> Result<()> {
                 selected_targets = valid_targets;
             }
             1 => {
-                let items: Vec<String> = valid_targets.iter().map(|(p, _, i, _)| format!("{} ({})", i.name, p.display())).collect();
+                let items: Vec<String> = valid_targets
+                    .iter()
+                    .map(|(p, _, i, _)| format!("{} ({})", i.name, p.display()))
+                    .collect();
                 let chosen = MultiSelect::with_theme(&ColorfulTheme::default())
-                    .with_prompt("Select configuration files to patch (Space to toggle, Enter to confirm)")
+                    .with_prompt(
+                        "Select configuration files to patch (Space to toggle, Enter to confirm)",
+                    )
                     .items(&items)
                     .interact()?;
-                
+
                 if chosen.is_empty() {
                     println!("Cancelled.");
                     return Ok(());
@@ -169,21 +207,33 @@ pub async fn run_installer(auto_yes: bool, dry_run: bool) -> Result<()> {
             })
         };
 
-        let patched_content = inject_jsonc(&original_content, ide.key, "rms-memory", &config_payload);
-        
+        let patched_content =
+            inject_jsonc(&original_content, ide.key, "rms-memory", &config_payload);
+
         if let Some(out) = patched_content {
             if out == original_content {
-                println!("[✅] Already configured in {} ({})", ide.name, candidate.display());
+                println!(
+                    "[✅] Already configured in {} ({})",
+                    ide.name,
+                    candidate.display()
+                );
                 continue;
             }
 
             if !auto_yes && !dry_run {
-                let display_name = format!("{} ({})", ide.name, candidate.file_name().unwrap_or_default().to_string_lossy());
+                let display_name = format!(
+                    "{} ({})",
+                    ide.name,
+                    candidate.file_name().unwrap_or_default().to_string_lossy()
+                );
                 let show_diff = Confirm::with_theme(&ColorfulTheme::default())
-                    .with_prompt(format!("[!] Found {}. Show diff before writing?", display_name))
+                    .with_prompt(format!(
+                        "[!] Found {}. Show diff before writing?",
+                        display_name
+                    ))
                     .default(false)
                     .interact()?;
-                
+
                 if show_diff {
                     let diff = TextDiff::from_lines(&original_content, &out);
                     println!("\n--- Diff for {} ---", candidate.display());
@@ -202,7 +252,7 @@ pub async fn run_installer(auto_yes: bool, dry_run: bool) -> Result<()> {
                     .with_prompt("Write changes?")
                     .default(true)
                     .interact()?;
-                
+
                 if !write_changes {
                     println!("Skipping {}", candidate.display());
                     continue;
@@ -218,22 +268,30 @@ pub async fn run_installer(auto_yes: bool, dry_run: bool) -> Result<()> {
                 } else if let Some(p) = candidate.parent() {
                     let _ = fs::create_dir_all(p);
                 }
-                
+
                 if let Err(e) = fs::write(&candidate, out) {
                     eprintln!("[❌] Failed to write to {}: {}", candidate.display(), e);
                 } else {
-                    println!("[✅] Successfully added to {} ({})", ide.name, candidate.display());
+                    println!(
+                        "[✅] Successfully added to {} ({})",
+                        ide.name,
+                        candidate.display()
+                    );
                 }
             }
         } else {
-            eprintln!("[⚠️] Failed to safely patch {}. It might be malformed or use an unsupported format.", candidate.display());
+            eprintln!(
+                "[⚠️] Failed to safely patch {}. It might be malformed or use an unsupported format.",
+                candidate.display()
+            );
         }
     }
-    
-    
+
     #[cfg(target_os = "macos")]
     {
-        println!("[🔒] Applying macOS entitlements to bypass Library Validation (prevents crashes in sandboxed IDEs)...");
+        println!(
+            "[🔒] Applying macOS entitlements to bypass Library Validation (prevents crashes in sandboxed IDEs)..."
+        );
         let entitlements = r#"<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
@@ -245,11 +303,23 @@ pub async fn run_installer(auto_yes: bool, dry_run: bool) -> Result<()> {
         let entitlements_path = std::env::temp_dir().join("rms_entitlements.plist");
         if fs::write(&entitlements_path, entitlements).is_ok() {
             let status = std::process::Command::new("codesign")
-                .args(["-s", "-", "-f", "--entitlements", entitlements_path.to_str().unwrap(), &my_exe_str])
+                .args([
+                    "-s",
+                    "-",
+                    "-f",
+                    "--entitlements",
+                    entitlements_path.to_str().unwrap(),
+                    &my_exe_str,
+                ])
                 .status();
             match status {
-                Ok(s) if s.success() => println!("[✅] Successfully signed executable with entitlements."),
-                _ => eprintln!("[⚠️] Failed to sign executable. You may experience crashes in Claude Desktop. Try running: codesign -s - -f --entitlements path/to/entitlements.plist {}", my_exe_str),
+                Ok(s) if s.success() => {
+                    println!("[✅] Successfully signed executable with entitlements.")
+                }
+                _ => eprintln!(
+                    "[⚠️] Failed to sign executable. You may experience crashes in Claude Desktop. Try running: codesign -s - -f --entitlements path/to/entitlements.plist {}",
+                    my_exe_str
+                ),
             }
             let _ = fs::remove_file(entitlements_path);
         }
@@ -259,14 +329,13 @@ pub async fn run_installer(auto_yes: bool, dry_run: bool) -> Result<()> {
     Ok(())
 }
 
-
 fn strip_json_comments(json: &str) -> String {
     let mut out = String::with_capacity(json.len());
     let mut in_string = false;
     let mut in_comment = false;
     let mut in_multiline_comment = false;
     let mut chars = json.chars().peekable();
-    
+
     while let Some(c) = chars.next() {
         if in_string {
             out.push(c);
@@ -325,60 +394,70 @@ fn strip_json_comments(json: &str) -> String {
     out
 }
 
-fn inject_jsonc(original: &str, key: &str, tool_name: &str, tool_config: &serde_json::Value) -> Option<String> {
+fn inject_jsonc(
+    original: &str,
+    key: &str,
+    tool_name: &str,
+    tool_config: &serde_json::Value,
+) -> Option<String> {
     if original.trim().is_empty() || original.trim() == "{}" {
-        let tool_config_str = serde_json::to_string_pretty(tool_config).unwrap().replace("\n", "\n      ");
+        let tool_config_str = serde_json::to_string_pretty(tool_config)
+            .unwrap()
+            .replace("\n", "\n      ");
         let injection = format!("\"{}\": {}", tool_name, tool_config_str);
-        return Some(format!("{{\n  \"{}\": {{\n    {}\n  }}\n}}", key, injection.replace("      ", "    ")));
+        return Some(format!(
+            "{{\n  \"{}\": {{\n    {}\n  }}\n}}",
+            key,
+            injection.replace("      ", "    ")
+        ));
     }
 
     let stripped = strip_json_comments(original);
     let mut json = serde_json::from_str::<serde_json::Value>(&stripped).ok()?;
-    
+
     let obj = json.as_object_mut()?;
     if let Some(mcp) = obj.get(key)
         && let Some(mcp_obj) = mcp.as_object()
-            && mcp_obj.contains_key(tool_name) {
-                // Already exists — replace the existing block in-place
-                // Find "rms-memory": { ... } in the original text and replace it
-                let entry_pattern = format!(
-                    r#""{}"\s*:\s*\{{[^{{}}]*\}}"#,
-                    regex::escape(tool_name)
-                );
-                if let Ok(re) = regex::Regex::new(&entry_pattern)
-                    && let Some(mat) = re.find(original) {
-                        // Detect indentation from the matched block
-                        let before_match = &original[..mat.start()];
-                        let indent = before_match
-                            .rfind('\n')
-                            .map(|nl| {
-                                let line_start = nl + 1;
-                                let spaces: String = before_match[line_start..]
-                                    .chars()
-                                    .take_while(|c| c.is_whitespace())
-                                    .collect();
-                                spaces
-                            })
-                            .unwrap_or_else(|| "    ".to_string());
-                        let inner_indent = format!("{}  ", indent);
-                        
-                        let new_config_str = serde_json::to_string_pretty(tool_config).unwrap();
-                        let new_config_indented = new_config_str.replace("\n", &format!("\n{}", inner_indent));
-                        let replacement = format!("\"{}\": {}", tool_name, new_config_indented);
-                        
-                        let mut patched = original.to_string();
-                        patched.replace_range(mat.range(), &replacement);
-                        return Some(patched);
-                    }
-                // Regex didn't match (nested braces?) — skip to avoid corruption
-                return Some(original.to_string());
-            }
-    
+        && mcp_obj.contains_key(tool_name)
+    {
+        // Already exists — replace the existing block in-place
+        // Find "rms-memory": { ... } in the original text and replace it
+        let entry_pattern = format!(r#""{}"\s*:\s*\{{[^{{}}]*\}}"#, regex::escape(tool_name));
+        if let Ok(re) = regex::Regex::new(&entry_pattern)
+            && let Some(mat) = re.find(original)
+        {
+            // Detect indentation from the matched block
+            let before_match = &original[..mat.start()];
+            let indent = before_match
+                .rfind('\n')
+                .map(|nl| {
+                    let line_start = nl + 1;
+                    let spaces: String = before_match[line_start..]
+                        .chars()
+                        .take_while(|c| c.is_whitespace())
+                        .collect();
+                    spaces
+                })
+                .unwrap_or_else(|| "    ".to_string());
+            let inner_indent = format!("{}  ", indent);
+
+            let new_config_str = serde_json::to_string_pretty(tool_config).unwrap();
+            let new_config_indented = new_config_str.replace("\n", &format!("\n{}", inner_indent));
+            let replacement = format!("\"{}\": {}", tool_name, new_config_indented);
+
+            let mut patched = original.to_string();
+            patched.replace_range(mat.range(), &replacement);
+            return Some(patched);
+        }
+        // Regex didn't match (nested braces?) — skip to avoid corruption
+        return Some(original.to_string());
+    }
+
     let tool_config_str = serde_json::to_string_pretty(tool_config).unwrap();
     // indent it
     let tool_config_str = tool_config_str.replace("\n", "\n      ");
     let injection = format!("\"{}\": {}", tool_name, tool_config_str);
-    
+
     if obj.contains_key(key) {
         // Simple regex to find "key": {
         let pattern = format!(r#"("{}"\s*:\s*\{{)"#, key);
@@ -405,10 +484,14 @@ fn inject_jsonc(original: &str, key: &str, tool_name: &str, tool_config: &serde_
             if needs_comma {
                 patched.push(',');
             }
-            patched.push_str(&format!("\n  \"{}\": {{\n    {}\n  }}\n}}", key, injection.replace("      ", "    ")));
+            patched.push_str(&format!(
+                "\n  \"{}\": {{\n    {}\n  }}\n}}",
+                key,
+                injection.replace("      ", "    ")
+            ));
             return Some(patched);
         }
     }
-    
+
     None
 }
