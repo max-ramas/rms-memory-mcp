@@ -35,6 +35,11 @@ jobs:
       with:
         components: clippy, rustfmt
 
+    - name: Install Protoc
+      uses: arduino/setup-protoc@v3
+      with:
+        repo-token: ${{ secrets.GITHUB_TOKEN }}
+
     - name: Check Formatting
       run: cargo fmt --all -- --check
 
