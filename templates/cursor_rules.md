@@ -9,4 +9,7 @@ You are connected to the **RMS Memory MCP Server**, your external brain for this
    - Architectural decisions go to `architecture/`.
    - General rules go to `rules/`.
    - Technical constraints or decisions go to `decisions/`.
+   - Task lists, logs, and walkthroughs go to `artifacts/`.
+   - General project documentation goes to `docs/`.
+   - API specifications go to `api/`.
 <!-- RMS-MEMORY-END -->

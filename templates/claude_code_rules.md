@@ -9,6 +9,9 @@ You are connected to the RMS Memory MCP Server, your persistent external brain f
 - Architectural decisions MUST be saved in `architecture/`.
 - General coding rules MUST be saved in `rules/`.
 - Technical constraints or decisions MUST be saved in `decisions/`.
+- Task lists, logs, and walkthroughs MUST be saved in `artifacts/`.
+- General project documentation MUST be saved in `docs/`.
+- API specifications MUST be saved in `api/`.
 </rules>
 </rms_memory_mcp_integration>
 <!-- RMS-MEMORY-END -->

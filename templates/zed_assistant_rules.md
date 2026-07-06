@@ -9,4 +9,7 @@ You are operating with the **RMS Memory MCP Server**, your persistent external m
   - Architectural decisions -> `architecture/`
   - Project rules -> `rules/`
   - Findings/Constraints -> `decisions/`
+  - Task lists and walkthroughs -> `artifacts/`
+  - General documentation -> `docs/`
+  - API documentation -> `api/`
 <!-- RMS-MEMORY-END -->
