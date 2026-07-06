@@ -161,6 +161,8 @@ impl Workspace {
             fs::create_dir_all(Path::new(&vault_path).join("decisions"))?;
             fs::create_dir_all(Path::new(&vault_path).join("architecture"))?;
             fs::create_dir_all(Path::new(&vault_path).join("artifacts"))?;
+            fs::create_dir_all(Path::new(&vault_path).join("docs"))?;
+            fs::create_dir_all(Path::new(&vault_path).join("api"))?;
 
             let project_config = ProjectConfig {
                 code_path: start_str.clone(),

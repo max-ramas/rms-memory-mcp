@@ -206,6 +206,8 @@ impl Cli {
                     std::fs::create_dir_all(std::path::Path::new(&vault_path).join("decisions"))?;
                     std::fs::create_dir_all(std::path::Path::new(&vault_path).join("architecture"))?;
                     std::fs::create_dir_all(std::path::Path::new(&vault_path).join("artifacts"))?;
+                    std::fs::create_dir_all(std::path::Path::new(&vault_path).join("docs"))?;
+                    std::fs::create_dir_all(std::path::Path::new(&vault_path).join("api"))?;
                     
                     registry.projects.insert(folder_name.clone(), crate::workspace::ProjectConfig {
                         code_path: start_canon.to_string_lossy().to_string(),
