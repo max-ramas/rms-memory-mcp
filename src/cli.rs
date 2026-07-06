@@ -25,10 +25,12 @@ pub enum Commands {
     },
     /// Initialize local project in the global registry manually
     Init {
-        #[arg(long)]
+        #[arg(short, long)]
         dry_run: bool,
-        #[arg(long)]
+        #[arg(short, long)]
         force: bool,
+        #[arg(long)]
+        full: bool,
     },
     /// Import existing documentation into the Vault
     Import,
@@ -228,7 +230,11 @@ impl Cli {
                     println!("No changes made to configuration.");
                 }
             }
-            Commands::Init { dry_run, force } => {
+            Commands::Init {
+                dry_run,
+                force,
+                full,
+            } => {
                 let current_dir = std::env::current_dir()?;
                 let start_canon = std::fs::canonicalize(&current_dir)
                     .unwrap_or_else(|_| current_dir.to_path_buf());
@@ -289,6 +295,7 @@ impl Cli {
                         let opts = crate::rules_injector::InjectOptions {
                             dry_run: *dry_run,
                             force: *force,
+                            full: *full,
                             interactive: true,
                         };
                         if let Err(e) = crate::rules_injector::inject_rules(&start_canon, opts) {

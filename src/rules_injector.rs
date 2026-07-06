@@ -14,6 +14,7 @@ const END_MARKER: &str = "<!-- RMS-MEMORY-END -->";
 pub struct InjectOptions {
     pub dry_run: bool,
     pub force: bool,
+    pub full: bool,
     pub interactive: bool,
 }
 
@@ -37,14 +38,18 @@ pub fn inject_rules(project_root: &Path, options: InjectOptions) -> Result<()> {
 
     for (file_path_str, template) in target_files {
         let file_path = project_root.join(file_path_str);
-        if file_path.exists() {
+        let exists = file_path.exists();
+
+        if exists {
             existing_count += 1;
             files_to_inject.push((file_path_str, template, true));
+        } else if options.full {
+            files_to_inject.push((file_path_str, template, false));
         }
     }
 
-    // If no rule files exist, just create AGENT.md as a fallback
-    if existing_count == 0 {
+    // If no rule files exist and not in full mode, just create AGENT.md as a fallback
+    if existing_count == 0 && !options.full {
         files_to_inject.push(("AGENT.md", GENERAL_RULES, false));
     }
 
