@@ -1,9 +1,7 @@
 use clap::{Parser, Subcommand};
 use anyhow::Result;
-use std::path::PathBuf;
 use crate::workspace::Workspace;
 use crate::indexer::Indexer;
-use crate::store::Store;
 
 #[derive(Parser)]
 #[command(name = "rms-memory", version = env!("CARGO_PKG_VERSION"), about = "RMS Memory MCP Server")]
@@ -238,13 +236,11 @@ impl Cli {
                     if !dry_run {
                         let import_service = crate::import::ImportService::new(start_canon, std::path::PathBuf::from(&vault_path));
                         let docs = import_service.detect_existing_docs();
-                        if !docs.is_empty() {
-                            if let Ok(action) = import_service.prompt_action(&docs) {
-                                if let Err(e) = import_service.execute(action, docs) {
+                        if !docs.is_empty()
+                            && let Ok(action) = import_service.prompt_action(&docs)
+                                && let Err(e) = import_service.execute(action, docs) {
                                     eprintln!("Warning: Failed to import documents: {}", e);
                                 }
-                            }
-                        }
                     }
 
                 } else {

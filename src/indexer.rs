@@ -1,14 +1,9 @@
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use fastembed::{TextEmbedding, InitOptions, EmbeddingModel};
 use anyhow::{Result, Context};
-use crate::document::Document;
-use lancedb::arrow::arrow_array::{
-    RecordBatch, StringArray, UInt32Array, FixedSizeListArray, Float32Array
-};
-use lancedb::arrow::arrow_schema::{Field, DataType};
-use lancedb::table::Table;
 use pulldown_cmark::{Parser, Options, Event, Tag};
 
+#[allow(dead_code)]
 pub trait Embedder: Send + Sync {
     fn embed(&mut self, texts: &[String]) -> Result<Vec<Vec<f32>>>;
 }
@@ -82,7 +77,7 @@ impl Indexer {
         
         while current_idx < lines.len() {
             let mut chunk_text = String::new();
-            let mut next_idx = current_idx + 1;
+            let next_idx = current_idx + 1;
             let mut overlap_idx = current_idx;
             
             while current_idx < lines.len() {
@@ -122,7 +117,7 @@ impl Indexer {
         let mut in_heading = false;
         let mut heading_text = String::new();
 
-        let mut push_current = |current_chunk_text: &mut String, current_heading: &str, chunks: &mut Vec<Chunk>| {
+        let push_current = |current_chunk_text: &mut String, current_heading: &str, chunks: &mut Vec<Chunk>| {
             let trimmed = current_chunk_text.trim();
             if !trimmed.is_empty() {
                 if trimmed.len() > 1500 {
@@ -171,11 +166,10 @@ impl Indexer {
                         current_chunk_text.push_str("\n\n");
                     }
                 }
-                Event::Text(t) | Event::Code(t) => {
-                    if in_heading {
+                Event::Text(t) | Event::Code(t)
+                    if in_heading => {
                         heading_text.push_str(&t);
                     }
-                }
                 _ => {}
             }
         }
@@ -185,7 +179,7 @@ impl Indexer {
     }
 
     pub fn embed(&mut self, chunks: &[String]) -> Result<Vec<Vec<f32>>> {
-        let embeddings = self.model.embed(chunks.to_vec(), None)?;
+        let embeddings = self.model.embed(chunks, None)?;
         Ok(embeddings)
     }
 }

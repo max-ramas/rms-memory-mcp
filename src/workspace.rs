@@ -2,8 +2,7 @@ use std::path::{Path, PathBuf};
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::collections::HashMap;
-use anyhow::{anyhow, Context, Result};
-use glob::Pattern;
+use anyhow::{anyhow, Result};
 
 #[derive(Deserialize, Serialize, Debug, Clone, Default)]
 pub struct Registry {

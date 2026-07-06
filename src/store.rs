@@ -4,7 +4,7 @@ use anyhow::{Result, Context};
 
 use lancedb::connect;
 use lancedb::table::Table;
-use lancedb::index::{Index, vector::IvfPqIndexBuilder};
+use lancedb::index::Index;
 use lancedb::arrow::arrow_schema::{DataType, Field, Schema as ArrowSchema};
 
 pub const VECTOR_DIMENSION: usize = 384;
@@ -21,16 +21,14 @@ impl Store {
         let meta_path = PathBuf::from(storage_path).join("metadata.json");
         if meta_path.exists() {
             let meta_content = std::fs::read_to_string(&meta_path)?;
-            if let Ok(meta_json) = serde_json::from_str::<serde_json::Value>(&meta_content) {
-                if let Some(dim) = meta_json.get("dimension").and_then(|v| v.as_u64()) {
-                    if dim as usize != VECTOR_DIMENSION {
+            if let Ok(meta_json) = serde_json::from_str::<serde_json::Value>(&meta_content)
+                && let Some(dim) = meta_json.get("dimension").and_then(|v| v.as_u64())
+                    && dim as usize != VECTOR_DIMENSION {
                         return Err(anyhow::anyhow!(
                             "INDEX_REBUILD_REQUIRED: Database dimension {} does not match current model dimension {}. Please reindex.",
                             dim, VECTOR_DIMENSION
                         ));
                     }
-                }
-            }
         }
 
         let db = connect(storage_path).execute().await.context("Failed to connect to LanceDB")?;

@@ -54,11 +54,10 @@ pub fn inject_rules(project_root: &Path, options: InjectOptions) -> Result<()> {
         let file_path = project_root.join(file_path_str);
         
         // Ensure parent directories exist
-        if let Some(parent) = file_path.parent() {
-            if !parent.exists() {
+        if let Some(parent) = file_path.parent()
+            && !parent.exists() {
                 let _ = std::fs::create_dir_all(parent);
             }
-        }
 
         if exists {
             if append_or_replace_block(&file_path, template, options)? {

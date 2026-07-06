@@ -5,6 +5,7 @@ use anyhow::Result;
 
 #[derive(Deserialize)]
 struct RpcRequest {
+    #[allow(dead_code)]
     jsonrpc: String,
     id: Option<Value>,
     method: String,
@@ -43,7 +44,7 @@ pub struct McpServer {
 fn spawn_sync_watcher(workspace: crate::workspace::Workspace, store: crate::store::Store) {
     tokio::spawn(async move {
         // Initial sync
-        if let Ok(sync_indexer) = tokio::task::spawn_blocking(|| crate::indexer::Indexer::new()).await.unwrap_or(Err(anyhow::anyhow!("spawn_blocking failed"))) {
+        if let Ok(sync_indexer) = tokio::task::spawn_blocking(crate::indexer::Indexer::new).await.unwrap_or(Err(anyhow::anyhow!("spawn_blocking failed"))) {
             let _ = crate::indexer::sync_vault(&workspace, &store, sync_indexer).await;
         }
         
@@ -51,11 +52,10 @@ fn spawn_sync_watcher(workspace: crate::workspace::Workspace, store: crate::stor
         let (tx, mut rx) = tokio::sync::mpsc::channel(100);
         let mut watcher = match notify::RecommendedWatcher::new(
             move |res: notify::Result<notify::Event>| {
-                if let Ok(event) = res {
-                    if matches!(event.kind, notify::EventKind::Modify(_) | notify::EventKind::Create(_) | notify::EventKind::Remove(_)) {
+                if let Ok(event) = res
+                    && matches!(event.kind, notify::EventKind::Modify(_) | notify::EventKind::Create(_) | notify::EventKind::Remove(_)) {
                         let _ = tx.blocking_send(());
                     }
-                }
             },
             notify::Config::default()
         ) {
@@ -72,7 +72,7 @@ fn spawn_sync_watcher(workspace: crate::workspace::Workspace, store: crate::stor
             return;
         }
 
-        let mut debounce_timer = tokio::time::sleep(tokio::time::Duration::from_secs(3));
+        let debounce_timer = tokio::time::sleep(tokio::time::Duration::from_secs(3));
         tokio::pin!(debounce_timer);
         
         let mut pending_sync = false;
@@ -86,7 +86,7 @@ fn spawn_sync_watcher(workspace: crate::workspace::Workspace, store: crate::stor
                 }
                 _ = &mut debounce_timer, if pending_sync => {
                     pending_sync = false;
-                    if let Ok(sync_indexer) = tokio::task::spawn_blocking(|| crate::indexer::Indexer::new()).await.unwrap_or(Err(anyhow::anyhow!("spawn_blocking failed"))) {
+                    if let Ok(sync_indexer) = tokio::task::spawn_blocking(crate::indexer::Indexer::new).await.unwrap_or(Err(anyhow::anyhow!("spawn_blocking failed"))) {
                         let _ = crate::indexer::sync_vault(&workspace, &store, sync_indexer).await;
                     }
                 }
@@ -157,10 +157,10 @@ impl McpServer {
         match method {
             "initialize" => {
                 let mut path = None;
-                if let Some(params_obj) = params.as_ref().and_then(|p| p.as_object()) {
-                    if let Some(root_uri) = params_obj.get("rootUri").and_then(|v| v.as_str()) {
-                        let path_str = if root_uri.starts_with("file://") {
-                            &root_uri[7..]
+                if let Some(params_obj) = params.as_ref().and_then(|p| p.as_object())
+                    && let Some(root_uri) = params_obj.get("rootUri").and_then(|v| v.as_str()) {
+                        let path_str = if let Some(stripped) = root_uri.strip_prefix("file://") {
+                            stripped
                         } else {
                             root_uri
                         };
@@ -168,7 +168,6 @@ impl McpServer {
                             path = Some(std::path::PathBuf::from(path_str));
                         }
                     }
-                }
                 
                 // Fallback to current working directory if rootUri is missing or "/"
                 let path = path.unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("/")));
@@ -181,14 +180,14 @@ impl McpServer {
                             spawn_sync_watcher(workspace.clone(), store.clone());
                             self.store = Some(store);
                         }
-                        Err(e) => {
+                        Err(_e) => {
                         }
                     }
                 } else {
                     // Fallback: use global vault when no project is registered for this path
                     tracing::warn!("No project registered for path: {:?}. Trying global vault fallback.", path);
-                    if let Ok(registry) = crate::workspace::Registry::load() {
-                        if let Some(global_vault) = &registry.global.global_vault_path {
+                    if let Ok(registry) = crate::workspace::Registry::load()
+                        && let Some(global_vault) = &registry.global.global_vault_path {
                             let vault_path = std::path::PathBuf::from(global_vault);
                             if vault_path.exists() {
                                 self.workspace_root = Some(vault_path.clone());
@@ -205,7 +204,6 @@ impl McpServer {
                                 }
                             }
                         }
-                    }
                 }
                 
                 Ok(json!({
@@ -278,7 +276,7 @@ impl McpServer {
                         
                         let query_vector = {
                             if self.indexer.is_none() {
-                                let idx = tokio::task::spawn_blocking(|| crate::indexer::Indexer::new()).await.unwrap_or_else(|_| Err(anyhow::anyhow!("Indexer spawn blocked")))?;
+                                let idx = tokio::task::spawn_blocking(crate::indexer::Indexer::new).await.unwrap_or_else(|_| Err(anyhow::anyhow!("Indexer spawn blocked")))?;
                                 self.indexer = Some(Arc::new(Mutex::new(idx)));
                             }
                             let mut indexer = self.indexer.as_ref().unwrap().lock().await;

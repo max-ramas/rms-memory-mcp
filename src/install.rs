@@ -1,5 +1,4 @@
-use std::path::{Path, PathBuf};
-use std::fs::{self, File};
+use std::fs::{self};
 use anyhow::{Result, Context};
 use dialoguer::{MultiSelect, Confirm, Select, theme::ColorfulTheme};
 use similar::{ChangeTag, TextDiff};
@@ -156,7 +155,7 @@ pub async fn run_installer(auto_yes: bool, dry_run: bool) -> Result<()> {
     let my_exe = std::env::current_exe()?;
     let my_exe_str = my_exe.to_string_lossy().to_string();
 
-    for (candidate, mut json, ide, original_content) in selected_targets {
+    for (candidate, _json, ide, original_content) in selected_targets {
         let config_payload = if ide.name == "OpenCode" {
             serde_json::json!({
                 "enabled": true,
@@ -244,9 +243,9 @@ pub async fn run_installer(auto_yes: bool, dry_run: bool) -> Result<()> {
 </dict>
 </plist>"#;
         let entitlements_path = std::env::temp_dir().join("rms_entitlements.plist");
-        if let Ok(_) = fs::write(&entitlements_path, entitlements) {
+        if fs::write(&entitlements_path, entitlements).is_ok() {
             let status = std::process::Command::new("codesign")
-                .args(&["-s", "-", "-f", "--entitlements", entitlements_path.to_str().unwrap(), &my_exe_str])
+                .args(["-s", "-", "-f", "--entitlements", entitlements_path.to_str().unwrap(), &my_exe_str])
                 .status();
             match status {
                 Ok(s) if s.success() => println!("[✅] Successfully signed executable with entitlements."),
@@ -337,17 +336,17 @@ fn inject_jsonc(original: &str, key: &str, tool_name: &str, tool_config: &serde_
     let mut json = serde_json::from_str::<serde_json::Value>(&stripped).ok()?;
     
     let obj = json.as_object_mut()?;
-    if let Some(mcp) = obj.get(key) {
-        if let Some(mcp_obj) = mcp.as_object() {
-            if mcp_obj.contains_key(tool_name) {
+    if let Some(mcp) = obj.get(key)
+        && let Some(mcp_obj) = mcp.as_object()
+            && mcp_obj.contains_key(tool_name) {
                 // Already exists — replace the existing block in-place
                 // Find "rms-memory": { ... } in the original text and replace it
                 let entry_pattern = format!(
                     r#""{}"\s*:\s*\{{[^{{}}]*\}}"#,
                     regex::escape(tool_name)
                 );
-                if let Ok(re) = regex::Regex::new(&entry_pattern) {
-                    if let Some(mat) = re.find(original) {
+                if let Ok(re) = regex::Regex::new(&entry_pattern)
+                    && let Some(mat) = re.find(original) {
                         // Detect indentation from the matched block
                         let before_match = &original[..mat.start()];
                         let indent = before_match
@@ -371,12 +370,9 @@ fn inject_jsonc(original: &str, key: &str, tool_name: &str, tool_config: &serde_
                         patched.replace_range(mat.range(), &replacement);
                         return Some(patched);
                     }
-                }
                 // Regex didn't match (nested braces?) — skip to avoid corruption
                 return Some(original.to_string());
             }
-        }
-    }
     
     let tool_config_str = serde_json::to_string_pretty(tool_config).unwrap();
     // indent it

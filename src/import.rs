@@ -41,16 +41,14 @@ impl ImportService {
         // 2. All .md files in the root directory
         if let Ok(entries) = fs::read_dir(&self.workspace_root) {
             for entry in entries.flatten() {
-                if let Ok(file_type) = entry.file_type() {
-                    if file_type.is_file() {
+                if let Ok(file_type) = entry.file_type()
+                    && file_type.is_file() {
                         let path = entry.path();
-                        if path.extension().and_then(|s| s.to_str()) == Some("md") {
-                            if !found.contains(&path) {
+                        if path.extension().and_then(|s| s.to_str()) == Some("md")
+                            && !found.contains(&path) {
                                 found.push(path);
                             }
-                        }
                     }
-                }
             }
         }
         

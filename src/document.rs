@@ -1,7 +1,7 @@
 use std::path::{Path, PathBuf};
 use serde::{Deserialize, Serialize};
 use std::fs;
-use anyhow::{anyhow, Result};
+use anyhow::Result;
 use uuid::Uuid;
 use regex::Regex;
 
@@ -30,8 +30,8 @@ impl Document {
         let mut frontmatter = None;
         let mut content = text.clone();
 
-        if text.starts_with("---\n") || text.starts_with("---\r\n") {
-            if let Some(end_idx) = text.find("\n---\n").or_else(|| text.find("\r\n---\r\n")) {
+        if (text.starts_with("---\n") || text.starts_with("---\r\n"))
+            && let Some(end_idx) = text.find("\n---\n").or_else(|| text.find("\r\n---\r\n")) {
                 let fm_text = &text[4..end_idx];
                 if let Ok(fm) = serde_yaml::from_str::<Frontmatter>(fm_text) {
                     frontmatter = Some(fm);
@@ -42,7 +42,6 @@ impl Document {
                     content = text[content_start..].to_string();
                 }
             }
-        }
 
         Ok(Document {
             path: path.to_path_buf(),
@@ -53,11 +52,10 @@ impl Document {
     }
 
     pub fn ensure_id(&mut self) -> Result<String> {
-        if let Some(fm) = &self.frontmatter {
-            if let Some(id) = &fm.id {
+        if let Some(fm) = &self.frontmatter
+            && let Some(id) = &fm.id {
                 return Ok(id.clone());
             }
-        }
 
         let new_id = Uuid::new_v4().to_string();
         
