@@ -35,3 +35,6 @@ walkdir = "2.5.0"
 [[bin]]
 name = "rms-memory"
 path = "src/main.rs"
+
+[dev-dependencies]
+tempfile = "3.27.0"

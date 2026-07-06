@@ -95,3 +95,33 @@ impl Document {
         links
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tempfile::tempdir;
+
+    #[test]
+    fn test_parse_frontmatter() {
+        let dir = tempdir().unwrap();
+        let file_path = dir.path().join("test.md");
+        fs::write(&file_path, "---\nid: test-123\n---\n# Content").unwrap();
+
+        let doc = Document::parse(&file_path).unwrap();
+        assert_eq!(doc.frontmatter.unwrap().id.unwrap(), "test-123");
+        assert_eq!(doc.content, "# Content");
+    }
+
+    #[test]
+    fn test_extract_links() {
+        let doc = Document {
+            path: PathBuf::new(),
+            frontmatter: None,
+            content: "Check this [link](docs/test.md) and [another](http://google.com)".to_string(),
+            original_text: "".to_string(),
+        };
+        let links = doc.extract_links();
+        assert_eq!(links.len(), 1);
+        assert_eq!(links[0], "docs/test.md");
+    }
+}

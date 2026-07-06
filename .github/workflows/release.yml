@@ -59,27 +59,27 @@ jobs:
         run: |
           cargo build --release --target x86_64-apple-darwin
           cargo build --release --target aarch64-apple-darwin
-          lipo -create -output target/rms-memory-mcp \
-            target/x86_64-apple-darwin/release/rms-memory-mcp \
-            target/aarch64-apple-darwin/release/rms-memory-mcp
+          lipo -create -output target/rms-memory \
+            target/x86_64-apple-darwin/release/rms-memory \
+            target/aarch64-apple-darwin/release/rms-memory
         shell: bash
 
       - name: Strip Binary (Unix)
         if: runner.os != 'Windows' && matrix.target != 'universal-apple-darwin'
-        run: strip target/${{ matrix.target }}/release/rms-memory-mcp
+        run: strip target/${{ matrix.target }}/release/rms-memory
 
       - name: Strip Binary (macOS Universal)
         if: matrix.target == 'universal-apple-darwin'
-        run: strip target/rms-memory-mcp
+        run: strip target/rms-memory
 
       - name: Package (Unix / macOS)
         if: runner.os != 'Windows'
         run: |
           mkdir -p staging
           if [ "${{ matrix.target }}" == "universal-apple-darwin" ]; then
-            cp target/rms-memory-mcp staging/rms-memory
+            cp target/rms-memory staging/rms-memory
           else
-            cp target/${{ matrix.target }}/release/rms-memory-mcp staging/rms-memory
+            cp target/${{ matrix.target }}/release/rms-memory staging/rms-memory
           fi
           cd staging
           tar -czf ../rms-memory-${{ matrix.target }}.${{ matrix.archive_ext }} rms-memory
@@ -89,7 +89,7 @@ jobs:
         if: runner.os == 'Windows'
         run: |
           mkdir staging
-          cp target\${{ matrix.target }}\release\rms-memory-mcp.exe staging\rms-memory.exe
+          cp target\${{ matrix.target }}\release\rms-memory.exe staging\rms-memory.exe
           cd staging
           Compress-Archive -Path rms-memory.exe -DestinationPath ..\rms-memory-${{ matrix.target }}.${{ matrix.archive_ext }}
         shell: pwsh

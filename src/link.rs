@@ -40,3 +40,34 @@ pub fn get_linked_content(file_path: &Path) -> Option<String> {
     }
     None
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::fs;
+    use tempfile::tempdir;
+
+    #[test]
+    fn test_resolve_link_no_frontmatter() {
+        let dir = tempdir().unwrap();
+        let file_path = dir.path().join("test.md");
+        fs::write(&file_path, "# Just content").unwrap();
+
+        let resolved = resolve_link(&file_path);
+        assert_eq!(resolved, file_path);
+    }
+
+    #[test]
+    fn test_resolve_link_with_frontmatter() {
+        let dir = tempdir().unwrap();
+        let source_path = dir.path().join("source.md");
+        let target_path = dir.path().join("target.md");
+        
+        fs::write(&source_path, "Source content").unwrap();
+        fs::write(&target_path, "---\nlink: source.md\n---\nLinked content").unwrap();
+
+        let resolved = resolve_link(&target_path);
+        // Compare filenames to avoid canonicalize weirdness on macOS temp dirs
+        assert_eq!(resolved.file_name(), source_path.file_name());
+    }
+}
