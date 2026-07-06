@@ -39,19 +39,24 @@ RMS Memory is a specialized Model Context Protocol (MCP) server that acts as a l
   - `.zed/assistant.md` (Zed)
   - `RMS_MEMORY_GUIDE.md` (Fallback)
 - **Non-Destructive AST Patching:** Embedded a safe block-patching algorithm utilizing `<!-- RMS-MEMORY-START -->` and `<!-- RMS-MEMORY-END -->`. This guarantees the server seamlessly injects and updates its usage instructions without corrupting any existing developer constraints. It performs safe in-place updates during injection, completely avoiding the generation of noisy `.bak` files in user workspaces.
+- **Force Generation (`--full`):** By default, the injector only patches rule files that *already exist* to prevent workspace pollution. Running `rms-memory init --full` will force the creation of all supported IDE templates (Cursor, Windsurf, Zed, Gemini, Claude, etc.) and automatically append them to the project's `.gitignore`.
 - **Opt-In Control (`inject_rules`):** Integrated `--inject-rules <true|false>` into the `rms-memory config` CLI command. Auto-injection now strictly defaults to `false`. Developers must explicitly opt-in globally or per-project to protect pristine IDE configs from silent modification.
 - **Dry-Run & Auditing:** Added full `--dry-run` telemetry across all injection and installation flows (`rms-memory init --dry-run`, `rms-memory install --dry-run`). Emits an exact preview of the targeted configuration files and visualizes the generated AST patch payload (`[NEW BLOCK]` vs `[Replace existing block]`) without writing to disk.
 
-### 6. Production-Grade System Resiliency
-To transition from a "toy server" to an instrumental platform, 5 resilience protocols are enforced:
-4. **Garbage Collection (`rms-memory gc`):** Detects and purges orphaned LanceDB vector stores belonging to deprecated project vaults.
-5. **Incremental Sync (`rms-memory sync`):** Background `tokio` indexing on MCP launch. Uses a strict LanceDB `Delete-then-Insert` pipeline against file `mtime` bounds to cleanly sync vectors without RAG pollution.
-6. **Real-time File Watcher:** Background `notify` service instantly detects IDE saves (`Modify` filesystem events). Triggers a trailing-edge debounced (3s) incremental `sync_vault` to guarantee persistent memory seamlessly stays aligned with local workspace changes without requiring manual explicit syncs or server restarts.
-7. **Write-Guard Snapshotting:** JSON-RPC `write` events triggered by autonomous agents are intercepted. The server automatically issues an `fs::copy` artifact backup to `.bak` before permitting the agent's modification. Includes a rolling backup system (`max_backups` config, default 5) to prevent unbounded disk pollution from continuous AI revisions.
-8. **LLMs.txt Export (`export-llms`):** Compiles the entire isolated Vault structure into a standardized `llms.txt` digest for decoupled LLM ingestion or raw curl queries.
-9. **Dedicated Telemetry Logging:** MCP stdio pipelines are preserved strictly for JSON-RPC. All diagnostics, sync logs, and internal errors are securely routed to `~/.rms-memory/rms.log` using standard `tracing-appender` streams. Tail it using `rms-memory log`.
+### 6. LLM-Optimized MCP Tool Schemas
+- **Context-Aware Tool Descriptions:** A common failure mode for MCP servers is providing vague tool schemas (e.g., "Search the database"). RMS Memory embeds highly descriptive, action-oriented prompts directly into the JSON-RPC `tools/list` response.
+- **Proactive AI Behavior:** The tool descriptions explicitly command the LLM when to act. For example, `rms_search` instructs the agent to "Use this tool FIRST to understand the repository's background", and `rms_write` commands the agent to "Use this tool PROACTIVELY at the end of a task if you learned a new user preference". This guarantees Cursor and Claude will leverage the memory vault autonomously without user prompting.
 
-### 7. CI/CD and Cross-Platform Distribution
+### 7. Production-Grade System Resiliency
+To transition from a "toy server" to an instrumental platform, 6 resilience protocols are enforced:
+1. **macOS Sandbox Bypassing:** Claude Desktop and other IDEs operate in strict macOS Read-Only sandboxes. The server detects sandbox constraints and dynamically intercepts `fastembed` model downloads, rerouting `TMPDIR` and caching layers exclusively to the user's guaranteed-writable `~/.rms-memory/cache/` directory.
+2. **Garbage Collection (`rms-memory gc`):** Detects and purges orphaned LanceDB vector stores belonging to deprecated project vaults.
+3. **Incremental Sync (`rms-memory sync`):** Background `tokio` indexing on MCP launch. Uses a strict LanceDB `Delete-then-Insert` pipeline against file `mtime` bounds to cleanly sync vectors without RAG pollution.
+4. **Real-time File Watcher:** Background `notify` service instantly detects IDE saves (`Modify` filesystem events). Triggers a trailing-edge debounced (3s) incremental `sync_vault` to guarantee persistent memory seamlessly stays aligned with local workspace changes without requiring manual explicit syncs or server restarts.
+5. **Write-Guard Snapshotting:** JSON-RPC `write` events triggered by autonomous agents are intercepted. The server automatically issues an `fs::copy` artifact backup to `.bak` before permitting the agent's modification. Includes a rolling backup system (`max_backups` config, default 5) to prevent unbounded disk pollution from continuous AI revisions.
+6. **LLMs.txt Export (`export-llms`):** Compiles the entire isolated Vault structure into a standardized `llms.txt` digest for decoupled LLM ingestion or raw curl queries.
+
+### 8. CI/CD and Cross-Platform Distribution
 - **Strict User-Scoped Isolation:** The core configuration logic was overhauled to enforce a rigid `~/.rms-memory/` standard across all platforms. By utilizing the `directories` crate exclusively to locate the user's home folder, the program correctly targets `C:\Users\username\.rms-memory\` on Windows, `/Users/username/.rms-memory/` on macOS, and `/home/username/.rms-memory/` on Linux without polluting generic OS domains like `AppData/Roaming` or `Library/Application Support/`.
 - **GitHub Actions Matrix:** Engineered a seamless `release.yml` pipeline that triggers on repository version tags.
   - Compiles optimized native binaries for `x86_64-unknown-linux-gnu`, `x86_64-pc-windows-msvc`, `x86_64-apple-darwin`, and `aarch64-apple-darwin`.
