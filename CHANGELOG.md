@@ -2,7 +2,7 @@
 
 All notable changes to this project will be documented in this file.
 
-## [1.0.0] - 2026-07-05 
+## [1.0.0] - 2026-07-07 
 
 ### Fixed
 - **MCP Initialization Bug:** Changed MCP workspace provisioning to fallback to the process's current working directory (`cwd`) when the IDE (like Zed) fails to pass a valid `rootUri` in the JSON-RPC `initialize` handshake. Furthermore, strict validation now rejects root paths (`/`) to entirely prevent the generation of orphaned `UnknownProject` vaults.
