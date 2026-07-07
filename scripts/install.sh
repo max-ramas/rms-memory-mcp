@@ -21,12 +21,7 @@ case "${ARCH}" in
     *)          echo "Unsupported architecture: ${ARCH}"; exit 1;;
 esac
 
-# On macOS, we provide a universal binary
-if [ "${MACHINE_OS}" = "apple-darwin" ]; then
-    TARGET="universal-apple-darwin"
-else
-    TARGET="${MACHINE_ARCH}-${MACHINE_OS}"
-fi
+TARGET="${MACHINE_ARCH}-${MACHINE_OS}"
 
 echo "Detected target: ${TARGET}"
 

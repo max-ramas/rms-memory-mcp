@@ -22,8 +22,12 @@ jobs:
             target: aarch64-unknown-linux-gnu
             archive_ext: tar.gz
             use_cross: false
+          - os: macos-13
+            target: x86_64-apple-darwin
+            archive_ext: tar.gz
+            use_cross: false
           - os: macos-latest
-            target: universal-apple-darwin
+            target: aarch64-apple-darwin
             archive_ext: tar.gz
             use_cross: false
           - os: windows-latest
@@ -38,19 +42,22 @@ jobs:
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
         with:
-          targets: ${{ matrix.target == 'universal-apple-darwin' && 'x86_64-apple-darwin,aarch64-apple-darwin' || matrix.target }}
+          targets: ${{ matrix.target }}
 
       - name: Install Protoc
         uses: arduino/setup-protoc@v3
         with:
           repo-token: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: Install System Dependencies (Linux)
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y pkg-config libssl-dev
+
       - name: Install Cross
         if: matrix.use_cross
         run: cargo install cross --git https://github.com/cross-rs/cross
 
       - name: Build Unix / Windows
-        if: matrix.target != 'universal-apple-darwin'
         run: |
           cargo build --release --target ${{ matrix.target }}
         shell: bash
@@ -72,38 +79,26 @@ jobs:
           cargo generate-rpm --target ${{ matrix.target }} --payload target/${{ matrix.target }}/release/rms-memory=/usr/bin/rms-memory
         shell: bash
 
-      - name: Build macOS Universal Binary
-        if: matrix.target == 'universal-apple-darwin'
-        run: |
-          cargo build --release --target x86_64-apple-darwin
-          cargo build --release --target aarch64-apple-darwin
-          lipo -create -output target/rms-memory \
-            target/x86_64-apple-darwin/release/rms-memory \
-            target/aarch64-apple-darwin/release/rms-memory
-        shell: bash
+
 
       - name: Strip Binary (Unix)
-        if: runner.os != 'Windows' && matrix.target != 'universal-apple-darwin'
+        if: runner.os != 'Windows'
         run: strip target/${{ matrix.target }}/release/rms-memory
 
-      - name: Strip Binary (macOS Universal)
-        if: matrix.target == 'universal-apple-darwin'
-        run: strip target/rms-memory
+
 
       - name: Package (Unix / macOS)
         if: runner.os != 'Windows'
         run: |
           mkdir -p staging
-          if [ "${{ matrix.target }}" == "universal-apple-darwin" ]; then
-            cp target/rms-memory staging/rms-memory
-          else
-            cp target/${{ matrix.target }}/release/rms-memory staging/rms-memory
-            # Copy deb and rpm to staging if Linux
-            if [ "${{ runner.os }}" == "Linux" ]; then
-              cp target/${{ matrix.target }}/debian/*.deb staging/ || true
-              cp target/${{ matrix.target }}/generate-rpm/*.rpm staging/ || true
-            fi
+          cp target/${{ matrix.target }}/release/rms-memory staging/rms-memory
+          
+          # Copy deb and rpm to staging if Linux
+          if [ "${{ runner.os }}" == "Linux" ]; then
+            cp target/${{ matrix.target }}/debian/*.deb staging/ || true
+            cp target/${{ matrix.target }}/generate-rpm/*.rpm staging/ || true
           fi
+          
           cd staging
           tar -czf ../rms-memory-${{ matrix.target }}.${{ matrix.archive_ext }} rms-memory
           if [ "${{ runner.os }}" == "Linux" ]; then
