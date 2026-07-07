@@ -2,6 +2,16 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.0.1] - 2026-07-07
+
+### Added
+- **crates.io Release Prep:** Configured `Cargo.toml` with `readme`, `documentation`, `homepage`, `keywords`, and `categories` metadata for official publication.
+- **Library Target (`lib.rs`):** Exposed public API (`store`, `indexer`, `tools`, `workspace`, `document`) as a library crate, separating binary and library logic to support ecosystem consumption (v1.1+ Roadmap).
+- **ROADMAP.md:** Added strategic roadmap tracking the transition to a Cargo Workspace ecosystem and multi-vault architecture.
+
+### Fixed
+- **CI/CD Build Arguments:** Removed outdated `--target` arguments from the GitHub Actions `release.yml` pipeline that were causing `cargo generate-rpm` to fail during cross-platform deb/rpm packaging.
+
 ## [1.0.0] - 2026-07-07 
 
 ### Fixed
