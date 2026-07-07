@@ -1,5 +1,5 @@
-pub mod search;
 pub mod read;
+pub mod search;
 pub mod write;
 
 use crate::indexer::Indexer;

@@ -82,7 +82,7 @@ pub async fn execute(
             std::fs::write(&file_path, content)?;
         }
     }
-    
+
     Ok(json!({
         "content": [{"type": "text", "text": format!("Successfully wrote to {}", path_str)}]
     }))

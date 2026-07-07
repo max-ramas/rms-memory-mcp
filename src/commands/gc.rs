@@ -1,6 +1,6 @@
+use super::CommandRunner;
 use anyhow::Result;
 use clap::Args;
-use super::CommandRunner;
 
 #[derive(Args, Debug)]
 pub struct GcArgs;
@@ -61,7 +61,7 @@ impl CommandRunner for GcArgs {
         } else {
             println!("GC cancelled.");
         }
-        
+
         Ok(())
     }
 }

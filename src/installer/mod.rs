@@ -1,6 +1,6 @@
-pub mod registry;
-pub mod patcher;
 pub mod macos;
+pub mod patcher;
+pub mod registry;
 
 use anyhow::{Context, Result};
 use dialoguer::{Confirm, MultiSelect, Select, theme::ColorfulTheme};

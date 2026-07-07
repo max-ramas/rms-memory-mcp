@@ -62,7 +62,10 @@ fn spawn_sync_watcher(workspace: crate::workspace::Workspace, store: crate::stor
                     let mut should_trigger = false;
                     for path in &event.paths {
                         let p = path.to_string_lossy();
-                        if !p.contains(".lancedb") && !p.ends_with("store.json") && !p.ends_with(".log") {
+                        if !p.contains(".lancedb")
+                            && !p.ends_with("store.json")
+                            && !p.ends_with(".log")
+                        {
                             should_trigger = true;
                             break;
                         }
@@ -310,4 +313,3 @@ impl McpServer {
         }
     }
 }
-

@@ -18,10 +18,10 @@ jobs:
             target: x86_64-unknown-linux-gnu
             archive_ext: tar.gz
             use_cross: false
-          - os: ubuntu-latest
+          - os: ubuntu-24.04-arm
             target: aarch64-unknown-linux-gnu
             archive_ext: tar.gz
-            use_cross: true
+            use_cross: false
           - os: macos-latest
             target: universal-apple-darwin
             archive_ext: tar.gz
@@ -52,11 +52,24 @@ jobs:
       - name: Build Unix / Windows
         if: matrix.target != 'universal-apple-darwin'
         run: |
-          if [ "${{ matrix.use_cross }}" == "true" ]; then
-            cross build --release --target ${{ matrix.target }}
-          else
-            cargo build --release --target ${{ matrix.target }}
-          fi
+          cargo build --release --target ${{ matrix.target }}
+        shell: bash
+
+      - name: Install Packaging Tools (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          cargo install cargo-deb
+          cargo install cargo-generate-rpm
+        shell: bash
+
+      - name: Generate DEB & RPM (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          cargo deb --target ${{ matrix.target }} --no-build
+          strip target/${{ matrix.target }}/debian/*/usr/bin/rms-memory || true
+          
+          # cargo-generate-rpm needs the binary path directly
+          cargo generate-rpm --target ${{ matrix.target }} --payload target/${{ matrix.target }}/release/rms-memory=/usr/bin/rms-memory
         shell: bash
 
       - name: Build macOS Universal Binary
@@ -85,9 +98,18 @@ jobs:
             cp target/rms-memory staging/rms-memory
           else
             cp target/${{ matrix.target }}/release/rms-memory staging/rms-memory
+            # Copy deb and rpm to staging if Linux
+            if [ "${{ runner.os }}" == "Linux" ]; then
+              cp target/${{ matrix.target }}/debian/*.deb staging/ || true
+              cp target/${{ matrix.target }}/generate-rpm/*.rpm staging/ || true
+            fi
           fi
           cd staging
           tar -czf ../rms-memory-${{ matrix.target }}.${{ matrix.archive_ext }} rms-memory
+          if [ "${{ runner.os }}" == "Linux" ]; then
+            mv *.deb ../ || true
+            mv *.rpm ../ || true
+          fi
         shell: bash
 
       - name: Package (Windows)
@@ -103,7 +125,10 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: rms-memory-${{ matrix.target }}
-          path: rms-memory-${{ matrix.target }}.${{ matrix.archive_ext }}
+          path: |
+            rms-memory-${{ matrix.target }}.${{ matrix.archive_ext }}
+            *.deb
+            *.rpm
           retention-days: 1
 
   release:

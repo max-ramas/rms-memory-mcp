@@ -36,7 +36,7 @@ LATEST_RELEASE_URL="https://api.github.com/repos/${REPO}/releases/latest"
 
 echo "Fetching latest release information..."
 # Extract the tag name (e.g. v1.0.0)
-TAG=$(curl -sL $LATEST_RELEASE_URL | grep '"tag_name":' | sed -E 's/.*"([^"]+)".*/\1/')
+TAG=$(curl -fsSL $LATEST_RELEASE_URL | grep '"tag_name":' | sed -E 's/.*"([^"]+)".*/\1/')
 
 if [ -z "$TAG" ]; then
     echo "Error: Could not determine latest release from GitHub."
@@ -50,7 +50,7 @@ DOWNLOAD_URL="https://github.com/${REPO}/releases/download/${TAG}/rms-memory-${T
 echo "Downloading ${DOWNLOAD_URL}..."
 
 TEMP_DIR=$(mktemp -d)
-curl -sL "$DOWNLOAD_URL" -o "${TEMP_DIR}/rms-memory.tar.gz"
+curl -fsSL "$DOWNLOAD_URL" -o "${TEMP_DIR}/rms-memory.tar.gz"
 
 echo "Extracting..."
 tar -xzf "${TEMP_DIR}/rms-memory.tar.gz" -C "${TEMP_DIR}"

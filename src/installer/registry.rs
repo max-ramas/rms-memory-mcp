@@ -41,9 +41,7 @@ pub fn get_ide_registry() -> Vec<IdeConfig> {
         ),
         IdeConfig::new(
             "Windsurf",
-            vec![
-                ".codeium/windsurf/mcp_config.json",
-            ],
+            vec![".codeium/windsurf/mcp_config.json"],
             "mcpServers",
         ),
         IdeConfig::new(

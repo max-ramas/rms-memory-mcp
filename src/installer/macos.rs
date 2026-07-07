@@ -39,7 +39,10 @@ pub fn apply_entitlements(my_exe_str: &str) {
             Ok(s) if s.success() => {
                 // Atomically replace the running executable with the signed copy
                 if let Err(e) = std::fs::rename(&tmp_exe_path, my_exe_str) {
-                    eprintln!("[⚠️] Failed to replace executable with signed version: {}", e);
+                    eprintln!(
+                        "[⚠️] Failed to replace executable with signed version: {}",
+                        e
+                    );
                     // Fallback: try copy if rename fails across filesystems
                     let _ = std::fs::copy(&tmp_exe_path, my_exe_str);
                 } else {

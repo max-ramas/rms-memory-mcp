@@ -1,6 +1,6 @@
+use super::CommandRunner;
 use anyhow::Result;
 use clap::Args;
-use super::CommandRunner;
 
 #[derive(Args, Debug)]
 pub struct ConfigArgs {
@@ -67,17 +67,16 @@ impl CommandRunner for ConfigArgs {
         }
 
         // 1. Vault Path
-        let current_vault =
-            registry
-                .global
-                .global_vault_path
-                .clone()
-                .unwrap_or_else(|| {
-                    let mut p = dirs::home_dir().unwrap_or_default();
-                    p.push(".rms-memory");
-                    p.push("vaults");
-                    p.to_string_lossy().to_string()
-                });
+        let current_vault = registry
+            .global
+            .global_vault_path
+            .clone()
+            .unwrap_or_else(|| {
+                let mut p = dirs::home_dir().unwrap_or_default();
+                p.push(".rms-memory");
+                p.push("vaults");
+                p.to_string_lossy().to_string()
+            });
 
         let new_vault: String = if let Some(path) = &self.vault_path {
             path.clone()
@@ -115,9 +114,7 @@ impl CommandRunner for ConfigArgs {
             inject
         } else {
             dialoguer::Confirm::new()
-                .with_prompt(
-                    "Automatically inject cursor/zed rules when a project is added?",
-                )
+                .with_prompt("Automatically inject cursor/zed rules when a project is added?")
                 .default(current_inject)
                 .interact()?
         };
@@ -172,7 +169,7 @@ impl CommandRunner for ConfigArgs {
         } else {
             println!("No changes made to configuration.");
         }
-        
+
         Ok(())
     }
 }

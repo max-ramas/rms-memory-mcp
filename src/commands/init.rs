@@ -1,6 +1,6 @@
+use super::CommandRunner;
 use anyhow::Result;
 use clap::Args;
-use super::CommandRunner;
 
 #[derive(Args, Debug)]
 pub struct InitArgs {
@@ -15,8 +15,8 @@ pub struct InitArgs {
 impl CommandRunner for InitArgs {
     async fn run(&self) -> Result<()> {
         let current_dir = std::env::current_dir()?;
-        let start_canon = std::fs::canonicalize(&current_dir)
-            .unwrap_or_else(|_| current_dir.to_path_buf());
+        let start_canon =
+            std::fs::canonicalize(&current_dir).unwrap_or_else(|_| current_dir.to_path_buf());
         let folder_name = start_canon
             .file_name()
             .and_then(|n| n.to_str())
@@ -31,9 +31,7 @@ impl CommandRunner for InitArgs {
                 .to_string();
             std::fs::create_dir_all(std::path::Path::new(&vault_path).join("rules"))?;
             std::fs::create_dir_all(std::path::Path::new(&vault_path).join("decisions"))?;
-            std::fs::create_dir_all(
-                std::path::Path::new(&vault_path).join("architecture"),
-            )?;
+            std::fs::create_dir_all(std::path::Path::new(&vault_path).join("architecture"))?;
             std::fs::create_dir_all(std::path::Path::new(&vault_path).join("artifacts"))?;
             std::fs::create_dir_all(std::path::Path::new(&vault_path).join("docs"))?;
             std::fs::create_dir_all(std::path::Path::new(&vault_path).join("api"))?;
@@ -102,7 +100,7 @@ impl CommandRunner for InitArgs {
                 "Please set global_vault_path first using: rms-memory config --vault-path <PATH>"
             );
         }
-        
+
         Ok(())
     }
 }

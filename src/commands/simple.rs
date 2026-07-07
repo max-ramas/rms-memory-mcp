@@ -1,8 +1,8 @@
+use super::CommandRunner;
+use crate::indexer::Indexer;
+use crate::workspace::Workspace;
 use anyhow::Result;
 use clap::Args;
-use super::CommandRunner;
-use crate::workspace::Workspace;
-use crate::indexer::Indexer;
 
 #[derive(Args, Debug)]
 pub struct ImportArgs;
@@ -11,10 +11,8 @@ impl CommandRunner for ImportArgs {
     async fn run(&self) -> Result<()> {
         let current_dir = std::env::current_dir()?;
         let workspace = Workspace::discover(&current_dir, None)?;
-        let import_service = crate::import::ImportService::new(
-            workspace.code_path.clone(),
-            workspace.root.clone(),
-        );
+        let import_service =
+            crate::import::ImportService::new(workspace.code_path.clone(), workspace.root.clone());
         let docs = import_service.detect_existing_docs();
         if docs.is_empty() {
             println!("No existing project knowledge files found to import.");
@@ -135,8 +133,7 @@ impl CommandRunner for ExportLlmsArgs {
         let mut combined = String::new();
         for f in files {
             if let Ok(content) = std::fs::read_to_string(&f) {
-                combined
-                    .push_str(&format!("\n\n---\nFile: {}\n---\n\n", f.to_string_lossy()));
+                combined.push_str(&format!("\n\n---\nFile: {}\n---\n\n", f.to_string_lossy()));
                 combined.push_str(&content);
             }
         }

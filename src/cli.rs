@@ -1,6 +1,6 @@
+use crate::commands::CommandRunner;
 use anyhow::Result;
 use clap::{Parser, Subcommand};
-use crate::commands::CommandRunner;
 
 #[derive(Parser)]
 #[command(name = "rms-memory", version = env!("CARGO_PKG_VERSION"), about = "RMS Memory MCP Server")]

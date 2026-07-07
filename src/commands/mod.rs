@@ -1,8 +1,8 @@
 use anyhow::Result;
 
 pub mod config;
-pub mod init;
 pub mod gc;
+pub mod init;
 pub mod simple;
 
 /// A trait for executing CLI commands
