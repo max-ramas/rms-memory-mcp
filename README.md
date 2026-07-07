@@ -71,9 +71,13 @@ This scans `~/.config/` and `~/Library/Application Support/` and hooks `rms-memo
 
 ### Configure your vault
 
+The simplest way to configure the server is to run the interactive setup wizard. You don't need to memorize any CLI flags — just run:
+
 ```bash
-rms-memory config --vault-path ~/MyVaults/ --auto-add true
+rms-memory config
 ```
+
+*(Alternatively, you can pass flags directly: `rms-memory config --vault-path ~/MyVaults/ --auto-add true`)*
 
 The next time you open a project in a connected IDE, the server reads the `rootUri` from the MCP `initialize` handshake and provisions a clean, structured vault:
 
@@ -96,7 +100,7 @@ The next time you open a project in a connected IDE, the server reads the `rootU
 | `rms-memory init` | Registers a project into the global registry. `--dry-run` supported. `--full` forces creation of all IDE rule templates. |
 | `rms-memory import` | Scans for existing docs (`README.md`, `docs/`, `ADR/`) and imports them — interactively or via `--auto-import`. |
 | `rms-memory install` | Hooks the server into supported IDEs. `--dry-run` supported. |
-| `rms-memory config` | Sets global settings: `--vault-path`, `--auto-add`, `--inject-rules`, `--auto-import`. |
+| `rms-memory config` | Interactive setup wizard for global settings (`vault-path`, `auto-add`, `inject-rules`, etc). |
 | `rms-memory reindex` | Forces a full re-index of the current project vault. |
 | `rms-memory sync` | Incremental LanceDB delete-then-insert sync (also runs automatically during `serve`). |
 | `rms-memory gc` | Prunes orphaned LanceDB indices belonging to deleted vaults. |
