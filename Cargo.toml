@@ -7,10 +7,7 @@ license = "MIT"
 repository = "https://github.com/max-ramas/rms-memory-mcp"
 authors = ["Maksim Ramzaev <max@rms-ds.com>"]
 
-[package.metadata.deb]
-assets = [
-    ["target/release/rms-memory", "usr/bin/", "755"]
-]
+
 
 [package.metadata.generate-rpm]
 assets = [

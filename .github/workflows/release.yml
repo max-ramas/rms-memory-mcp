@@ -41,8 +41,6 @@ jobs:
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
-        with:
-          targets: ${{ matrix.target }}
 
       - name: Install Protoc
         uses: arduino/setup-protoc@v3
@@ -59,7 +57,7 @@ jobs:
 
       - name: Build Unix / Windows
         run: |
-          cargo build --release --target ${{ matrix.target }}
+          cargo build --release
         shell: bash
 
       - name: Install Packaging Tools (Linux)
@@ -72,18 +70,15 @@ jobs:
       - name: Generate DEB & RPM (Linux)
         if: runner.os == 'Linux'
         run: |
-          cargo deb --target ${{ matrix.target }} --no-build
-          strip target/${{ matrix.target }}/debian/*/usr/bin/rms-memory || true
-          
-          # cargo-generate-rpm needs the binary path directly
-          cargo generate-rpm --target ${{ matrix.target }} --payload target/${{ matrix.target }}/release/rms-memory=/usr/bin/rms-memory
+          cargo deb --no-build
+          cargo generate-rpm
         shell: bash
 
 
 
       - name: Strip Binary (Unix)
         if: runner.os != 'Windows'
-        run: strip target/${{ matrix.target }}/release/rms-memory
+        run: strip target/release/rms-memory
 
 
 
@@ -91,12 +86,12 @@ jobs:
         if: runner.os != 'Windows'
         run: |
           mkdir -p staging
-          cp target/${{ matrix.target }}/release/rms-memory staging/rms-memory
+          cp target/release/rms-memory staging/rms-memory
           
           # Copy deb and rpm to staging if Linux
           if [ "${{ runner.os }}" == "Linux" ]; then
-            cp target/${{ matrix.target }}/debian/*.deb staging/ || true
-            cp target/${{ matrix.target }}/generate-rpm/*.rpm staging/ || true
+            cp target/debian/*.deb staging/ || true
+            cp target/generate-rpm/*.rpm staging/ || true
           fi
           
           cd staging
@@ -111,7 +106,7 @@ jobs:
         if: runner.os == 'Windows'
         run: |
           mkdir staging
-          cp target\${{ matrix.target }}\release\rms-memory.exe staging\rms-memory.exe
+          cp target\release\rms-memory.exe staging\rms-memory.exe
           cd staging
           Compress-Archive -Path rms-memory.exe -DestinationPath ..\rms-memory-${{ matrix.target }}.${{ matrix.archive_ext }}
         shell: pwsh
