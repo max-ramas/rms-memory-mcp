@@ -408,6 +408,10 @@ impl McpServer {
                             }
                         }
 
+                        if let Some(parent) = file_path.parent() {
+                            std::fs::create_dir_all(parent)?;
+                        }
+
                         match mode {
                             "append" => {
                                 use std::io::Write;
