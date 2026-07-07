@@ -59,6 +59,7 @@ impl Indexer {
         let result = TextEmbedding::try_new(
             InitOptions::new(EmbeddingModel::MultilingualE5Small)
                 .with_cache_dir(cache_dir.clone())
+                .with_intra_threads(2)
                 .with_show_download_progress(false),
         );
 
@@ -312,7 +313,7 @@ pub async fn sync_vault(
 
         let mut embeddings = Vec::with_capacity(chunks.len());
         let chunk_texts: Vec<String> = chunks.iter().map(|c| c.text.clone()).collect();
-        let batch_size = 32;
+        let batch_size = 8;
         let mut failed = false;
 
         for batch in chunk_texts.chunks(batch_size) {
@@ -428,7 +429,7 @@ pub async fn index_vault_full(
 
         let mut embeddings = Vec::with_capacity(chunks.len());
         let chunk_texts: Vec<String> = chunks.iter().map(|c| c.text.clone()).collect();
-        let batch_size = 32;
+        let batch_size = 8;
         let mut failed = false;
 
         for batch in chunk_texts.chunks(batch_size) {
