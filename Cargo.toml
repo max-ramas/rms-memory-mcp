@@ -1,14 +1,16 @@
 [package]
 name = "rms-memory-mcp"
-version = "1.0.0"
+version = "1.0.1"
 edition = "2024"
 description = "Persistent, local-first memory for your AI coding agents."
 license = "MIT"
 repository = "https://github.com/max-ramas/rms-memory-mcp"
 authors = ["Maksim Ramzaev <max@rms-ds.com>"]
-
-
-
+readme = "README.md"
+documentation = "https://docs.rs/rms-memory-mcp"
+homepage = "https://rms-ds.com"
+keywords = ["mcp", "ai", "memory", "rag", "llm"]
+categories = ["command-line-utilities", "database", "development-tools"]
 [package.metadata.generate-rpm]
 assets = [
     { source = "target/release/rms-memory", dest = "/usr/bin/rms-memory", mode = "755" }
