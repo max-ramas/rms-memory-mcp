@@ -29,15 +29,12 @@ struct RpcError {
 }
 
 use crate::indexer::Indexer;
-use crate::store::VectorStore;
+use crate::tools::AppContext;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 
 pub struct McpServer {
-    store: Option<crate::store::Store>,
-    indexer: Option<Arc<Mutex<Indexer>>>,
-    workspace_root: Option<std::path::PathBuf>,
-    max_backups: usize,
+    ctx: AppContext,
 }
 
 fn spawn_sync_watcher(workspace: crate::workspace::Workspace, store: crate::store::Store) {
@@ -62,7 +59,17 @@ fn spawn_sync_watcher(workspace: crate::workspace::Workspace, store: crate::stor
                             | notify::EventKind::Remove(_)
                     )
                 {
-                    let _ = tx.blocking_send(());
+                    let mut should_trigger = false;
+                    for path in &event.paths {
+                        let p = path.to_string_lossy();
+                        if !p.contains(".lancedb") && !p.ends_with("store.json") && !p.ends_with(".log") {
+                            should_trigger = true;
+                            break;
+                        }
+                    }
+                    if should_trigger {
+                        let _ = tx.blocking_send(());
+                    }
                 }
             },
             notify::Config::default(),
@@ -113,10 +120,12 @@ impl McpServer {
         max_backups: usize,
     ) -> Result<()> {
         let mut server = Self {
-            store,
-            indexer,
-            workspace_root,
-            max_backups,
+            ctx: AppContext {
+                store,
+                indexer,
+                workspace_root,
+                max_backups,
+            },
         };
         let stdin = io::stdin();
         let mut stdout = io::stdout();
@@ -194,12 +203,12 @@ impl McpServer {
                 });
 
                 if let Ok(workspace) = crate::workspace::Workspace::discover(&path, None) {
-                    self.workspace_root = Some(workspace.root.clone());
+                    self.ctx.workspace_root = Some(workspace.root.clone());
 
                     match workspace.get_store().await {
                         Ok(store) => {
                             spawn_sync_watcher(workspace.clone(), store.clone());
-                            self.store = Some(store);
+                            self.ctx.store = Some(store);
                         }
                         Err(_e) => {}
                     }
@@ -214,7 +223,7 @@ impl McpServer {
                     {
                         let vault_path = std::path::PathBuf::from(global_vault);
                         if vault_path.exists() {
-                            self.workspace_root = Some(vault_path.clone());
+                            self.ctx.workspace_root = Some(vault_path.clone());
                             let workspace = crate::workspace::Workspace {
                                 root: vault_path,
                                 code_path: path.clone(),
@@ -223,7 +232,7 @@ impl McpServer {
                             };
                             if let Ok(store) = workspace.get_store().await {
                                 spawn_sync_watcher(workspace.clone(), store.clone());
-                                self.store = Some(store);
+                                self.ctx.store = Some(store);
                                 tracing::info!("Initialized with global vault fallback.");
                             }
                         }
@@ -291,144 +300,9 @@ impl McpServer {
                 let args = params["arguments"].as_object().cloned().unwrap_or_default();
 
                 match name {
-                    "rms_search" => {
-                        let store = self
-                            .store
-                            .as_ref()
-                            .ok_or_else(|| anyhow::anyhow!("Store not initialized"))?;
-                        let query_str = args.get("query").and_then(|v| v.as_str()).unwrap_or("");
-                        let limit =
-                            args.get("limit").and_then(|v| v.as_u64()).unwrap_or(10) as usize;
-
-                        let query_vector = {
-                            if self.indexer.is_none() {
-                                let idx = tokio::task::spawn_blocking(crate::indexer::Indexer::new)
-                                    .await
-                                    .unwrap_or_else(|_| {
-                                        Err(anyhow::anyhow!("Indexer spawn blocked"))
-                                    })?;
-                                self.indexer = Some(Arc::new(Mutex::new(idx)));
-                            }
-                            let mut indexer = self.indexer.as_ref().unwrap().lock().await;
-                            let embeddings = indexer
-                                .embed(&[query_str.to_string()])
-                                .map_err(|e| anyhow::anyhow!("Embed failed: {}", e))?;
-                            embeddings.into_iter().next().unwrap_or_default()
-                        };
-
-                        let results = store
-                            .search(query_vector, query_str.to_string(), limit)
-                            .await?;
-
-                        Ok(json!({
-                            "content": [{"type": "text", "text": serde_json::to_string(&results)? }]
-                        }))
-                    }
-                    "rms_read" => {
-                        let workspace_root = self
-                            .workspace_root
-                            .as_ref()
-                            .ok_or_else(|| anyhow::anyhow!("Workspace root not initialized"))?;
-                        let path_str = args.get("path").and_then(|v| v.as_str()).unwrap_or("");
-                        let file_path = workspace_root.join(path_str);
-
-                        if let Some(linked_content) = crate::link::get_linked_content(&file_path) {
-                            Ok(json!({
-                                "content": [{"type": "text", "text": linked_content}]
-                            }))
-                        } else {
-                            let store = self
-                                .store
-                                .as_ref()
-                                .ok_or_else(|| anyhow::anyhow!("Store not initialized"))?;
-                            let full_text = store.read_document(path_str).await?;
-                            Ok(json!({
-                                "content": [{"type": "text", "text": full_text}]
-                            }))
-                        }
-                    }
-                    "rms_write" => {
-                        let workspace_root = self
-                            .workspace_root
-                            .as_ref()
-                            .ok_or_else(|| anyhow::anyhow!("Workspace root not initialized"))?;
-                        let path_str = args.get("path").and_then(|v| v.as_str()).unwrap_or("");
-                        let content = args.get("content").and_then(|v| v.as_str()).unwrap_or("");
-                        let mode = args
-                            .get("mode")
-                            .and_then(|v| v.as_str())
-                            .unwrap_or("replace");
-
-                        let initial_file_path = workspace_root.join(path_str);
-                        let file_path = crate::link::resolve_link(&initial_file_path);
-
-                        // WRITE-GUARD: Backup file if it exists
-                        if file_path.exists() && self.max_backups > 0 {
-                            let mut backups = Vec::new();
-                            let parent = file_path.parent().unwrap_or(std::path::Path::new(""));
-                            let base_name =
-                                file_path.file_name().unwrap_or_default().to_string_lossy();
-
-                            // Discover existing backups
-                            if let Ok(entries) = std::fs::read_dir(parent) {
-                                for entry in entries.flatten() {
-                                    let name = entry.file_name().to_string_lossy().to_string();
-                                    if name.starts_with(&format!("{}.bak.", base_name)) {
-                                        backups.push(entry.path());
-                                    }
-                                }
-                            }
-
-                            // Sort by modification time (oldest first)
-                            backups.sort_by_key(|a| {
-                                std::fs::metadata(a)
-                                    .and_then(|m| m.modified())
-                                    .unwrap_or(std::time::SystemTime::UNIX_EPOCH)
-                            });
-
-                            // Keep up to max_backups - 1 before adding the new one
-                            while backups.len() >= self.max_backups {
-                                if let Some(oldest) = backups.first() {
-                                    let _ = std::fs::remove_file(oldest);
-                                }
-                                backups.remove(0);
-                            }
-
-                            let timestamp = chrono::Utc::now().format("%Y%m%d%H%M%S");
-                            let bak_path = parent.join(format!("{}.bak.{}", base_name, timestamp));
-
-                            if let Err(e) = std::fs::copy(&file_path, &bak_path) {
-                                tracing::error!(
-                                    "Write-Guard: Failed to create snapshot for {:?}: {}",
-                                    file_path,
-                                    e
-                                );
-                            } else {
-                                tracing::info!("Write-Guard: Created snapshot at {:?}", bak_path);
-                            }
-                        }
-
-                        if let Some(parent) = file_path.parent() {
-                            std::fs::create_dir_all(parent)?;
-                        }
-
-                        match mode {
-                            "append" => {
-                                use std::io::Write;
-                                let mut f = std::fs::OpenOptions::new()
-                                    .append(true)
-                                    .create(true)
-                                    .open(&file_path)?;
-                                f.write_all(content.as_bytes())?;
-                            }
-                            _ => {
-                                std::fs::write(&file_path, content)?;
-                            }
-                        }
-                        Ok(json!({
-                            "content": [{"type": "text", "text": format!("Successfully wrote to {}", path_str)}]
-                        }))
-                    }
+                    "rms_search" => crate::tools::search::execute(&mut self.ctx, &args).await,
+                    "rms_read" => crate::tools::read::execute(&self.ctx, &args).await,
+                    "rms_write" => crate::tools::write::execute(&self.ctx, &args).await,
                     _ => anyhow::bail!("Unknown tool"),
                 }
             }
@@ -436,3 +310,4 @@ impl McpServer {
         }
     }
 }
+

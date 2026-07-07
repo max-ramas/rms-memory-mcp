@@ -1,91 +1,185 @@
-# RMS Memory MCP
+<div align="center">
 
-**RMS Memory MCP** is a localized, production-grade Model Context Protocol (MCP) server designed to solve AI-agent context fragmentation. 
+# 🧠 RMS Memory MCP
 
-If you are developing a single project but switching between different agents (Cursor, Zed, Claude Code, OpenCode), they frequently lose context of architectural decisions, system requirements, and user preferences. RMS Memory bridges this gap by maintaining an isolated, centralized markdown Vault perfectly configured for LLM consumption, effectively serving as an external memory bank for all your IDEs.
+**Persistent, local-first memory for your AI coding agents.**
 
-## Key Features
+Stop re-explaining your architecture to Cursor, Zed, and Claude Code every single session.
 
-- **Global Centralized Vaults:** Codebases remain clean. Project context is automatically routed to an external, user-defined Vault directory without polluting repositories with `.mcp` files.
-- **LanceDB Hybrid Retrieval:** Powered by an embedded LanceDB engine enabling zero-fail retrieval through parallel Vector Search + Tantivy Full-Text Search.
-- **Multilingual Semantic Parsing:** The `fastembed-rs` pipeline uses `multilingual-e5-small` to understand both Russian and English context perfectly.
-- **AST Markdown Chunker:** Context is king. `pulldown-cmark` is used to split documents along their logical Abstract Syntax Tree bounds, keeping code blocks and lists tightly bound to their parent Headings.
-- **Dynamic Auto-Installer:** `rms-memory install` scans your entire system to natively inject MCP configurations directly into your preferred IDEs without manual JSON hacking.
-- **Rules-as-Code Patching (Opt-In):** Safely injects agent context prompts (`.cursorrules`, `.zed/assistant.md`, etc.) using a non-destructive AST block-patching algorithm. Auto-injection defaults to `false` to protect pristine environments. Force generation of all rule templates with `rms-memory init --full`.
-- **Dry-Run & Auditing:** Verify exactly what the installer or rules injector will do before modifying configuration files by passing `--dry-run`. All modified files generate `.bak` backups before write.
-- **Six-Point Resiliency:** Features an automated Garbage Collector (`gc`), Background Incremental Sync via File Watcher, AI Write-Guard snapshot backups, macOS Sandbox Bypassing (for embedded model caching), LLMs.txt export endpoints, and isolated File Telemetry Logging (`log`).
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![Rust](https://img.shields.io/badge/Rust-1.75%2B-orange?logo=rust)](https://www.rust-lang.org/)
+[![Release](https://img.shields.io/github/v/release/max-ramas/rms-memory-mcp?color=blue)](https://github.com/max-ramas/rms-memory-mcp/releases)
+[![Build](https://img.shields.io/github/actions/workflow/status/max-ramas/rms-memory-mcp/release.yml?branch=main)](https://github.com/max-ramas/rms-memory-mcp/actions)
+[![Platform](https://img.shields.io/badge/platform-macOS%20%7C%20Linux%20%7C%20Windows-lightgrey)]()
+[![MCP](https://img.shields.io/badge/protocol-MCP-blueviolet)](https://modelcontextprotocol.io)
 
-## Installation
+[Features](#-key-features) • [Install](#-installation) • [Quick Start](#-quick-start) • [CLI](#-cli-commands) • [MCP Tools](#-mcp-tools-exposed) • [Architecture](#-architecture-highlights)
+
+</div>
+
+---
+
+## The Problem
+
+You're developing a single project but switching between different agents — Cursor, Zed, Claude Code, OpenCode. Every one of them loses context of architectural decisions, system requirements, and user preferences the moment you close the tab. You end up re-explaining the same things over and over, or copy-pasting a stale `CLAUDE.md` between tools.
+
+**RMS Memory MCP** bridges this gap: a single, isolated, centralized Markdown vault — perfectly structured for LLM consumption — that any MCP-compatible IDE can read from and write to.
+
+## ✨ Key Features
+
+| | |
+|---|---|
+| 🗂️ **Global Centralized Vaults** | Project context lives outside your repo — zero `.mcp` file pollution. |
+| 🔍 **Hybrid Retrieval (LanceDB)** | Embedded Vector Search + Tantivy Full-Text Search for zero-fail context hits. |
+| 🌐 **Multilingual Semantic Parsing** | `fastembed-rs` + `multilingual-e5-small` — native Russian & English understanding. |
+| 🌳 **AST Markdown Chunker** | `pulldown-cmark`-based chunking keeps code blocks and lists bound to their parent heading. |
+| ⚙️ **Dynamic Auto-Installer** | `rms-memory install` scans your system and wires itself into every supported IDE. |
+| 📜 **Rules-as-Code Patching** | Non-destructive AST patching of `.cursorrules`, `.zed/assistant.md`, etc. Opt-in by default. |
+| 🧪 **Dry-Run & Auditing** | `--dry-run` everywhere. Every write gets a rolling `.bak` backup. |
+| 🛡️ **Six-Point Resiliency** | GC, background file-watcher sync, write-guard snapshots, macOS sandbox bypass, `llms.txt` export, isolated logging. |
+
+## 📦 Installation
 
 ```bash
 # 1. Clone the repository
 git clone https://github.com/max-ramas/rms-memory-mcp.git
 cd rms-memory-mcp
 
-# 2. Install dependencies (Requires protoc for LanceDB)
-# macOS: brew install protobuf
-# Ubuntu: sudo apt-get install protobuf-compiler
+# 2. Install dependencies (LanceDB needs protoc)
+# macOS:   brew install protobuf
+# Ubuntu:  sudo apt-get install protobuf-compiler
 # Windows: choco install protoc
 
 # 3. Build the optimized release binary
 cargo build --release
 
-# 3. Add the binary to your global PATH
-# (e.g., cp target/release/rms-memory-mcp ~/.cargo/bin/)
+# 4. Add the binary to your global PATH
+cp target/release/rms-memory-mcp ~/.cargo/bin/
 ```
 
-## Quick Start
+> Prebuilt binaries for `x86_64-unknown-linux-gnu`, `x86_64-pc-windows-msvc`, `x86_64-apple-darwin`, and `aarch64-apple-darwin` are published on every [release](https://github.com/max-ramas/rms-memory-mcp/releases). One-line installers (`install.sh` / `install.ps1`) auto-detect your architecture.
 
-The fastest way to get your IDEs connected to the memory vault is using the auto-installer.
+## 🚀 Quick Start
+
+The fastest way to get every IDE on your machine connected:
 
 ```bash
 rms-memory install
 ```
-This interactive command will scan `~/.config/` and `~/Library/Application Support/` and seamlessly hook `rms-memory` into the configurations of **Cursor**, **Zed**, **Claude Code**, **OpenCode**, and others.
 
-### Initialization & Configuration
+This scans `~/.config/` and `~/Library/Application Support/` and hooks `rms-memory` directly into **Cursor**, **Zed**, **Claude Code**, **OpenCode**, and others — no manual JSON editing.
 
-First, configure your global master settings (where all your knowledge will live).
+### Configure your vault
+
 ```bash
 rms-memory config --vault-path ~/MyVaults/ --auto-add true
 ```
 
-When you navigate to any code project and start your IDE, the server reads the `rootUri` sent during the MCP `initialize` request. Because `--auto-add true` is enabled, the server will dynamically provision a perfectly structured folder ready to accept memory:
+The next time you open a project in a connected IDE, the server reads the `rootUri` from the MCP `initialize` handshake and provisions a clean, structured vault:
+
 ```text
 ~/MyVaults/
   └── <ProjectHash>/
       ├── rules/
       ├── decisions/
       ├── architecture/
-      └── artifacts/
+      ├── artifacts/
+      ├── docs/
+      └── api/
 ```
 
-### CLI Commands
+## 🛠 CLI Commands
 
-- `rms-memory serve` - Initialize the JSON-RPC Stdio server (Automatically triggered by your IDE). It connects to the project sent in the `initialize` message.
-- `rms-memory init` - Manually register a project into the global registry. Supports `--dry-run`. Use `--full` to forcefully create all supported IDE rule templates (`.cursorrules`, `GEMINI.md`, etc.) and append them to `.gitignore`.
-- `rms-memory import` - Scan the project for existing documentation (`README.md`, `docs/`, `ADR/`, etc.) and import them into the Vault interactively (Import, Import & Organize, Link Only).
-- `rms-memory install` - Hook the server into supported IDEs interactively (Supports `--dry-run`).
-- `rms-memory config` - Set global settings (`--vault-path`, `--auto-add`, `--inject-rules`, `--auto-import`).
-- `rms-memory reindex` - Force a monolithic re-indexing of the current project vault.
-- `rms-memory sync` - Perform an incremental LanceDB "Delete-then-Insert" sync (runs automatically in background during `serve`).
-- `rms-memory gc` - Prune orphaned LanceDB indices that belong to deleted vaults.
-- `rms-memory log` - Tail the isolated telemetry logs (`tail -f ~/.rms-memory/rms.log`).
-- `rms-memory export-llms` - Compile the current Vault down to a single `llms.txt` payload.
+| Command | Description |
+|---|---|
+| `rms-memory serve` | Starts the JSON-RPC stdio server (auto-triggered by your IDE). |
+| `rms-memory init` | Registers a project into the global registry. `--dry-run` supported. `--full` forces creation of all IDE rule templates. |
+| `rms-memory import` | Scans for existing docs (`README.md`, `docs/`, `ADR/`) and imports them — interactively or via `--auto-import`. |
+| `rms-memory install` | Hooks the server into supported IDEs. `--dry-run` supported. |
+| `rms-memory config` | Sets global settings: `--vault-path`, `--auto-add`, `--inject-rules`, `--auto-import`. |
+| `rms-memory reindex` | Forces a full re-index of the current project vault. |
+| `rms-memory sync` | Incremental LanceDB delete-then-insert sync (also runs automatically during `serve`). |
+| `rms-memory gc` | Prunes orphaned LanceDB indices belonging to deleted vaults. |
+| `rms-memory log` | Tails the telemetry log (`~/.rms-memory/rms.log`). |
+| `rms-memory export-llms` | Compiles the current vault into a single `llms.txt` payload. |
 
-## MCP Tools Exposed
+## 🔌 MCP Tools Exposed
 
-This server provides highly descriptive MCP tool schemas specifically engineered so agents like Claude, Gemini, and Cursor understand *exactly* when to use them.
+Tool descriptions are written to be **action-oriented**, so agents use the vault proactively without being asked.
 
-1. `rms_search`
-   - **Purpose:** Search the local RMS Memory vector database for project documentation, architectural decisions, and context rules using semantic similarity. Agents are instructed to use this tool *first* to understand the repository's background before making changes.
-   - **Input:** `{ "query": "string", "limit": 10, "include_content": true }`
-2. `rms_read`
-   - **Purpose:** Read the full contents of a markdown document from the RMS Memory vault. Used to retrieve the full context of a document found via `rms_search`.
-   - **Input:** `{ "path": "string" }`
-3. `rms_write`
-   - **Purpose:** Save new architectural decisions, constraints, development rules, or project context. Agents are prompted to use this tool *proactively* at the end of a task if they learned a new user preference or solved a tricky bug.
-   - **Input:** `{ "path": "string", "content": "string", "mode": "replace|append|create" }`
+<table>
+<tr><th>Tool</th><th>Purpose</th><th>Input</th></tr>
+<tr>
+<td><code>rms-memory_rms_search</code></td>
+<td>Semantic search across the vault. Agents are instructed to call this <em>first</em>, before making any changes.</td>
+<td><code>{ query, limit, include_content }</code></td>
+</tr>
+<tr>
+<td><code>rms-memory_rms_read</code></td>
+<td>Reads the full contents of a document found via <code>rms_search</code>.</td>
+<td><code>{ path }</code></td>
+</tr>
+<tr>
+<td><code>rms-memory_rms_write</code></td>
+<td>Persists new decisions, constraints, or rules. Agents are prompted to call this <em>proactively</em> after solving a tricky bug or learning a preference.</td>
+<td><code>{ path, content, mode: replace|append|create }</code></td>
+</tr>
+</table>
 
-## License
-MIT License
+## 🏗 Architecture Highlights
+
+<details>
+<summary><b>Unified Configuration & Knowledge Isolation</b></summary>
+
+A central `~/.rms-memory/registry.toml` routes every project to an isolated vault, computed from a hash of the project path. No `.mcp` files, no per-repo config — global MCP entries (e.g. Zed's `settings.json`) can target any workspace automatically.
+</details>
+
+<details>
+<summary><b>Linked Documents (zero-copy import)</b></summary>
+
+Instead of duplicating existing docs into the vault, `rms-memory import` can create lightweight **Link Files** — Markdown stubs with a `link: <path>` frontmatter property. Reads/writes are transparently redirected to the source file, while the vector index still respects the vault's directory structure.
+</details>
+
+<details>
+<summary><b>Hybrid Search (LanceDB + Tantivy)</b></summary>
+
+Embedded LanceDB (`~/.rms-memory/dbs/`) combines vector similarity with full-text search, so a query never comes back empty just because the exact keywords didn't match.
+</details>
+
+<details>
+<summary><b>AST-Aware Chunking</b></summary>
+
+`pulldown-cmark` parses the Markdown AST directly. Chunks are built by walking up to the parent heading, with a strict 1500-character boundary and ~200-character overlapping window for oversized code blocks — no mid-sentence truncation.
+</details>
+
+<details>
+<summary><b>Six-Point Production Resiliency</b></summary>
+
+1. macOS sandbox bypass for `fastembed` model downloads
+2. `rms-memory gc` — orphaned vector store pruning
+3. Background incremental sync (`Delete-then-Insert` on `mtime`)
+4. Real-time file watcher with 3s debounced re-sync
+5. Write-guard snapshotting with rolling `.bak` backups (default: 5)
+6. `llms.txt` export for flat, decoupled LLM ingestion
+</details>
+
+## 🧩 Supported IDEs
+
+| IDE | Auto-Install | Rules Injection |
+|---|:---:|:---:|
+| Cursor | ✅ | `.cursorrules` |
+| Zed | ✅ | `.zed/assistant.md` |
+| Claude Code | ✅ | `.claude/CLAUDE.md` |
+| OpenCode | ✅ | — |
+| VS Code | ✅ | — |
+| Antigravity | ✅ | — |
+
+## 📄 License
+
+MIT License — see [LICENSE](LICENSE) for details.
+
+---
+
+<div align="center">
+<sub>Built by <a href="https://ramzaeff.com">Maksim Ramzaev</a> · <a href="https://rms-ds.com">RMS Digital Services</a></sub>
+</div>

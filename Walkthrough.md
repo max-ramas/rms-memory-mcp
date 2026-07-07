@@ -56,7 +56,12 @@ To transition from a "toy server" to an instrumental platform, 6 resilience prot
 5. **Write-Guard Snapshotting:** JSON-RPC `write` events triggered by autonomous agents are intercepted. The server automatically issues an `fs::copy` artifact backup to `.bak` before permitting the agent's modification. Includes a rolling backup system (`max_backups` config, default 5) to prevent unbounded disk pollution from continuous AI revisions.
 6. **LLMs.txt Export (`export-llms`):** Compiles the entire isolated Vault structure into a standardized `llms.txt` digest for decoupled LLM ingestion or raw curl queries.
 
-### 8. CI/CD and Cross-Platform Distribution
+### 8. Modular Architecture (Commands & Tools)
+- **Dependency Injection (`AppContext`):** The system uses a centralized `AppContext` that securely holds the initialized LanceDB connection, embedding models (`fastembed`), and runtime configuration. This eliminates redundant initializations and allows dependency injection across all commands and tools.
+- **CLI Commands (`src/commands/`):** The massive `cli.rs` monolith was completely dismantled into individual domain-specific modules (`install`, `init`, `sync`, `gc`, etc.), dramatically improving readability and minimizing Git merge conflicts.
+- **MCP Tools (`src/tools/`):** JSON-RPC tool executions are now routed to specialized handler files (`search.rs`, `read.rs`, `write.rs`) under the `src/tools/` module, ensuring clear separation of concerns between standard CLI interactions and autonomous Agent requests.
+
+### 9. CI/CD and Cross-Platform Distribution
 - **Strict User-Scoped Isolation:** The core configuration logic was overhauled to enforce a rigid `~/.rms-memory/` standard across all platforms. By utilizing the `directories` crate exclusively to locate the user's home folder, the program correctly targets `C:\Users\username\.rms-memory\` on Windows, `/Users/username/.rms-memory/` on macOS, and `/home/username/.rms-memory/` on Linux without polluting generic OS domains like `AppData/Roaming` or `Library/Application Support/`.
 - **GitHub Actions Matrix:** Engineered a seamless `release.yml` pipeline that triggers on repository version tags.
   - Compiles optimized native binaries for `x86_64-unknown-linux-gnu`, `x86_64-pc-windows-msvc`, `x86_64-apple-darwin`, and `aarch64-apple-darwin`.
