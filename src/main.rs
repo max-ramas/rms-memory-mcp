@@ -1,17 +1,5 @@
-mod cli;
-mod commands;
-mod document;
-mod import;
-mod indexer;
-mod installer;
-mod link;
-mod mcp_server;
-mod rules_injector;
-mod store;
-mod tools;
-mod workspace;
-
 use anyhow::Result;
+use rms_memory_mcp::{cli, workspace};
 
 #[tokio::main]
 async fn main() -> Result<()> {
