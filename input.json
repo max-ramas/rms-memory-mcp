@@ -1,2 +1,0 @@
-{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"rootUri":"file:///Users/ramas/dev/rms-memory-mcp"}}
-{"jsonrpc":"2.0","id":2,"method":"tools/list","params":{}}
