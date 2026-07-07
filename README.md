@@ -8,6 +8,7 @@ Stop re-explaining your architecture to Cursor, Zed, and Claude Code every singl
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Rust](https://img.shields.io/badge/Rust-1.75%2B-orange?logo=rust)](https://www.rust-lang.org/)
+[![Crates.io](https://img.shields.io/crates/v/rms-memory-mcp)](https://crates.io/crates/rms-memory-mcp)
 [![Release](https://img.shields.io/github/v/release/max-ramas/rms-memory-mcp?color=blue)](https://github.com/max-ramas/rms-memory-mcp/releases)
 [![Build](https://img.shields.io/github/actions/workflow/status/max-ramas/rms-memory-mcp/release.yml?branch=main)](https://github.com/max-ramas/rms-memory-mcp/actions)
 [![Platform](https://img.shields.io/badge/platform-macOS%20%7C%20Linux%20%7C%20Windows-lightgrey)]()
@@ -40,20 +41,25 @@ You're developing a single project but switching between different agents — Cu
 
 ## 📦 Installation
 
+### Option 1: Cargo (Recommended)
+
+If you have Rust installed, simply install from crates.io:
+
+```bash
+cargo install rms-memory-mcp
+```
+
+### Option 2: Build from Source
+
 ```bash
 # 1. Clone the repository
 git clone https://github.com/max-ramas/rms-memory-mcp.git
 cd rms-memory-mcp
 
-# 2. Install dependencies (LanceDB needs protoc)
-# macOS:   brew install protobuf
-# Ubuntu:  sudo apt-get install protobuf-compiler
-# Windows: choco install protoc
-
-# 3. Build the optimized release binary
+# 2. Build the optimized release binary
 cargo build --release
 
-# 4. Add the binary to your global PATH
+# 3. Add the binary to your global PATH
 cp target/release/rms-memory-mcp ~/.cargo/bin/
 ```
 
