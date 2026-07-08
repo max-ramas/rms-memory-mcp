@@ -63,7 +63,7 @@ cargo build --release
 cp target/release/rms-memory-mcp ~/.cargo/bin/
 ```
 
-> Prebuilt binaries for `x86_64-unknown-linux-gnu`, `x86_64-pc-windows-msvc`, `x86_64-apple-darwin`, and `aarch64-apple-darwin` are published on every [release](https://github.com/max-ramas/rms-memory-mcp/releases). One-line installers (`install.sh` / `install.ps1`) auto-detect your architecture.
+> Prebuilt binaries for `x86_64-unknown-linux-gnu`, `x86_64-pc-windows-msvc`, and `aarch64-apple-darwin` (Apple Silicon) are published on every [release](https://github.com/max-ramas/rms-memory-mcp/releases). One-line installers (`install.sh` / `install.ps1`) auto-detect your architecture.
 
 ## 🚀 Quick Start
 

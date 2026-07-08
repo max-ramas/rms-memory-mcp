@@ -23,6 +23,13 @@ esac
 
 TARGET="${MACHINE_ARCH}-${MACHINE_OS}"
 
+if [ "$TARGET" = "x86_64-apple-darwin" ]; then
+    echo "Error: Prebuilt binaries are not provided for macOS Intel (x86_64)."
+    echo "Please use Cargo to install from source:"
+    echo "  cargo install rms-memory-mcp"
+    exit 1
+fi
+
 echo "Detected target: ${TARGET}"
 
 # Get the latest release from GitHub API
