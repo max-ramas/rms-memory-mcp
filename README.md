@@ -10,7 +10,7 @@ Stop re-explaining your architecture to Cursor, Zed, and Claude Code every singl
 [![Rust](https://img.shields.io/badge/Rust-1.75%2B-orange?logo=rust)](https://www.rust-lang.org/)
 [![Crates.io](https://img.shields.io/crates/v/rms-memory-mcp)](https://crates.io/crates/rms-memory-mcp)
 [![Release](https://img.shields.io/github/v/release/max-ramas/rms-memory-mcp?color=blue)](https://github.com/max-ramas/rms-memory-mcp/releases)
-[![Build](https://img.shields.io/github/actions/workflow/status/max-ramas/rms-memory-mcp/release.yml?branch=main)](https://github.com/max-ramas/rms-memory-mcp/actions/workflows/release.yml/badge.svg)
+[![Build Status](https://img.shields.io/github/actions/workflow/status/max-ramas/rms-memory-mcp/release.yml?branch=main)](https://github.com/max-ramas/rms-memory-mcp/actions/workflows/release.yml)
 [![Platform](https://img.shields.io/badge/platform-macOS%20%7C%20Linux%20%7C%20Windows-lightgrey)]()
 [![MCP](https://img.shields.io/badge/protocol-MCP-blueviolet)](https://modelcontextprotocol.io)
 
