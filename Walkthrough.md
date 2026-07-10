@@ -30,7 +30,10 @@ RMS Memory is a specialized Model Context Protocol (MCP) server that acts as a l
 
 ### 4. Dynamic MCP Auto-Installer (`rms-memory install`)
 - Eradicates manual configuration. Run `rms-memory install` and a strict bounding crawler scans `~/.config/` and `~/Library/Application Support/` across your OS.
-- Targets native IDE configurations like `mcp.json` or `settings.json` across ecosystems (Cursor, Zed, Antigravity, OpenCode, Claude Code) and injects the absolute JSON-RPC binary path using non-destructive `serde_json` merging.
+- **Cross-Format Resilience:** The patcher handles both standard JSON (Claude, Cursor, VSCode) and **JSONC** (Zed — supports `//` comments). The `inject_jsonc` engine strips comments character-by-character before parsing, then applies regex-based in-place injection to preserve the original file's formatting and comments.
+- **Dependency Injection (`PayloadBuilder`):** Each IDE entry carries its own `build_payload` function via the `PayloadBuilder` type alias. This eliminates inline `if/else` branching in the installer core — adding a new IDE format is a one-line change in `registry.rs`.
+- **OpenCode Native Schema:** OpenCode receives `{"type": "local", "command": ["/path/rms-memory", "serve"], "enabled": true}` — matching its `McpLocalConfig` JSON Schema exactly. All other IDEs get the standard `{"command": "/path", "args": ["serve"], "enabled": true}` format.
+- **Failure Logging:** When a config file fails to parse even after JSONC stripping, the installer logs a `tracing::warn!` diagnostic instead of silently skipping, making misconfigured IDE configs debuggable.
 
 ### 5. Rules-as-Code Agent Patching
 - **Cross-IDE Context:** Automatically drops IDE-specific guide files upon repository discovery.

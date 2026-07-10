@@ -12,6 +12,10 @@ pub async fn execute(
         .as_ref()
         .ok_or_else(|| anyhow::anyhow!("Workspace root not initialized"))?;
     let path_str = args.get("path").and_then(|v| v.as_str()).unwrap_or("");
+    let path = std::path::Path::new(path_str);
+    if path.is_absolute() {
+        return Err(anyhow::anyhow!("Path must be relative to the vault (e.g. 'architecture/file.md'), but received absolute path: {}", path_str));
+    }
     let file_path = workspace_root.join(path_str);
 
     if let Some(linked_content) = crate::link::get_linked_content(&file_path) {

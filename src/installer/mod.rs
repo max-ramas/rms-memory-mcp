@@ -28,11 +28,22 @@ pub async fn run_installer(auto_yes: bool, dry_run: bool) -> Result<()> {
                 let json: serde_json::Value = match serde_json::from_str(&content) {
                     Ok(j) => j,
                     Err(_) => {
-                        // Create empty json object string if file is empty
-                        if content.trim().is_empty() {
+                        // Try JSONC stripping for configs with comments (e.g. Zed)
+                        let stripped = patcher::strip_json_comments(&content);
+                        if stripped.trim().is_empty() {
                             serde_json::json!({})
                         } else {
-                            continue;
+                            match serde_json::from_str(&stripped) {
+                                Ok(j) => j,
+                                Err(e) => {
+                                    tracing::warn!(
+                                        "[⚠️] Failed to parse config {}: {}. The file may use an unsupported format.",
+                                        candidate.display(),
+                                        e
+                                    );
+                                    continue;
+                                }
+                            }
                         }
                     }
                 };
@@ -112,18 +123,7 @@ pub async fn run_installer(auto_yes: bool, dry_run: bool) -> Result<()> {
     let my_exe_str = my_exe.to_string_lossy().to_string();
 
     for (candidate, _json, ide, original_content) in selected_targets {
-        let config_payload = if ide.name == "OpenCode" {
-            serde_json::json!({
-                "enabled": true,
-                "type": "local",
-                "command": [my_exe_str.clone(), "serve"]
-            })
-        } else {
-            serde_json::json!({
-                "command": my_exe_str.clone(),
-                "args": ["serve"]
-            })
-        };
+        let config_payload = (ide.build_payload)(&my_exe_str);
 
         let patched_content =
             patcher::inject_jsonc(&original_content, ide.key, "rms-memory", &config_payload);

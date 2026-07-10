@@ -2,6 +2,16 @@
 
 All notable changes to this project will be documented in this file.
 
+## [Unreleased]
+
+### Fixed
+- **OpenCode MCP Payload Format:** Replaced hardcoded `if ide.name == "OpenCode"` branching with a `PayloadBuilder` dependency-injection architecture. The `opencode_payload` function now produces OpenCode's native `McpLocalConfig` schema (`{"type": "local", "command": [array], "enabled": true}`), which was previously missing the `type` field and using a string `command` instead of an array.
+- **Zed JSONC Silent Skip:** The installer now falls back to `strip_json_comments()` when `serde_json::from_str` fails on config files containing `//` comments (e.g. Zed's `settings.json`). Previously, Zed configs were silently skipped. On parse failure, `tracing::warn!` now logs a clear diagnostic message.
+- **Missing `enabled: true` for Standard Payload:** The `standard_payload` function now injects `"enabled": true` for all non-OpenCode IDEs. This is required by Zed's `context_servers` schema and is a harmless no-op for Claude, Cursor, and VSCode.
+
+### Changed
+- **Installer DI Architecture:** Introduced `PayloadBuilder` type alias (`fn(exe: &str) -> serde_json::Value`) and attached it to `IdeConfig` as a `build_payload` field. Adding a new IDE format no longer requires modifying `run_installer()` — just one line in `get_ide_registry()`.
+
 ## [1.0.1] - 2026-07-07
 
 ### Added
