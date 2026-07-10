@@ -25,6 +25,8 @@ pub enum Commands {
     Doctor(crate::commands::simple::DoctorArgs),
     /// Install the MCP server into discovered IDEs
     Install(crate::commands::simple::InstallArgs),
+    /// Uninstall the MCP server from discovered IDEs
+    Uninstall(crate::commands::simple::UninstallArgs),
     /// Garbage collection: delete orphaned indices
     Gc(crate::commands::gc::GcArgs),
     /// Incremental sync of the current vault
@@ -46,6 +48,7 @@ impl Cli {
             Commands::Reindex(args) => args.run().await,
             Commands::Doctor(args) => args.run().await,
             Commands::Install(args) => args.run().await,
+            Commands::Uninstall(args) => args.run().await,
             Commands::Gc(args) => args.run().await,
             Commands::Sync(args) => args.run().await,
             Commands::Log(args) => args.run().await,

@@ -157,3 +157,38 @@ pub fn inject_jsonc(
 
     None
 }
+
+pub fn remove_key(original: &str, key: &str, tool_name: &str) -> Option<String> {
+    let stripped = strip_json_comments(original);
+    let json = serde_json::from_str::<serde_json::Value>(&stripped).ok()?;
+    let obj = json.as_object()?;
+
+    // Check if the key + tool_name exist
+    let mcp = obj.get(key)?;
+    let mcp_obj = mcp.as_object()?;
+    if !mcp_obj.contains_key(tool_name) {
+        return Some(original.to_string());
+    }
+
+    // Regex to find and remove the tool_name entry including trailing comma
+    let entry_pattern = format!(
+        r#""{}"\s*:\s*\{{[^{{}}]*\}}\s*,?\s*"#,
+        regex::escape(tool_name)
+    );
+    let re = regex::Regex::new(&entry_pattern).ok()?;
+    if let Some(mat) = re.find(original) {
+        let mut patched = original.to_string();
+        patched.replace_range(mat.range(), "");
+        // Clean up empty objects
+        let empty_obj = format!(r#""{}"\s*:\s*\{{[^{{}}]*\}}\s*"#, regex::escape(key));
+        if let Ok(re) = regex::Regex::new(&empty_obj) {
+            if re.is_match(&patched) {
+                // Check if removing the last entry in the parent object
+                patched = re.replace(&patched, "").to_string();
+            }
+        }
+        return Some(patched);
+    }
+
+    None
+}

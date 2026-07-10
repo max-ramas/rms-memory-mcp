@@ -41,3 +41,6 @@ patch_*.py
 /CLAUDE.md
 /GEMINI.md
 /.zed/assistant.md
+
+# Local build script
+build.sh

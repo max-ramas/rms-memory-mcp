@@ -63,8 +63,136 @@ impl CommandRunner for DoctorArgs {
         let current_dir = std::env::current_dir()?;
         let workspace = Workspace::discover(&current_dir, None)?;
         println!("Doctor checks for {:?}", workspace.root);
-        // TODO: iterate over files, check rules
-        println!("All checks passed.");
+        println!("{}", "─".repeat(60));
+
+        let mut issues = 0u32;
+
+        // 1. Check vault directory structure
+        println!("\n[1/5] Vault directory structure...");
+        let required_dirs = ["rules", "decisions", "architecture", "artifacts", "docs", "api"];
+        for dir in &required_dirs {
+            let p = workspace.root.join(dir);
+            if p.exists() {
+                println!("  ✅ {}/ exists", dir);
+            } else {
+                println!("  ⚠️  {}/ missing", dir);
+                issues += 1;
+            }
+        }
+
+        // 2. Check for files missing document IDs
+        println!("\n[2/5] Document IDs...");
+        let files = workspace.find_markdown_files().unwrap_or_default();
+        let mut missing_ids = Vec::new();
+        for f in &files {
+            if let Ok(doc) = crate::document::Document::parse(f) {
+                if doc.frontmatter.as_ref().and_then(|fm| fm.id.as_ref()).is_none() {
+                    missing_ids.push(f.to_string_lossy().to_string());
+                }
+            }
+        }
+        if missing_ids.is_empty() {
+            println!("  ✅ All {} documents have IDs", files.len());
+        } else {
+            println!("  ⚠️  {} files missing 'id' in frontmatter:", missing_ids.len());
+            for path in &missing_ids {
+                println!("     - {}", path);
+            }
+            issues += missing_ids.len() as u32;
+        }
+
+        // 3. Check for broken Markdown links
+        println!("\n[3/5] Cross-document links...");
+        let mut broken_links = Vec::new();
+        let file_set: std::collections::HashSet<_> = files
+            .iter()
+            .filter_map(|f| f.strip_prefix(&workspace.root).ok().map(|r| r.to_string_lossy().to_string()))
+            .collect();
+        for f in &files {
+            if let Ok(doc) = crate::document::Document::parse(f) {
+                let links = doc.extract_links();
+                for link in links {
+                    let target = workspace.root.join(&link);
+                    if !target.exists() && !file_set.contains(&link) {
+                        broken_links.push((
+                            f.strip_prefix(&workspace.root).unwrap_or(f).to_string_lossy().to_string(),
+                            link,
+                        ));
+                    }
+                }
+            }
+        }
+        if broken_links.is_empty() {
+            println!("  ✅ No broken cross-document links found");
+        } else {
+            println!("  ⚠️  {} broken links:", broken_links.len());
+            for (source, target) in &broken_links {
+                println!("     - {} → {} (not found)", source, target);
+            }
+            issues += broken_links.len() as u32;
+        }
+
+        // 4. Check LanceDB store
+        println!("\n[4/5] LanceDB store...");
+        match workspace.get_store().await {
+            Ok(store) => {
+                match store.open_table().await {
+                    Ok(_table) => println!("  ✅ LanceDB table accessible"),
+                    Err(e) => {
+                        println!("  ⚠️  LanceDB table not accessible: {}", e);
+                        issues += 1;
+                    }
+                }
+            }
+            Err(e) => {
+                println!("  ⚠️  Cannot connect to LanceDB: {}", e);
+                issues += 1;
+            }
+        }
+
+        // 5. Check registry coherence
+        println!("\n[5/5] Registry coherence...");
+        if let Ok(registry) = crate::workspace::Registry::load() {
+            let vault_canon = std::fs::canonicalize(&workspace.root).unwrap_or_else(|_| workspace.root.clone());
+            let vault_str = vault_canon.to_string_lossy().to_string();
+            let mut found = false;
+            for proj in registry.projects.values() {
+                if let Ok(p) = std::fs::canonicalize(&proj.vault_path) {
+                    if p.to_string_lossy() == vault_str {
+                        found = true;
+                        println!("  ✅ Project registered in registry.toml");
+                        break;
+                    }
+                }
+            }
+            if !found {
+                // Try by code_path
+                let code_canon = std::fs::canonicalize(&workspace.code_path).unwrap_or_else(|_| workspace.code_path.clone());
+                let code_str = code_canon.to_string_lossy().to_string();
+                for proj in registry.projects.values() {
+                    if proj.code_path == code_str {
+                        found = true;
+                        println!("  ✅ Found by code_path: {}", proj.code_path);
+                        break;
+                    }
+                }
+            }
+            if !found {
+                println!("  ⚠️  Project not found in registry — may be orphaned");
+                issues += 1;
+            }
+        } else {
+            println!("  ⚠️  Cannot read registry.toml");
+            issues += 1;
+        }
+
+        // Summary
+        println!("\n{}", "─".repeat(60));
+        if issues == 0 {
+            println!("✅ All checks passed. Vault is healthy.");
+        } else {
+            println!("⚠️  {} issue(s) found. Run `rms-memory reindex` or `rms-memory init` to repair.", issues);
+        }
         Ok(())
     }
 }
@@ -81,6 +209,22 @@ pub struct InstallArgs {
 impl CommandRunner for InstallArgs {
     async fn run(&self) -> Result<()> {
         crate::installer::run_installer(self.yes, self.dry_run).await?;
+        Ok(())
+    }
+}
+
+#[derive(Args, Debug)]
+pub struct UninstallArgs {
+    /// Automatically approve all removals
+    #[arg(short, long)]
+    pub yes: bool,
+    #[arg(long)]
+    pub dry_run: bool,
+}
+
+impl CommandRunner for UninstallArgs {
+    async fn run(&self) -> Result<()> {
+        crate::installer::run_uninstaller(self.yes, self.dry_run).await?;
         Ok(())
     }
 }
@@ -130,20 +274,56 @@ impl CommandRunner for ExportLlmsArgs {
         let current_dir = std::env::current_dir()?;
         let workspace = Workspace::discover(&current_dir, None)?;
         let files = workspace.find_markdown_files()?;
-        let mut combined = String::new();
-        for f in files {
-            if let Ok(content) = std::fs::read_to_string(&f) {
-                combined.push_str(&format!("\n\n---\nFile: {}\n---\n\n", f.to_string_lossy()));
-                combined.push_str(&content);
+        let file_count = files.len();
+
+        let mut combined = String::from("# RMS Memory Vault\n\n");
+        combined.push_str(&format!(
+            "> Exported from {}\n> Generated: {}\n\n",
+            workspace.root.display(),
+            chrono::Utc::now().to_rfc3339()
+        ));
+
+        for f in &files {
+            if let Ok(doc) = crate::document::Document::parse(f) {
+                let rel = f.strip_prefix(&workspace.root).unwrap_or(f);
+                let title = doc
+                    .frontmatter
+                    .as_ref()
+                    .and_then(|fm| fm.alias.as_ref())
+                    .cloned()
+                    .unwrap_or_else(|| {
+                        rel.file_stem()
+                            .unwrap_or_default()
+                            .to_string_lossy()
+                            .to_string()
+                    });
+                let desc = doc.content.lines().take(2).collect::<Vec<_>>().join(" ");
+
+                combined.push_str(&format!(
+                    "- [{}]({}) — {}\n",
+                    title,
+                    rel.to_string_lossy(),
+                    if desc.len() > 120 { format!("{}...", &desc[..117]) } else { desc }
+                ));
             }
         }
+
+        // Append full contents section
+        combined.push_str("\n\n---\n# Full Contents\n\n");
+        for f in &files {
+            let rel = f.strip_prefix(&workspace.root).unwrap_or(f);
+            if let Ok(content) = std::fs::read_to_string(f) {
+                combined.push_str(&format!(
+                    "\n## {}\n\n{}\n",
+                    rel.to_string_lossy(),
+                    content
+                ));
+            }
+        }
+
         let out_path = self.out.clone().unwrap_or_else(|| "llms.txt".to_string());
         std::fs::write(&out_path, combined)?;
-        println!(
-            "Exported {} files to {}",
-            workspace.find_markdown_files()?.len(),
-            out_path
-        );
+        println!("Exported {} files to {}", file_count, out_path);
         Ok(())
     }
 }

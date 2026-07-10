@@ -48,6 +48,11 @@ impl Indexer {
         let tmp_dir = cache_dir.join("tmp");
         std::fs::create_dir_all(&tmp_dir).ok();
         let original_tmp = std::env::var_os("TMPDIR");
+        // SAFETY: We temporarily override TMPDIR to a user-writable directory because
+        // fastembed (via hf-hub and tempfile) uses the system /tmp for atomic downloads.
+        // In sandboxed environments (Claude Desktop, macOS sandbox), /tmp may be read-only.
+        // We save and restore the original value immediately after model initialization,
+        // so this mutation is bounded to the Indexer constructor scope.
         unsafe {
             std::env::set_var("TMPDIR", &tmp_dir);
         }
@@ -295,7 +300,7 @@ pub async fn sync_vault(
 
         let raw_links = doc.extract_links();
         let mut normalized_links = Vec::new();
-        for link in raw_links {
+        for link in &raw_links {
             normalized_links.push(crate::indexer::normalize_link(
                 &workspace.root,
                 &file_path,
@@ -303,8 +308,8 @@ pub async fn sync_vault(
             ));
         }
 
-        let links_raw_str = serde_json::to_string(&normalized_links)?;
-        let links_resolved_str = "[]".to_string();
+        let links_raw_str = serde_json::to_string(&raw_links)?;
+        let links_resolved_str = serde_json::to_string(&normalized_links)?;
 
         let chunks = Indexer::chunk_text(&doc.content);
         if chunks.is_empty() {
@@ -411,7 +416,7 @@ pub async fn index_vault_full(
 
         let raw_links = doc.extract_links();
         let mut normalized_links = Vec::new();
-        for link in raw_links {
+        for link in &raw_links {
             normalized_links.push(crate::indexer::normalize_link(
                 &workspace.root,
                 &file_path,
@@ -419,8 +424,8 @@ pub async fn index_vault_full(
             ));
         }
 
-        let links_raw_str = serde_json::to_string(&normalized_links)?;
-        let links_resolved_str = "[]".to_string();
+        let links_raw_str = serde_json::to_string(&raw_links)?;
+        let links_resolved_str = serde_json::to_string(&normalized_links)?;
 
         let chunks = Indexer::chunk_text(&doc.content);
         if chunks.is_empty() {

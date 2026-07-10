@@ -10,7 +10,7 @@ Stop re-explaining your architecture to Cursor, Zed, and Claude Code every singl
 [![Rust](https://img.shields.io/badge/Rust-1.75%2B-orange?logo=rust)](https://www.rust-lang.org/)
 [![Crates.io](https://img.shields.io/crates/v/rms-memory-mcp)](https://crates.io/crates/rms-memory-mcp)
 [![Release](https://img.shields.io/github/v/release/max-ramas/rms-memory-mcp?color=blue)](https://github.com/max-ramas/rms-memory-mcp/releases)
-![Build](https://github.com/max-ramas/rms-memory-mcp/actions/workflows/release.yml/badge.svg)
+![Build](https://github.com/max-ramas/rms-memory-mcp/actions/workflows/release.yml/badge.svg) 
 [![Platform](https://img.shields.io/badge/platform-macOS%20%7C%20Linux%20%7C%20Windows-lightgrey)]()
 [![MCP](https://img.shields.io/badge/protocol-MCP-blueviolet)](https://modelcontextprotocol.io)
 
@@ -37,7 +37,7 @@ You're developing a single project but switching between different agents — Cu
 | ⚙️ **Dynamic Auto-Installer** | `rms-memory install` scans your system and wires itself into every supported IDE. |
 | 📜 **Rules-as-Code Patching** | Non-destructive AST patching of `.cursorrules`, `.zed/assistant.md`, etc. Opt-in by default. |
 | 🧪 **Dry-Run & Auditing** | `--dry-run` everywhere. Every write gets a rolling `.bak` backup. |
-| 🛡️ **Six-Point Resiliency** | GC, background file-watcher sync, write-guard snapshots, macOS sandbox bypass, `llms.txt` export, isolated logging. |
+| 🛡️ **Ten-Point Resiliency** | GC, background sync, write-guard snapshots, macOS sandbox bypass, `llms.txt` export, path traversal + injection protection, zombie prevention, graceful shutdown. |
 
 ## 📦 Installation
 
@@ -163,14 +163,18 @@ Embedded LanceDB (`~/.rms-memory/dbs/`) combines vector similarity with full-tex
 </details>
 
 <details>
-<summary><b>Six-Point Production Resiliency</b></summary>
+<summary><b>Ten-Point Production Resiliency</b></summary>
 
-1. macOS sandbox bypass for `fastembed` model downloads
-2. `rms-memory gc` — orphaned vector store pruning
-3. Background incremental sync (`Delete-then-Insert` on `mtime`)
-4. Real-time file watcher with 3s debounced re-sync
-5. Write-guard snapshotting with rolling `.bak` backups (default: 5)
-6. `llms.txt` export for flat, decoupled LLM ingestion
+1. Path traversal + filter injection prevention
+2. Zombie process prevention (watcher shutdown on EOF + `std::process::exit(0)`)
+3. Graceful shutdown (`SIGINT`/`Ctrl+C` handler)
+4. macOS sandbox bypass for `fastembed` model downloads
+5. `rms-memory gc` — orphaned vector store pruning
+6. Background incremental sync (`Delete-then-Insert` on `mtime`)
+7. Real-time file watcher with 3s debounced re-sync
+8. Write-guard snapshotting with rolling `.bak` backups (default: 5)
+9. Isolated telemetry logging (`~/.rms-memory/rms.log`)
+10. `llms.txt` export for flat, decoupled LLM ingestion
 </details>
 
 ## 🧩 Supported IDEs

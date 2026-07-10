@@ -210,3 +210,43 @@ pub async fn run_installer(auto_yes: bool, dry_run: bool) -> Result<()> {
     println!("[✅] Installation sweep completed.");
     Ok(())
 }
+
+pub async fn run_uninstaller(_auto_yes: bool, _dry_run: bool) -> Result<()> {
+    println!("[🗑️] Scanning for rms-memory installations...");
+
+    let base_dirs = directories::BaseDirs::new().context("Cannot find base directories")?;
+    let home = base_dirs.home_dir();
+
+    let registry = registry::get_ide_registry();
+    let mut uninstalled = 0u32;
+
+    for ide in &registry {
+        for rel_path in &ide.paths {
+            let candidate = home.join(rel_path);
+            if candidate.exists() && candidate.is_file() {
+                let content = match fs::read_to_string(&candidate) {
+                    Ok(c) => c,
+                    Err(_) => continue,
+                };
+                if let Some(removed) = patcher::remove_key(&content, ide.key, "rms-memory") {
+                    if removed != content {
+                        if candidate.exists() {
+                            let bak = format!("{}.bak", candidate.to_string_lossy());
+                            let _ = fs::copy(&candidate, &bak);
+                        }
+                        fs::write(&candidate, &removed)?;
+                        println!("[🗑️] Removed from {} ({})", ide.name, candidate.display());
+                        uninstalled += 1;
+                    }
+                }
+            }
+        }
+    }
+
+    if uninstalled == 0 {
+        println!("[!] No rms-memory installations found.");
+    } else {
+        println!("[✅] Removed rms-memory from {} IDE configuration(s).", uninstalled);
+    }
+    Ok(())
+}

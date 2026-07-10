@@ -3,6 +3,21 @@ use crate::store::VectorStore;
 use anyhow::Result;
 use serde_json::json;
 
+fn validate_path(path_str: &str) -> Result<()> {
+    if std::path::Path::new(path_str).is_absolute() {
+        return Err(anyhow::anyhow!(
+            "Path must be relative to the vault, but received absolute path: {}",
+            path_str
+        ));
+    }
+    if path_str.split('/').any(|c| c == "..") {
+        return Err(anyhow::anyhow!(
+            "Path traversal detected: '..' is not allowed in vault paths"
+        ));
+    }
+    Ok(())
+}
+
 pub async fn execute(
     ctx: &AppContext,
     args: &serde_json::Map<String, serde_json::Value>,
@@ -12,10 +27,7 @@ pub async fn execute(
         .as_ref()
         .ok_or_else(|| anyhow::anyhow!("Workspace root not initialized"))?;
     let path_str = args.get("path").and_then(|v| v.as_str()).unwrap_or("");
-    let path = std::path::Path::new(path_str);
-    if path.is_absolute() {
-        return Err(anyhow::anyhow!("Path must be relative to the vault (e.g. 'architecture/file.md'), but received absolute path: {}", path_str));
-    }
+    validate_path(path_str)?;
     let file_path = workspace_root.join(path_str);
 
     if let Some(linked_content) = crate::link::get_linked_content(&file_path) {

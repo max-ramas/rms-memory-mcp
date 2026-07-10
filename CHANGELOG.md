@@ -2,15 +2,31 @@
 
 All notable changes to this project will be documented in this file.
 
-## [Unreleased]
+## [1.0.2] - 2026-07-08
+
+### Security
+- **Path Traversal Prevention:** `rms_read` and `rms_write` now reject paths containing `..` components, preventing escape from the vault directory.
+- **LanceDB Filter Injection:** All filter strings in `store.rs` (`delete_document`, `read_document`) now escape single quotes via `escape_filter()`, preventing potential data corruption.
 
 ### Fixed
 - **OpenCode MCP Payload Format:** Replaced hardcoded `if ide.name == "OpenCode"` branching with a `PayloadBuilder` dependency-injection architecture. The `opencode_payload` function now produces OpenCode's native `McpLocalConfig` schema (`{"type": "local", "command": [array], "enabled": true}`), which was previously missing the `type` field and using a string `command` instead of an array.
 - **Zed JSONC Silent Skip:** The installer now falls back to `strip_json_comments()` when `serde_json::from_str` fails on config files containing `//` comments (e.g. Zed's `settings.json`). Previously, Zed configs were silently skipped. On parse failure, `tracing::warn!` now logs a clear diagnostic message.
 - **Missing `enabled: true` for Standard Payload:** The `standard_payload` function now injects `"enabled": true` for all non-OpenCode IDEs. This is required by Zed's `context_servers` schema and is a harmless no-op for Claude, Cursor, and VSCode.
+- **Hybrid Search Activated:** The LanceDB `search()` method now uses combined vector search + Tantivy full-text search (`FullTextSearchQuery`). Previously, only vector search was performed despite the FTS index being created. Falls back to vector-only gracefully if FTS index is unavailable.
+- **Write `create` Mode:** Now correctly rejects overwriting existing files. Previously, `create` fell through to the catch-all `_` branch which behaved as a full overwrite.
+- **`links_resolved` No Longer Stub:** Both `sync_vault` and `index_vault_full` now store actual normalized link paths in `links_resolved` instead of the placeholder `"[]"`.
+- **Safe Unsafe:** Added `// SAFETY:` documentation comment for the `TMPDIR` environment variable override in `Indexer::new()`.
+
+### Added
+- **`rms-memory doctor` (Full Diagnostics):** Implements 5-point vault health check: directory structure, missing document IDs, broken cross-document links, LanceDB store accessibility, and registry coherence.
+- **`rms-memory uninstall`:** New command to remove `rms-memory` entries from all discovered IDE configuration files. Uses `patcher::remove_key()` for safe JSONC-aware key removal with automatic `.bak` backups.
+- **Graceful Shutdown:** Added `SIGINT`/`Ctrl+C` handler in `main.rs` via `tokio::signal::ctrl_c()`, ensuring clean log flush on exit instead of immediate process termination.
+- **Zombie Process Prevention:** MCP server now signals background file-watcher tasks to stop when stdin closes (EOF on disconnect). `std::process::exit(0)` in `main.rs` guarantees the process terminates even if tokio runtime has lingering tasks.
+- **llms.txt Export Compliance:** `export-llms` now generates a proper `llms.txt` spec format with clickable links, frontmatter-derived titles, and content summaries, in addition to the full vault contents section.
 
 ### Changed
 - **Installer DI Architecture:** Introduced `PayloadBuilder` type alias (`fn(exe: &str) -> serde_json::Value`) and attached it to `IdeConfig` as a `build_payload` field. Adding a new IDE format no longer requires modifying `run_installer()` — just one line in `get_ide_registry()`.
+- **ExportLlms Optimization:** Fixed double `find_markdown_files()` call — now computed once.
 
 ## [1.0.1] - 2026-07-07
 

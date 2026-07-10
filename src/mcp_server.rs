@@ -35,16 +35,23 @@ use tokio::sync::Mutex;
 
 pub struct McpServer {
     ctx: AppContext,
+    shutdown_tx: tokio::sync::watch::Sender<bool>,
 }
 
-fn spawn_sync_watcher(workspace: crate::workspace::Workspace, store: crate::store::Store) {
+fn spawn_sync_watcher(
+    workspace: crate::workspace::Workspace,
+    store: crate::store::Store,
+    mut shutdown_rx: tokio::sync::watch::Receiver<bool>,
+) {
     tokio::spawn(async move {
         // Initial sync
-        if let Ok(sync_indexer) = tokio::task::spawn_blocking(crate::indexer::Indexer::new)
-            .await
-            .unwrap_or(Err(anyhow::anyhow!("spawn_blocking failed")))
-        {
-            let _ = crate::indexer::sync_vault(&workspace, &store, sync_indexer).await;
+        match tokio::task::spawn_blocking(crate::indexer::Indexer::new).await {
+            Ok(Ok(sync_indexer)) => {
+                let _ = crate::indexer::sync_vault(&workspace, &store, sync_indexer).await;
+            }
+            _ => {
+                tracing::error!("Failed to create indexer for initial sync");
+            }
         }
 
         // File Watcher
@@ -97,6 +104,10 @@ fn spawn_sync_watcher(workspace: crate::workspace::Workspace, store: crate::stor
 
         loop {
             tokio::select! {
+                _ = shutdown_rx.changed() => {
+                    tracing::info!("Watcher: shutdown signal received.");
+                    break;
+                }
                 recv = rx.recv() => {
                     if recv.is_none() { break; } // channel closed
                     debounce_timer.as_mut().reset(tokio::time::Instant::now() + tokio::time::Duration::from_secs(3));
@@ -104,8 +115,14 @@ fn spawn_sync_watcher(workspace: crate::workspace::Workspace, store: crate::stor
                 }
                 _ = &mut debounce_timer, if pending_sync => {
                     pending_sync = false;
-                    if let Ok(sync_indexer) = tokio::task::spawn_blocking(crate::indexer::Indexer::new).await.unwrap_or(Err(anyhow::anyhow!("spawn_blocking failed"))) {
-                        let _ = crate::indexer::sync_vault(&workspace, &store, sync_indexer).await;
+                    // Reuse model from disk cache (no re-download)
+                    match tokio::task::spawn_blocking(crate::indexer::Indexer::new).await {
+                        Ok(Ok(sync_indexer)) => {
+                            let _ = crate::indexer::sync_vault(&workspace, &store, sync_indexer).await;
+                        }
+                        _ => {
+                            tracing::error!("Failed to create indexer for background sync");
+                        }
                     }
                 }
             }
@@ -122,6 +139,8 @@ impl McpServer {
         workspace_root: Option<std::path::PathBuf>,
         max_backups: usize,
     ) -> Result<()> {
+        let (shutdown_tx, _shutdown_rx) = tokio::sync::watch::channel(false);
+        let shutdown_tx_for_server = shutdown_tx.clone();
         let mut server = Self {
             ctx: AppContext {
                 store,
@@ -129,6 +148,7 @@ impl McpServer {
                 workspace_root,
                 max_backups,
             },
+            shutdown_tx: shutdown_tx_for_server,
         };
         let stdin = io::stdin();
         let mut stdout = io::stdout();
@@ -180,6 +200,9 @@ impl McpServer {
                 }
             }
         }
+        tracing::info!("Stdin closed (EOF). Shutting down watcher...");
+        let _ = server.shutdown_tx.send(true);
+        tracing::info!("Server stopped.");
         Ok(())
     }
 
@@ -210,7 +233,7 @@ impl McpServer {
 
                     match workspace.get_store().await {
                         Ok(store) => {
-                            spawn_sync_watcher(workspace.clone(), store.clone());
+                            spawn_sync_watcher(workspace.clone(), store.clone(), self.shutdown_tx.subscribe());
                             self.ctx.store = Some(store);
                         }
                         Err(_e) => {}
@@ -234,7 +257,7 @@ impl McpServer {
                                 exclude: vec!["node_modules/**".to_string(), ".git/**".to_string()],
                             };
                             if let Ok(store) = workspace.get_store().await {
-                                spawn_sync_watcher(workspace.clone(), store.clone());
+                                spawn_sync_watcher(workspace.clone(), store.clone(), self.shutdown_tx.subscribe());
                                 self.ctx.store = Some(store);
                                 tracing::info!("Initialized with global vault fallback.");
                             }

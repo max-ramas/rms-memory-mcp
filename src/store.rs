@@ -9,6 +9,10 @@ use lancedb::table::Table;
 
 pub const VECTOR_DIMENSION: usize = 384;
 
+fn escape_filter(s: &str) -> String {
+    s.replace('\'', "''")
+}
+
 #[derive(Clone)]
 pub struct Store {
     pub db: lancedb::Connection,
@@ -166,7 +170,7 @@ impl Store {
 
     pub async fn delete_document(&self, table: &Table, document_id: &str) -> Result<()> {
         table
-            .delete(&format!("document_id = '{}'", document_id))
+            .delete(&format!("document_id = '{}'", escape_filter(document_id)))
             .await?;
         Ok(())
     }
@@ -246,77 +250,79 @@ pub trait VectorStore: Send + Sync {
     -> impl std::future::Future<Output = Result<String>> + Send;
 }
 
+fn extract_results(batch: &lancedb::arrow::arrow_array::RecordBatch, results: &mut Vec<SearchResult>) {
+    use lancedb::arrow::arrow_array::{Float32Array, StringArray};
+
+    let path_array = batch
+        .column_by_name("path")
+        .and_then(|c| c.as_any().downcast_ref::<StringArray>().cloned())
+        .unwrap_or_else(|| panic!("'path' column is not a StringArray"));
+    let heading_array = batch
+        .column_by_name("heading")
+        .and_then(|c| c.as_any().downcast_ref::<StringArray>().cloned())
+        .unwrap_or_else(|| panic!("'heading' column is not a StringArray"));
+    let text_array = batch
+        .column_by_name("text")
+        .and_then(|c| c.as_any().downcast_ref::<StringArray>().cloned())
+        .unwrap_or_else(|| panic!("'text' column is not a StringArray"));
+    let score_col = batch.column_by_name("_distance");
+    let score_array = score_col.and_then(|c| c.as_any().downcast_ref::<Float32Array>().cloned());
+
+    for i in 0..batch.num_rows() {
+        results.push(SearchResult {
+            path: path_array.value(i).to_string(),
+            heading: heading_array.value(i).to_string(),
+            text: text_array.value(i).to_string(),
+            score: score_array.as_ref().map(|sa| sa.value(i)),
+        });
+    }
+}
+
 impl VectorStore for Store {
     async fn search(
         &self,
         query_vector: Vec<f32>,
-        _query_str: String,
+        query_str: String,
         limit: usize,
     ) -> Result<Vec<SearchResult>> {
         use futures::stream::StreamExt;
+        use lance_index::scalar::FullTextSearchQuery;
         use lancedb::query::{ExecutableQuery, QueryBase};
 
         let table = self.db.open_table(&self.table_name).execute().await?;
 
-        let query_builder = table.vector_search(query_vector).unwrap().limit(limit);
-        let mut stream = query_builder.execute().await?;
-
         let mut results = Vec::new();
+
+        let query_vector_first = query_vector.clone();
+
+        // Try hybrid search (vector + FTS). Fall back to vector-only if FTS index is not built.
+        let query_builder = table.vector_search(query_vector_first)?;
+        if !query_str.is_empty() {
+            let stream = query_builder
+                .full_text_search(FullTextSearchQuery::new(query_str))
+                .limit(limit)
+                .execute()
+                .await;
+            match stream {
+                Ok(mut s) => {
+                    while let Some(batch) = s.next().await {
+                        let batch = batch?;
+                        extract_results(&batch, &mut results);
+                    }
+                    return Ok(results);
+                }
+                Err(_) => {
+                    // FTS index may not be built; fall through to vector-only
+                }
+            }
+        }
+
+        // Vector-only fallback
+        let query_builder = table.vector_search(query_vector)?.limit(limit);
+        let mut stream = query_builder.execute().await?;
         while let Some(batch) = stream.next().await {
             let batch = batch?;
-            let path_col = batch
-                .column_by_name("path")
-                .expect("Missing 'path' column in search results");
-            let path_array = path_col
-                .as_any()
-                .downcast_ref::<lancedb::arrow::arrow_array::StringArray>()
-                .unwrap_or_else(|| {
-                    panic!(
-                        "'path' column is not a StringArray. Actual type: {:?}",
-                        path_col.data_type()
-                    )
-                });
-
-            let heading_col = batch
-                .column_by_name("heading")
-                .expect("Missing 'heading' column in search results");
-            let heading_array = heading_col
-                .as_any()
-                .downcast_ref::<lancedb::arrow::arrow_array::StringArray>()
-                .unwrap_or_else(|| {
-                    panic!(
-                        "'heading' column is not a StringArray. Actual type: {:?}",
-                        heading_col.data_type()
-                    )
-                });
-
-            let text_col = batch
-                .column_by_name("text")
-                .expect("Missing 'text' column in search results");
-            let text_array = text_col
-                .as_any()
-                .downcast_ref::<lancedb::arrow::arrow_array::StringArray>()
-                .unwrap_or_else(|| {
-                    panic!(
-                        "'text' column is not a StringArray. Actual type: {:?}",
-                        text_col.data_type()
-                    )
-                });
-            let score_col = batch.column_by_name("_distance");
-            let score_array = score_col.map(|c| {
-                c.as_any()
-                    .downcast_ref::<lancedb::arrow::arrow_array::Float32Array>()
-                    .unwrap()
-            });
-
-            for i in 0..batch.num_rows() {
-                results.push(SearchResult {
-                    path: path_array.value(i).to_string(),
-                    heading: heading_array.value(i).to_string(),
-                    text: text_array.value(i).to_string(),
-                    score: score_array.map(|sa| sa.value(i)),
-                });
-            }
+            extract_results(&batch, &mut results);
         }
         Ok(results)
     }
@@ -328,7 +334,7 @@ impl VectorStore for Store {
         let table = self.db.open_table(&self.table_name).execute().await?;
         let stream = table
             .query()
-            .only_if(format!("path = '{}'", path))
+            .only_if(format!("path = '{}'", escape_filter(path)))
             .execute()
             .await?;
         let mut stream = stream;

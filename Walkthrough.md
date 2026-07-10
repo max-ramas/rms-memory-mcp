@@ -51,13 +51,27 @@ RMS Memory is a specialized Model Context Protocol (MCP) server that acts as a l
 - **Proactive AI Behavior:** The tool descriptions explicitly command the LLM when to act. For example, `rms_search` instructs the agent to "Use this tool FIRST to understand the repository's background", and `rms_write` commands the agent to "Use this tool PROACTIVELY at the end of a task if you learned a new user preference". This guarantees Cursor and Claude will leverage the memory vault autonomously without user prompting.
 
 ### 7. Production-Grade System Resiliency
-To transition from a "toy server" to an instrumental platform, 6 resilience protocols are enforced:
-1. **macOS Sandbox Bypassing:** Claude Desktop and other IDEs operate in strict macOS Read-Only sandboxes. The server detects sandbox constraints and dynamically intercepts `fastembed` model downloads, rerouting `TMPDIR` and caching layers exclusively to the user's guaranteed-writable `~/.rms-memory/cache/` directory.
-2. **Garbage Collection (`rms-memory gc`):** Detects and purges orphaned LanceDB vector stores belonging to deprecated project vaults.
-3. **Incremental Sync (`rms-memory sync`):** Background `tokio` indexing on MCP launch. Uses a strict LanceDB `Delete-then-Insert` pipeline against file `mtime` bounds to cleanly sync vectors without RAG pollution.
-4. **Real-time File Watcher:** Background `notify` service instantly detects IDE saves (`Modify` filesystem events). Triggers a trailing-edge debounced (3s) incremental `sync_vault` to guarantee persistent memory seamlessly stays aligned with local workspace changes without requiring manual explicit syncs or server restarts.
-5. **Write-Guard Snapshotting:** JSON-RPC `write` events triggered by autonomous agents are intercepted. The server automatically issues an `fs::copy` artifact backup to `.bak` before permitting the agent's modification. Includes a rolling backup system (`max_backups` config, default 5) to prevent unbounded disk pollution from continuous AI revisions.
-6. **LLMs.txt Export (`export-llms`):** Compiles the entire isolated Vault structure into a standardized `llms.txt` digest for decoupled LLM ingestion or raw curl queries.
+To transition from a "toy server" to an instrumental platform, 10 resilience protocols are enforced:
+1. **Path Traversal Protection:** All MCP tool handlers (`rms_read`, `rms_write`) reject paths containing `..` and enforce vault containment.
+2. **Filter Injection Prevention:** LanceDB query filters escape single quotes in document IDs and paths, preventing malformed filter strings from corrupting the data layer.
+3. **Zombie Process Prevention:** When the IDE closes stdin (EOF on disconnect), the `run()` loop signals the background file-watcher task to stop via a `tokio::sync::watch` channel. The watcher breaks its `loop` and the task terminates. `std::process::exit(0)` in `main()` guarantees the process exits even if tokio runtime has lingering tasks.
+4. **macOS Sandbox Bypassing:** Claude Desktop and other IDEs operate in strict macOS Read-Only sandboxes. The server detects sandbox constraints and dynamically intercepts `fastembed` model downloads, rerouting `TMPDIR` and caching layers exclusively to the user's guaranteed-writable `~/.rms-memory/cache/` directory. The `unsafe` block is documented with a full `// SAFETY:` comment explaining bounded scope and restoration.
+5. **Garbage Collection (`rms-memory gc`):** Detects and purges orphaned LanceDB vector stores belonging to deprecated project vaults.
+6. **Incremental Sync (`rms-memory sync`):** Background `tokio` indexing on MCP launch. Uses a strict LanceDB `Delete-then-Insert` pipeline against file `mtime` bounds to cleanly sync vectors without RAG pollution.
+6. **Real-time File Watcher:** Background `notify` service instantly detects IDE saves (`Modify` filesystem events). Triggers a trailing-edge debounced (3s) incremental `sync_vault` to guarantee persistent memory seamlessly stays aligned with local workspace changes without requiring manual explicit syncs or server restarts.
+7. **Write-Guard Snapshotting:** JSON-RPC `write` events triggered by autonomous agents are intercepted. The server automatically issues an `fs::copy` artifact backup to `.bak` before permitting the agent's modification. Includes a rolling backup system (`max_backups` config, default 5) to prevent unbounded disk pollution from continuous AI revisions. The `create` mode rejects overwriting existing files, requiring explicit `replace` mode for modifications.
+8. **Graceful Shutdown:** `SIGINT`/`Ctrl+C` handler ensures clean log flush on exit.
+9. **LLMs.txt Export (`export-llms`):** Compiles the entire isolated Vault structure into a standardized `llms.txt` digest with clickable links, titles, and summaries — compatible with LLM ingestion tools.
+
+### 8. System Diagnostics & Maintenance
+- **Doctor (`rms-memory doctor`):** A 5-point health check system that validates:
+  1. Vault directory structure (rules, decisions, architecture, artifacts, docs, api)
+  2. Missing document IDs in frontmatter
+  3. Broken cross-document markdown links (checks file existence)
+  4. LanceDB store connectivity
+  5. Registry coherence (project-to-vault path mapping)
+- **Uninstall (`rms-memory uninstall`):** Removes `rms-memory` entries from all discovered IDE configuration files. Uses the same JSONC-aware patcher as the installer with automatic `.bak` backups, making uninstallation as safe and transparent as installation.
+- **Hybrid Retrieval Activation:** The `VectorStore::search()` implementation now truly combines vector similarity AND Tantivy full-text search (FTS). Previously, the FTS index was built on table creation but never queried — searches were vector-only. The fix adds a two-tier approach: hybrid search with graceful fallback to vector-only if the FTS index is unavailable.
 
 ### 8. Modular Architecture & crates.io Ready
 - **Library API (`lib.rs`):** Prepared for ecosystem integration by exposing core components (`store`, `indexer`, `tools`) as a public Rust library. Internal CLI logic remains safely encapsulated.
