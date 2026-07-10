@@ -233,7 +233,11 @@ impl McpServer {
 
                     match workspace.get_store().await {
                         Ok(store) => {
-                            spawn_sync_watcher(workspace.clone(), store.clone(), self.shutdown_tx.subscribe());
+                            spawn_sync_watcher(
+                                workspace.clone(),
+                                store.clone(),
+                                self.shutdown_tx.subscribe(),
+                            );
                             self.ctx.store = Some(store);
                         }
                         Err(_e) => {}
@@ -257,7 +261,11 @@ impl McpServer {
                                 exclude: vec!["node_modules/**".to_string(), ".git/**".to_string()],
                             };
                             if let Ok(store) = workspace.get_store().await {
-                                spawn_sync_watcher(workspace.clone(), store.clone(), self.shutdown_tx.subscribe());
+                                spawn_sync_watcher(
+                                    workspace.clone(),
+                                    store.clone(),
+                                    self.shutdown_tx.subscribe(),
+                                );
                                 self.ctx.store = Some(store);
                                 tracing::info!("Initialized with global vault fallback.");
                             }

@@ -250,7 +250,10 @@ pub trait VectorStore: Send + Sync {
     -> impl std::future::Future<Output = Result<String>> + Send;
 }
 
-fn extract_results(batch: &lancedb::arrow::arrow_array::RecordBatch, results: &mut Vec<SearchResult>) {
+fn extract_results(
+    batch: &lancedb::arrow::arrow_array::RecordBatch,
+    results: &mut Vec<SearchResult>,
+) {
     use lancedb::arrow::arrow_array::{Float32Array, StringArray};
 
     let path_array = batch

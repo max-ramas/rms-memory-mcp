@@ -69,7 +69,14 @@ impl CommandRunner for DoctorArgs {
 
         // 1. Check vault directory structure
         println!("\n[1/5] Vault directory structure...");
-        let required_dirs = ["rules", "decisions", "architecture", "artifacts", "docs", "api"];
+        let required_dirs = [
+            "rules",
+            "decisions",
+            "architecture",
+            "artifacts",
+            "docs",
+            "api",
+        ];
         for dir in &required_dirs {
             let p = workspace.root.join(dir);
             if p.exists() {
@@ -86,7 +93,12 @@ impl CommandRunner for DoctorArgs {
         let mut missing_ids = Vec::new();
         for f in &files {
             if let Ok(doc) = crate::document::Document::parse(f) {
-                if doc.frontmatter.as_ref().and_then(|fm| fm.id.as_ref()).is_none() {
+                if doc
+                    .frontmatter
+                    .as_ref()
+                    .and_then(|fm| fm.id.as_ref())
+                    .is_none()
+                {
                     missing_ids.push(f.to_string_lossy().to_string());
                 }
             }
@@ -94,7 +106,10 @@ impl CommandRunner for DoctorArgs {
         if missing_ids.is_empty() {
             println!("  ✅ All {} documents have IDs", files.len());
         } else {
-            println!("  ⚠️  {} files missing 'id' in frontmatter:", missing_ids.len());
+            println!(
+                "  ⚠️  {} files missing 'id' in frontmatter:",
+                missing_ids.len()
+            );
             for path in &missing_ids {
                 println!("     - {}", path);
             }
@@ -106,7 +121,11 @@ impl CommandRunner for DoctorArgs {
         let mut broken_links = Vec::new();
         let file_set: std::collections::HashSet<_> = files
             .iter()
-            .filter_map(|f| f.strip_prefix(&workspace.root).ok().map(|r| r.to_string_lossy().to_string()))
+            .filter_map(|f| {
+                f.strip_prefix(&workspace.root)
+                    .ok()
+                    .map(|r| r.to_string_lossy().to_string())
+            })
             .collect();
         for f in &files {
             if let Ok(doc) = crate::document::Document::parse(f) {
@@ -115,7 +134,10 @@ impl CommandRunner for DoctorArgs {
                     let target = workspace.root.join(&link);
                     if !target.exists() && !file_set.contains(&link) {
                         broken_links.push((
-                            f.strip_prefix(&workspace.root).unwrap_or(f).to_string_lossy().to_string(),
+                            f.strip_prefix(&workspace.root)
+                                .unwrap_or(f)
+                                .to_string_lossy()
+                                .to_string(),
                             link,
                         ));
                     }
@@ -135,15 +157,13 @@ impl CommandRunner for DoctorArgs {
         // 4. Check LanceDB store
         println!("\n[4/5] LanceDB store...");
         match workspace.get_store().await {
-            Ok(store) => {
-                match store.open_table().await {
-                    Ok(_table) => println!("  ✅ LanceDB table accessible"),
-                    Err(e) => {
-                        println!("  ⚠️  LanceDB table not accessible: {}", e);
-                        issues += 1;
-                    }
+            Ok(store) => match store.open_table().await {
+                Ok(_table) => println!("  ✅ LanceDB table accessible"),
+                Err(e) => {
+                    println!("  ⚠️  LanceDB table not accessible: {}", e);
+                    issues += 1;
                 }
-            }
+            },
             Err(e) => {
                 println!("  ⚠️  Cannot connect to LanceDB: {}", e);
                 issues += 1;
@@ -153,7 +173,8 @@ impl CommandRunner for DoctorArgs {
         // 5. Check registry coherence
         println!("\n[5/5] Registry coherence...");
         if let Ok(registry) = crate::workspace::Registry::load() {
-            let vault_canon = std::fs::canonicalize(&workspace.root).unwrap_or_else(|_| workspace.root.clone());
+            let vault_canon =
+                std::fs::canonicalize(&workspace.root).unwrap_or_else(|_| workspace.root.clone());
             let vault_str = vault_canon.to_string_lossy().to_string();
             let mut found = false;
             for proj in registry.projects.values() {
@@ -167,7 +188,8 @@ impl CommandRunner for DoctorArgs {
             }
             if !found {
                 // Try by code_path
-                let code_canon = std::fs::canonicalize(&workspace.code_path).unwrap_or_else(|_| workspace.code_path.clone());
+                let code_canon = std::fs::canonicalize(&workspace.code_path)
+                    .unwrap_or_else(|_| workspace.code_path.clone());
                 let code_str = code_canon.to_string_lossy().to_string();
                 for proj in registry.projects.values() {
                     if proj.code_path == code_str {
@@ -191,7 +213,10 @@ impl CommandRunner for DoctorArgs {
         if issues == 0 {
             println!("✅ All checks passed. Vault is healthy.");
         } else {
-            println!("⚠️  {} issue(s) found. Run `rms-memory reindex` or `rms-memory init` to repair.", issues);
+            println!(
+                "⚠️  {} issue(s) found. Run `rms-memory reindex` or `rms-memory init` to repair.",
+                issues
+            );
         }
         Ok(())
     }
@@ -303,7 +328,11 @@ impl CommandRunner for ExportLlmsArgs {
                     "- [{}]({}) — {}\n",
                     title,
                     rel.to_string_lossy(),
-                    if desc.len() > 120 { format!("{}...", &desc[..117]) } else { desc }
+                    if desc.len() > 120 {
+                        format!("{}...", &desc[..117])
+                    } else {
+                        desc
+                    }
                 ));
             }
         }
@@ -313,11 +342,7 @@ impl CommandRunner for ExportLlmsArgs {
         for f in &files {
             let rel = f.strip_prefix(&workspace.root).unwrap_or(f);
             if let Ok(content) = std::fs::read_to_string(f) {
-                combined.push_str(&format!(
-                    "\n## {}\n\n{}\n",
-                    rel.to_string_lossy(),
-                    content
-                ));
+                combined.push_str(&format!("\n## {}\n\n{}\n", rel.to_string_lossy(), content));
             }
         }
 

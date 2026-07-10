@@ -51,8 +51,18 @@ pub fn get_ide_registry() -> Vec<IdeConfig> {
             "mcpServers",
             standard_payload,
         ),
-        IdeConfig::new("Cursor", vec![".cursor/mcp.json"], "mcpServers", standard_payload),
-        IdeConfig::new("Zed", vec![".config/zed/settings.json"], "context_servers", standard_payload),
+        IdeConfig::new(
+            "Cursor",
+            vec![".cursor/mcp.json"],
+            "mcpServers",
+            standard_payload,
+        ),
+        IdeConfig::new(
+            "Zed",
+            vec![".config/zed/settings.json"],
+            "context_servers",
+            standard_payload,
+        ),
         IdeConfig::new(
             "VSCode (Roo Cline)",
             vec![

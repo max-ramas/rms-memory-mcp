@@ -246,7 +246,10 @@ pub async fn run_uninstaller(_auto_yes: bool, _dry_run: bool) -> Result<()> {
     if uninstalled == 0 {
         println!("[!] No rms-memory installations found.");
     } else {
-        println!("[✅] Removed rms-memory from {} IDE configuration(s).", uninstalled);
+        println!(
+            "[✅] Removed rms-memory from {} IDE configuration(s).",
+            uninstalled
+        );
     }
     Ok(())
 }
