@@ -92,15 +92,14 @@ impl CommandRunner for DoctorArgs {
         let files = workspace.find_markdown_files().unwrap_or_default();
         let mut missing_ids = Vec::new();
         for f in &files {
-            if let Ok(doc) = crate::document::Document::parse(f) {
-                if doc
+            if let Ok(doc) = crate::document::Document::parse(f)
+                && doc
                     .frontmatter
                     .as_ref()
                     .and_then(|fm| fm.id.as_ref())
                     .is_none()
-                {
-                    missing_ids.push(f.to_string_lossy().to_string());
-                }
+            {
+                missing_ids.push(f.to_string_lossy().to_string());
             }
         }
         if missing_ids.is_empty() {
@@ -178,12 +177,12 @@ impl CommandRunner for DoctorArgs {
             let vault_str = vault_canon.to_string_lossy().to_string();
             let mut found = false;
             for proj in registry.projects.values() {
-                if let Ok(p) = std::fs::canonicalize(&proj.vault_path) {
-                    if p.to_string_lossy() == vault_str {
-                        found = true;
-                        println!("  ✅ Project registered in registry.toml");
-                        break;
-                    }
+                if let Ok(p) = std::fs::canonicalize(&proj.vault_path)
+                    && p.to_string_lossy() == vault_str
+                {
+                    found = true;
+                    println!("  ✅ Project registered in registry.toml");
+                    break;
                 }
             }
             if !found {

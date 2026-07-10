@@ -181,11 +181,11 @@ pub fn remove_key(original: &str, key: &str, tool_name: &str) -> Option<String> 
         patched.replace_range(mat.range(), "");
         // Clean up empty objects
         let empty_obj = format!(r#""{}"\s*:\s*\{{[^{{}}]*\}}\s*"#, regex::escape(key));
-        if let Ok(re) = regex::Regex::new(&empty_obj) {
-            if re.is_match(&patched) {
-                // Check if removing the last entry in the parent object
-                patched = re.replace(&patched, "").to_string();
-            }
+        if let Ok(re) = regex::Regex::new(&empty_obj)
+            && re.is_match(&patched)
+        {
+            // Check if removing the last entry in the parent object
+            patched = re.replace(&patched, "").to_string();
         }
         return Some(patched);
     }

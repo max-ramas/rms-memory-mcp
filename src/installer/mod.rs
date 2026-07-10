@@ -228,16 +228,16 @@ pub async fn run_uninstaller(_auto_yes: bool, _dry_run: bool) -> Result<()> {
                     Ok(c) => c,
                     Err(_) => continue,
                 };
-                if let Some(removed) = patcher::remove_key(&content, ide.key, "rms-memory") {
-                    if removed != content {
-                        if candidate.exists() {
-                            let bak = format!("{}.bak", candidate.to_string_lossy());
-                            let _ = fs::copy(&candidate, &bak);
-                        }
-                        fs::write(&candidate, &removed)?;
-                        println!("[🗑️] Removed from {} ({})", ide.name, candidate.display());
-                        uninstalled += 1;
+                if let Some(removed) = patcher::remove_key(&content, ide.key, "rms-memory")
+                    && removed != content
+                {
+                    if candidate.exists() {
+                        let bak = format!("{}.bak", candidate.to_string_lossy());
+                        let _ = fs::copy(&candidate, &bak);
                     }
+                    fs::write(&candidate, &removed)?;
+                    println!("[🗑️] Removed from {} ({})", ide.name, candidate.display());
+                    uninstalled += 1;
                 }
             }
         }

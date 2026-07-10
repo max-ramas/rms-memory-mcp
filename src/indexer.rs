@@ -304,7 +304,7 @@ pub async fn sync_vault(
             normalized_links.push(crate::indexer::normalize_link(
                 &workspace.root,
                 &file_path,
-                &link,
+                link,
             ));
         }
 
@@ -420,7 +420,7 @@ pub async fn index_vault_full(
             normalized_links.push(crate::indexer::normalize_link(
                 &workspace.root,
                 &file_path,
-                &link,
+                link,
             ));
         }
 
