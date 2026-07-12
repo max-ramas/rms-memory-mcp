@@ -43,6 +43,16 @@ This document outlines the strategic direction and upcoming milestones for RMS M
 - [x] Request size limit (1MB) + search limit cap (`min(100)`).
 - [x] Code deduplication: `VectorStore` trait removed, `CommandRunner` trait removed, shared `response.rs`/`validation.rs`/`create_vault_dirs()`.
 
+## v1.0.4 — Performance Hardening (Released 2026-07-12)
+
+**Goal:** Eliminate CPU storms and model reload overhead in multi-IDE scenarios.
+
+- [x] Single `Arc<Mutex<Indexer>>` shared between search and background sync — 1 model load per process instead of N.
+- [x] Path-based mtime cache — `sync_vault` skips parsing unchanged files (chicken-and-egg resolved).
+- [x] Watcher `.bak` filter — prevents self-triggering sync cycles from Write-Guard snapshots.
+- [x] Watcher trigger logging — `tracing::info!` with triggering file path.
+- [x] Runtime verified: CPU 380% → 0%, memory 2.5GB → 609MB across 3 IDE processes.
+
 ## v1.1 — The Workspace Split & Ecosystem (Next)
 
 **Goal:** Transition from a monolithic architecture into a modular ecosystem of crates.

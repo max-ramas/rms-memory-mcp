@@ -41,18 +41,15 @@ pub struct McpServer {
 fn spawn_sync_watcher(
     workspace: crate::workspace::Workspace,
     store: crate::store::Store,
+    indexer: Arc<Mutex<Indexer>>,
     mut shutdown_rx: tokio::sync::watch::Receiver<bool>,
 ) {
     tokio::spawn(async move {
         // Initial sync
-        match tokio::task::spawn_blocking(crate::indexer::Indexer::new).await {
-            Ok(Ok(sync_indexer)) => {
-                if let Err(e) = crate::indexer::sync_vault(&workspace, &store, sync_indexer).await {
-                    tracing::error!("Initial sync failed: {:#}", e);
-                }
-            }
-            _ => {
-                tracing::error!("Failed to create indexer for initial sync");
+        {
+            let mut idx = indexer.lock().await;
+            if let Err(e) = crate::indexer::sync_vault(&workspace, &store, &mut idx).await {
+                tracing::error!("Initial sync failed: {:#}", e);
             }
         }
 
@@ -72,6 +69,7 @@ fn spawn_sync_watcher(
                     for path in &event.paths {
                         let p = path.to_string_lossy();
                         if !p.contains(".lancedb")
+                            && !p.contains(".bak")
                             && !p.ends_with("store.json")
                             && !p.ends_with(".log")
                         {
@@ -81,6 +79,15 @@ fn spawn_sync_watcher(
                     }
                     if should_trigger {
                         let _ = tx.try_send(());
+                        tracing::info!(
+                            "Watcher triggered by: {}",
+                            event
+                                .paths
+                                .iter()
+                                .map(|p| p.to_string_lossy())
+                                .collect::<Vec<_>>()
+                                .join(", ")
+                        );
                     }
                 }
             },
@@ -117,18 +124,11 @@ fn spawn_sync_watcher(
                 }
                 _ = &mut debounce_timer, if pending_sync => {
                     pending_sync = false;
-                    // Reuse model from disk cache (no re-download)
-                    match tokio::task::spawn_blocking(crate::indexer::Indexer::new).await {
-                        Ok(Ok(sync_indexer)) => {
-                            if let Err(e) =
-                                crate::indexer::sync_vault(&workspace, &store, sync_indexer).await
-                            {
-                                tracing::error!("Background sync failed: {:#}", e);
-                            }
-                        }
-                        _ => {
-                            tracing::error!("Failed to create indexer for background sync");
-                        }
+                    let mut idx = indexer.lock().await;
+                    if let Err(e) =
+                        crate::indexer::sync_vault(&workspace, &store, &mut idx).await
+                    {
+                        tracing::error!("Background sync failed: {:#}", e);
                     }
                 }
             }
@@ -148,10 +148,15 @@ impl McpServer {
     ) -> Result<()> {
         let (shutdown_tx, _shutdown_rx) = tokio::sync::watch::channel(false);
         let shutdown_tx_for_server = shutdown_tx.clone();
+        let shared_indexer = indexer.unwrap_or_else(|| {
+            Arc::new(Mutex::new(
+                crate::indexer::Indexer::new().expect("Failed to initialize embedding model"),
+            ))
+        });
         let mut server = Self {
             ctx: AppContext {
                 store,
-                indexer,
+                indexer: Some(shared_indexer.clone()),
                 workspace_root,
                 max_backups,
                 scope,
@@ -284,6 +289,7 @@ impl McpServer {
                             spawn_sync_watcher(
                                 workspace.clone(),
                                 store.clone(),
+                                self.ctx.indexer.as_ref().unwrap().clone(),
                                 self.shutdown_tx.subscribe(),
                             );
                             self.ctx.store = Some(store);
@@ -314,6 +320,7 @@ impl McpServer {
                                 spawn_sync_watcher(
                                     workspace.clone(),
                                     store.clone(),
+                                    self.ctx.indexer.as_ref().unwrap().clone(),
                                     self.shutdown_tx.subscribe(),
                                 );
                                 self.ctx.store = Some(store);
@@ -387,7 +394,7 @@ impl McpServer {
                 let args = params["arguments"].as_object().cloned().unwrap_or_default();
 
                 match name {
-                    "rms_search" => crate::tools::search::execute(&mut self.ctx, &args).await,
+                    "rms_search" => crate::tools::search::execute(&self.ctx, &args).await,
                     "rms_read" => crate::tools::read::execute(&self.ctx, &args).await,
                     "rms_write" => crate::tools::write::execute(&self.ctx, &args).await,
                     _ => anyhow::bail!("Unknown tool"),

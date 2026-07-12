@@ -275,6 +275,49 @@ impl Store {
         }
         Ok(map)
     }
+
+    /// Returns a map of relative file path → last stored mtime.
+    pub async fn get_file_timestamps(
+        &self,
+        table: &Table,
+    ) -> Result<std::collections::HashMap<String, String>> {
+        use futures::stream::StreamExt;
+        use lancedb::query::{ExecutableQuery, QueryBase};
+
+        let mut stream = table
+            .query()
+            .select(lancedb::query::Select::Columns(vec![
+                "path".to_string(),
+                "updated_at".to_string(),
+            ]))
+            .execute()
+            .await?;
+        let mut map = std::collections::HashMap::new();
+        while let Some(batch_res) = stream.next().await {
+            let batch = batch_res?;
+            let path_col = batch
+                .column_by_name("path")
+                .context("Missing 'path' column")?;
+            let updated_at_col = batch
+                .column_by_name("updated_at")
+                .context("Missing 'updated_at' column")?;
+            let path_array = path_col
+                .as_any()
+                .downcast_ref::<lancedb::arrow::arrow_array::StringArray>()
+                .context("'path' column is not a StringArray")?;
+            let updated_at_array = updated_at_col
+                .as_any()
+                .downcast_ref::<lancedb::arrow::arrow_array::StringArray>()
+                .context("'updated_at' column is not a StringArray")?;
+            for i in 0..batch.num_rows() {
+                map.insert(
+                    path_array.value(i).to_string(),
+                    updated_at_array.value(i).to_string(),
+                );
+            }
+        }
+        Ok(map)
+    }
 }
 
 pub struct ChunkRecord {

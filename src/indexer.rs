@@ -3,19 +3,8 @@ use fastembed::{EmbeddingModel, InitOptions, TextEmbedding};
 use pulldown_cmark::{Event, Options, Parser, Tag};
 use std::path::Path;
 
-#[allow(dead_code)]
-pub trait Embedder: Send + Sync {
-    fn embed(&mut self, texts: &[String]) -> Result<Vec<Vec<f32>>>;
-}
-
 pub struct Indexer {
     pub model: TextEmbedding,
-}
-
-impl Embedder for Indexer {
-    fn embed(&mut self, texts: &[String]) -> Result<Vec<Vec<f32>>> {
-        self.embed(texts)
-    }
 }
 
 #[derive(Debug, Clone)]
@@ -202,7 +191,7 @@ impl Indexer {
 pub async fn sync_vault(
     workspace: &crate::workspace::Workspace,
     store: &crate::store::Store,
-    mut indexer: Indexer,
+    indexer: &mut Indexer,
 ) -> Result<()> {
     // Try to open existing table
     let table = match store.open_table().await {
@@ -223,6 +212,17 @@ pub async fn sync_vault(
             std::collections::HashMap::new()
         }
     };
+    // Path-based cache: skip parsing files whose mtime hasn't changed
+    let path_timestamps = match store.get_file_timestamps(&table).await {
+        Ok(ts) => ts,
+        Err(e) => {
+            tracing::error!(
+                "Failed to read file timestamps: {}. Falling back to full sync.",
+                e
+            );
+            std::collections::HashMap::new()
+        }
+    };
     let mut to_delete = Vec::new();
     let mut to_index = Vec::new();
 
@@ -230,12 +230,25 @@ pub async fn sync_vault(
     let mut current_doc_ids = std::collections::HashSet::new();
 
     for file_path in files {
-        // Read file mtime. For linked documents, this will read the mtime of the source.
+        let rel_path = file_path
+            .strip_prefix(&workspace.root)
+            .unwrap_or(&file_path)
+            .to_string_lossy()
+            .to_string();
+
+        // Read file mtime
         let resolved_path = crate::link::resolve_link(&file_path);
         let mtime = std::fs::metadata(&resolved_path)
             .and_then(|m| m.modified())
             .map(|t| chrono::DateTime::<chrono::Utc>::from(t).to_rfc3339())
             .unwrap_or_else(|_| chrono::Utc::now().to_rfc3339());
+
+        // Fast path: skip if mtime unchanged
+        if let Some(stored) = path_timestamps.get(&rel_path)
+            && &mtime <= stored
+        {
+            continue;
+        }
 
         let mut doc = match crate::document::Document::parse(&file_path) {
             Ok(d) => d,
@@ -377,7 +390,7 @@ pub async fn sync_vault(
 pub async fn index_vault_full(
     workspace: &crate::workspace::Workspace,
     store: &crate::store::Store,
-    mut indexer: Indexer,
+    indexer: &mut Indexer,
 ) -> Result<()> {
     let _ = store.db.drop_table(&store.table_name, &[]).await;
     let table = store.create_table().await?;

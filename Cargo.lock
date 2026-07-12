@@ -5696,7 +5696,7 @@ dependencies = [
 
 [[package]]
 name = "rms-memory-mcp"
-version = "1.0.3"
+version = "1.0.4"
 dependencies = [
  "anyhow",
  "blake3",

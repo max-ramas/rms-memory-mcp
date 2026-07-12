@@ -135,3 +135,12 @@ The codebase underwent a 3-agent (Tester + Reviewer + Optimizer) comprehensive a
 - **JSON-RPC Compliance:** Malformed requests now return proper `-32700 Parse error` RPC responses. Requests exceeding 1MB are rejected with an explicit error code. Previously both cases resulted in silent client timeouts.
 - **Resource Limits:** `rms_search` `limit` parameter capped at 100. Request size limit of 1MB enforced on stdin. File watcher uses `try_send` (non-blocking) instead of `blocking_send` to prevent event flood deadlocks.
 - **Code De-duplication:** `VectorStore` trait removed (single implementation = unnecessary abstraction). `CommandRunner` trait removed (enum dispatch existed alongside). Vault directory creation extracted to `create_vault_dirs()`. JSON response wrapper extracted to `tools/response.rs`. Shared path validation extracted to `tools/validation.rs`.
+
+### 13. Performance Hardening (v1.0.4)
+
+Multi-IDE scenarios discovered a CPU storm: 4 processes consuming ~380% CPU and ~2.5GB memory at idle.
+
+- **Single Model Instance:** `Arc<Mutex<Indexer>>` created once in `McpServer::run()` and shared between search handler and file watcher background sync. Previously each watcher-triggered sync created a new `Indexer::new()`, loading the ONNX model (100-200MB, 100-300ms) fresh each time.
+- **Path-Based Mtime Cache:** `sync_vault` now calls `get_file_timestamps()` (querying LanceDB by `path` column) to skip parsing unchanged files. Previously every file was parsed on every sync — chicken-and-egg with `doc_id`-based mtime check resolved via dual-key caching.
+- **`.bak` Filter:** Write-Guard snapshot files (`*.bak`) are now filtered from the file watcher, preventing self-triggering sync cycles.
+- **Runtime Verified:** CPU 380% → 0%, memory 2.5GB → 609MB across 3 IDE processes.

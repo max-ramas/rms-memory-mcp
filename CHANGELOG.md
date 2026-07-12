@@ -2,6 +2,14 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.0.4] - 2026-07-12
+
+### Fixed
+- **Single Indexer instance:** Each watcher-triggered sync previously created a new `Indexer::new()` (loading ONNX model: 100-200MB RAM, 100-300ms). Now one `Arc<Mutex<Indexer>>` is created in `McpServer::run()` and shared between search handler and background sync. Eliminates N model reloads — idle CPU drops from ~380% to near-zero with 4 IDE processes.
+- **Path-based mtime check:** `sync_vault` now skips parsing unchanged files using `get_file_timestamps()` (path-keyed timestamps from LanceDB `path` column). Previously every file was parsed on every sync — chicken-and-egg: `doc_id` for mtime check required frontmatter parsing.
+- **Watcher `.bak` filter:** File watcher ignores Write-Guard snapshot files (`*.bak`), preventing self-triggering sync cycles.
+- **Watcher trigger logging:** `tracing::info!` with triggering file path on each watcher event (previously silent).
+
 ## [1.0.3] - 2026-07-12
 
 ### Added

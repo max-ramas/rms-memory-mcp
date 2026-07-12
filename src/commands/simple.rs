@@ -45,9 +45,9 @@ impl ReindexArgs {
         println!("Reindexing Vault at {:?}", workspace.root);
 
         let store = workspace.get_store().await?;
-        let indexer = Indexer::new()?;
+        let mut indexer = Indexer::new()?;
 
-        crate::indexer::index_vault_full(&workspace, &store, indexer).await?;
+        crate::indexer::index_vault_full(&workspace, &store, &mut indexer).await?;
 
         println!("Reindex completed.");
         Ok(())
@@ -279,8 +279,8 @@ impl SyncArgs {
         let current_dir = std::env::current_dir()?;
         let workspace = Workspace::discover_with_scope(scope.as_deref(), &current_dir, None)?;
         let store = workspace.get_store().await?;
-        let indexer = Indexer::new()?;
-        crate::indexer::sync_vault(&workspace, &store, indexer).await?;
+        let mut indexer = Indexer::new()?;
+        crate::indexer::sync_vault(&workspace, &store, &mut indexer).await?;
         println!("Sync complete.");
         Ok(())
     }
