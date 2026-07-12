@@ -64,6 +64,7 @@ impl Store {
             Field::new("chunk_index", DataType::UInt32, false),
             Field::new("heading", DataType::Utf8, false),
             Field::new("text", DataType::Utf8, false),
+            Field::new("confidence", DataType::Float32, true),
             // Use VECTOR_DIMENSION
             Field::new(
                 "vector",
@@ -95,7 +96,57 @@ impl Store {
 
     pub async fn open_table(&self) -> Result<Table> {
         let table = self.db.open_table(&self.table_name).execute().await?;
+        self.migrate_schema(&table).await?;
         Ok(table)
+    }
+
+    async fn migrate_schema(&self, table: &Table) -> Result<()> {
+        let schema = table.schema().await?;
+        if schema.column_with_name("confidence").is_none() {
+            use lancedb::arrow::arrow_schema::{DataType, Field, Schema as ArrowSchema};
+            use lancedb::table::NewColumnTransform;
+            use std::sync::Arc;
+
+            tracing::info!(
+                "Migrating LanceDB schema: adding 'confidence' column (Float32, nullable)"
+            );
+
+            let confidence_schema = Arc::new(ArrowSchema::new(vec![Field::new(
+                "confidence",
+                DataType::Float32,
+                true,
+            )]));
+
+            match table
+                .add_columns(NewColumnTransform::AllNulls(confidence_schema), None)
+                .await
+            {
+                Ok(_) => {
+                    tracing::info!("Schema migration successful.");
+                    // Recreate FTS index which may be invalidated by add_columns
+                    if let Err(e) = self.create_fts_index(table).await {
+                        tracing::warn!(
+                            "Failed to recreate FTS index after schema migration: {}",
+                            e
+                        );
+                    }
+                }
+                Err(e) => {
+                    let err_str = e.to_string();
+                    if err_str.contains("already exists") || err_str.contains("duplicate") {
+                        tracing::info!(
+                            "Confidence column already exists (race condition), skipping migration."
+                        );
+                    } else {
+                        tracing::warn!(
+                            "Schema migration skipped (confidence column will not be available): {}",
+                            e
+                        );
+                    }
+                }
+            }
+        }
+        Ok(())
     }
 
     pub async fn create_fts_index(&self, table: &Table) -> Result<()> {
@@ -124,6 +175,7 @@ impl Store {
         let mut chunk_index_b = UInt32Builder::new();
         let mut heading_b = StringBuilder::new();
         let mut text_b = StringBuilder::new();
+        let mut confidence_b = Float32Builder::new();
 
         let item_builder = Float32Builder::new();
         let mut vector_b = FixedSizeListBuilder::new(item_builder, VECTOR_DIMENSION as i32);
@@ -140,6 +192,10 @@ impl Store {
             chunk_index_b.append_value(r.chunk_index);
             heading_b.append_value(r.heading);
             text_b.append_value(r.text);
+            match r.confidence {
+                Some(c) => confidence_b.append_value(c),
+                None => confidence_b.append_null(),
+            }
 
             vector_b.values().append_slice(&r.vector);
             vector_b.append(true);
@@ -159,6 +215,7 @@ impl Store {
                 Arc::new(chunk_index_b.finish()),
                 Arc::new(heading_b.finish()),
                 Arc::new(text_b.finish()),
+                Arc::new(confidence_b.finish()),
                 Arc::new(vector_b.finish()),
             ],
         )?;
@@ -193,17 +250,21 @@ impl Store {
         let mut map = std::collections::HashMap::new();
         while let Some(batch_res) = stream.next().await {
             let batch = batch_res?;
-            let doc_id_col = batch.column_by_name("document_id").unwrap();
-            let updated_at_col = batch.column_by_name("updated_at").unwrap();
+            let doc_id_col = batch
+                .column_by_name("document_id")
+                .context("Missing 'document_id' column in timestamps query")?;
+            let updated_at_col = batch
+                .column_by_name("updated_at")
+                .context("Missing 'updated_at' column in timestamps query")?;
 
             let doc_id_array = doc_id_col
                 .as_any()
                 .downcast_ref::<lancedb::arrow::arrow_array::StringArray>()
-                .unwrap();
+                .context("'document_id' column is not a StringArray")?;
             let updated_at_array = updated_at_col
                 .as_any()
                 .downcast_ref::<lancedb::arrow::arrow_array::StringArray>()
-                .unwrap();
+                .context("'updated_at' column is not a StringArray")?;
 
             for i in 0..batch.num_rows() {
                 map.insert(
@@ -229,6 +290,7 @@ pub struct ChunkRecord {
     pub heading: String,
     pub text: String,
     pub vector: Vec<f32>,
+    pub confidence: Option<f32>,
 }
 
 #[derive(serde::Serialize, serde::Deserialize, Debug, Clone)]
@@ -237,39 +299,33 @@ pub struct SearchResult {
     pub heading: String,
     pub text: String,
     pub score: Option<f32>,
-}
-
-pub trait VectorStore: Send + Sync {
-    fn search(
-        &self,
-        query_vector: Vec<f32>,
-        query_str: String,
-        limit: usize,
-    ) -> impl std::future::Future<Output = Result<Vec<SearchResult>>> + Send;
-    fn read_document(&self, path: &str)
-    -> impl std::future::Future<Output = Result<String>> + Send;
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub confidence: Option<f32>,
 }
 
 fn extract_results(
     batch: &lancedb::arrow::arrow_array::RecordBatch,
     results: &mut Vec<SearchResult>,
-) {
+) -> Result<()> {
     use lancedb::arrow::arrow_array::{Float32Array, StringArray};
 
     let path_array = batch
         .column_by_name("path")
         .and_then(|c| c.as_any().downcast_ref::<StringArray>().cloned())
-        .unwrap_or_else(|| panic!("'path' column is not a StringArray"));
+        .context("'path' column is not a StringArray")?;
     let heading_array = batch
         .column_by_name("heading")
         .and_then(|c| c.as_any().downcast_ref::<StringArray>().cloned())
-        .unwrap_or_else(|| panic!("'heading' column is not a StringArray"));
+        .context("'heading' column is not a StringArray")?;
     let text_array = batch
         .column_by_name("text")
         .and_then(|c| c.as_any().downcast_ref::<StringArray>().cloned())
-        .unwrap_or_else(|| panic!("'text' column is not a StringArray"));
+        .context("'text' column is not a StringArray")?;
     let score_col = batch.column_by_name("_distance");
     let score_array = score_col.and_then(|c| c.as_any().downcast_ref::<Float32Array>().cloned());
+    let confidence_col = batch.column_by_name("confidence");
+    let confidence_array =
+        confidence_col.and_then(|c| c.as_any().downcast_ref::<Float32Array>().cloned());
 
     for i in 0..batch.num_rows() {
         results.push(SearchResult {
@@ -277,16 +333,19 @@ fn extract_results(
             heading: heading_array.value(i).to_string(),
             text: text_array.value(i).to_string(),
             score: score_array.as_ref().map(|sa| sa.value(i)),
+            confidence: confidence_array.as_ref().map(|ca| ca.value(i)),
         });
     }
+    Ok(())
 }
 
-impl VectorStore for Store {
-    async fn search(
+impl Store {
+    pub async fn search(
         &self,
         query_vector: Vec<f32>,
         query_str: String,
         limit: usize,
+        min_confidence: Option<f32>,
     ) -> Result<Vec<SearchResult>> {
         use futures::stream::StreamExt;
         use lance_index::scalar::FullTextSearchQuery;
@@ -298,39 +357,53 @@ impl VectorStore for Store {
 
         let query_vector_first = query_vector.clone();
 
-        // Try hybrid search (vector + FTS). Fall back to vector-only if FTS index is not built.
+        // Build base query builder
         let query_builder = table.vector_search(query_vector_first)?;
-        if !query_str.is_empty() {
-            let stream = query_builder
+        let mut query: lancedb::query::VectorQuery = if !query_str.is_empty() {
+            query_builder
                 .full_text_search(FullTextSearchQuery::new(query_str))
                 .limit(limit)
-                .execute()
-                .await;
-            match stream {
-                Ok(mut s) => {
-                    while let Some(batch) = s.next().await {
+        } else {
+            query_builder.limit(limit)
+        };
+
+        // Apply confidence filter (NULL-aware)
+        if let Some(min_conf) = min_confidence {
+            let filter = format!("confidence IS NULL OR confidence >= {}", min_conf);
+            query = query.only_if(filter);
+        }
+
+        let stream = query.execute().await;
+        match stream {
+            Ok(mut s) => {
+                while let Some(batch) = s.next().await {
+                    let batch = batch?;
+                    extract_results(&batch, &mut results)?;
+                }
+            }
+            Err(e) => {
+                tracing::warn!("Hybrid search failed ({}), falling back to vector-only", e);
+                let query_builder = table.vector_search(query_vector)?.limit(limit);
+                if let Some(min_conf) = min_confidence {
+                    let filter = format!("confidence IS NULL OR confidence >= {}", min_conf);
+                    let mut stream = query_builder.only_if(filter).execute().await?;
+                    while let Some(batch) = stream.next().await {
                         let batch = batch?;
-                        extract_results(&batch, &mut results);
+                        extract_results(&batch, &mut results)?;
                     }
                     return Ok(results);
                 }
-                Err(_) => {
-                    // FTS index may not be built; fall through to vector-only
+                let mut stream = query_builder.execute().await?;
+                while let Some(batch) = stream.next().await {
+                    let batch = batch?;
+                    extract_results(&batch, &mut results)?;
                 }
             }
-        }
-
-        // Vector-only fallback
-        let query_builder = table.vector_search(query_vector)?.limit(limit);
-        let mut stream = query_builder.execute().await?;
-        while let Some(batch) = stream.next().await {
-            let batch = batch?;
-            extract_results(&batch, &mut results);
         }
         Ok(results)
     }
 
-    async fn read_document(&self, path: &str) -> Result<String> {
+    pub async fn read_document(&self, path: &str) -> Result<String> {
         use futures::stream::StreamExt;
         use lancedb::query::{ExecutableQuery, QueryBase};
 
@@ -347,16 +420,16 @@ impl VectorStore for Store {
             let batch = batch?;
             let text_array = batch
                 .column_by_name("text")
-                .unwrap()
+                .context("Missing 'text' column in read_document query")?
                 .as_any()
                 .downcast_ref::<lancedb::arrow::arrow_array::StringArray>()
-                .unwrap();
+                .context("'text' column is not a StringArray")?;
             let chunk_index_array = batch
                 .column_by_name("chunk_index")
-                .unwrap()
+                .context("Missing 'chunk_index' column in read_document query")?
                 .as_any()
                 .downcast_ref::<lancedb::arrow::arrow_array::UInt32Array>()
-                .unwrap();
+                .context("'chunk_index' column is not a UInt32Array")?;
 
             for i in 0..batch.num_rows() {
                 chunks.push((chunk_index_array.value(i), text_array.value(i).to_string()));

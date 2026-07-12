@@ -1,22 +1,5 @@
 use super::AppContext;
-use crate::store::VectorStore;
 use anyhow::Result;
-use serde_json::json;
-
-fn validate_path(path_str: &str) -> Result<()> {
-    if std::path::Path::new(path_str).is_absolute() {
-        return Err(anyhow::anyhow!(
-            "Path must be relative to the vault, but received absolute path: {}",
-            path_str
-        ));
-    }
-    if path_str.split('/').any(|c| c == "..") {
-        return Err(anyhow::anyhow!(
-            "Path traversal detected: '..' is not allowed in vault paths"
-        ));
-    }
-    Ok(())
-}
 
 pub async fn execute(
     ctx: &AppContext,
@@ -27,21 +10,16 @@ pub async fn execute(
         .as_ref()
         .ok_or_else(|| anyhow::anyhow!("Workspace root not initialized"))?;
     let path_str = args.get("path").and_then(|v| v.as_str()).unwrap_or("");
-    validate_path(path_str)?;
-    let file_path = workspace_root.join(path_str);
+    let file_path = super::validation::resolve_vault_path(workspace_root, path_str)?;
 
     if let Some(linked_content) = crate::link::get_linked_content(&file_path) {
-        Ok(json!({
-            "content": [{"type": "text", "text": linked_content}]
-        }))
+        Ok(super::response::json_text_response(&linked_content))
     } else {
         let store = ctx
             .store
             .as_ref()
             .ok_or_else(|| anyhow::anyhow!("Store not initialized"))?;
         let full_text = store.read_document(path_str).await?;
-        Ok(json!({
-            "content": [{"type": "text", "text": full_text}]
-        }))
+        Ok(super::response::json_text_response(&full_text))
     }
 }

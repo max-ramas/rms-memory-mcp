@@ -1,12 +1,11 @@
-use super::CommandRunner;
 use anyhow::Result;
 use clap::Args;
 
 #[derive(Args, Debug)]
 pub struct GcArgs;
 
-impl CommandRunner for GcArgs {
-    async fn run(&self) -> Result<()> {
+impl GcArgs {
+    pub async fn run(&self, _scope: Option<String>) -> Result<()> {
         let registry = crate::workspace::Registry::load()?;
         let dbs_dir = crate::workspace::base_dir().join("dbs");
         if !dbs_dir.exists() {

@@ -1,7 +1,5 @@
 use super::AppContext;
-use crate::store::VectorStore;
 use anyhow::Result;
-use serde_json::json;
 
 pub async fn execute(
     ctx: &mut AppContext,
@@ -12,7 +10,11 @@ pub async fn execute(
         .as_ref()
         .ok_or_else(|| anyhow::anyhow!("Store not initialized"))?;
     let query_str = args.get("query").and_then(|v| v.as_str()).unwrap_or("");
-    let limit = args.get("limit").and_then(|v| v.as_u64()).unwrap_or(10) as usize;
+    let limit = (args.get("limit").and_then(|v| v.as_u64()).unwrap_or(10) as usize).min(100);
+    let min_confidence = args
+        .get("min_confidence")
+        .and_then(|v| v.as_f64())
+        .map(|c| c as f32);
 
     let query_vector = {
         if ctx.indexer.is_none() {
@@ -29,10 +31,10 @@ pub async fn execute(
     };
 
     let results = store
-        .search(query_vector, query_str.to_string(), limit)
+        .search(query_vector, query_str.to_string(), limit, min_confidence)
         .await?;
 
-    Ok(json!({
-        "content": [{"type": "text", "text": serde_json::to_string(&results)? }]
-    }))
+    Ok(super::response::json_text_response(&serde_json::to_string(
+        &results,
+    )?))
 }

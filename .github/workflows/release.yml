@@ -92,13 +92,13 @@ jobs:
         run: |
           mkdir -p staging
           cp target/release/rms-memory staging/rms-memory
-          
+
           # Copy deb and rpm to staging if Linux
           if [ "${{ runner.os }}" == "Linux" ]; then
             cp target/debian/*.deb staging/ || true
             cp target/generate-rpm/*.rpm staging/ || true
           fi
-          
+
           cd staging
           tar -czf ../rms-memory-${{ matrix.target }}.${{ matrix.archive_ext }} rms-memory
           if [ "${{ runner.os }}" == "Linux" ]; then
@@ -151,3 +151,15 @@ jobs:
           files: artifacts/**/*
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Notify homebrew tap
+        if: startsWith(github.ref, 'refs/tags/')
+        env:
+          GH_TOKEN: ${{ secrets.TAP_DISPATCH_TOKEN }}
+        run: |
+          gh api repos/max-ramas/homebrew-tap/dispatches \
+            -f event_type=new-release \
+            -f "client_payload[repo]=max-ramas/rms-memory-mcp" \
+            -f "client_payload[formula]=rms-memory-mcp" \
+            -f "client_payload[bin_name]=rms-memory-mcp" \
+            -f "client_payload[tag]=${{ github.ref_name }}"

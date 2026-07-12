@@ -30,8 +30,8 @@ pub fn apply_entitlements(my_exe_str: &str) {
                 "-",
                 "-f",
                 "--entitlements",
-                entitlements_path.to_str().unwrap(),
-                tmp_exe_path.to_str().unwrap(),
+                entitlements_path.to_str().unwrap_or(""),
+                tmp_exe_path.to_str().unwrap_or(""),
             ])
             .status();
 

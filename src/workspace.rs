@@ -102,6 +102,22 @@ impl Registry {
     }
 }
 
+const VAULT_DIRS: &[&str] = &[
+    "rules",
+    "decisions",
+    "architecture",
+    "artifacts",
+    "docs",
+    "api",
+];
+
+pub fn create_vault_dirs(vault_path: &Path) -> Result<()> {
+    for dir in VAULT_DIRS {
+        fs::create_dir_all(vault_path.join(dir))?;
+    }
+    Ok(())
+}
+
 #[derive(Debug, Clone)]
 pub struct Workspace {
     pub root: PathBuf, // This points to the vault_path
@@ -111,6 +127,38 @@ pub struct Workspace {
 }
 
 impl Workspace {
+    /// Discover or create a workspace for an arbitrary scope identifier.
+    /// For path-based scopes, falls through to the existing path-based discover logic.
+    /// For opaque string scopes, creates a hash-based vault at base_dir()/vaults/<hash>.
+    pub fn discover_with_scope(
+        scope_override: Option<&str>,
+        cwd: &Path,
+        options: Option<crate::rules_injector::InjectOptions>,
+    ) -> Result<Self> {
+        let identifier = Self::resolve_identifier(scope_override, cwd)?;
+        let cwd_path = std::path::Path::new(&identifier);
+
+        // If the identifier is a valid existing path, use path-based discover
+        if cwd_path.exists() {
+            return Self::discover(cwd_path, options);
+        }
+
+        // Opaque scope — create hash-based vault
+        let hash = Self::project_hash_for(&identifier);
+        let vault_path = base_dir().join("vaults").join(&hash);
+        let code_path = cwd.to_path_buf();
+
+        // Create vault directories
+        create_vault_dirs(&vault_path)?;
+
+        Ok(Workspace {
+            root: vault_path,
+            code_path,
+            include: default_include(),
+            exclude: default_exclude(),
+        })
+    }
+
     pub fn discover(
         start_dir: &Path,
         options: Option<crate::rules_injector::InjectOptions>,
@@ -259,8 +307,46 @@ impl Workspace {
 
     pub fn project_hash(&self) -> Result<String> {
         let canon = self.canonical_path()?;
-        let hash = blake3::hash(canon.as_bytes());
-        Ok(hash.to_hex().to_string())
+        Ok(Self::project_hash_for(&canon))
+    }
+
+    /// Compute a deterministic hash for an arbitrary scope identifier.
+    /// Scope can be a filesystem path or an opaque string (e.g., "thread:12345").
+    pub fn project_hash_for(identifier: &str) -> String {
+        blake3::hash(identifier.as_bytes()).to_hex().to_string()
+    }
+
+    /// Resolve scope override to an identifier string.
+    /// Rules:
+    ///   - Absolute paths (start with /) → canonicalize
+    ///   - Relative path-like (./ , ../) → resolve against cwd, canonicalize
+    ///   - Opaque string → use as-is
+    ///   - None → canonicalize cwd (current behavior)
+    pub fn resolve_identifier(scope_override: Option<&str>, cwd: &Path) -> Result<String> {
+        match scope_override {
+            Some("") => Err(anyhow::anyhow!("scope must be non-empty")),
+            Some(s) if s.len() > 512 => Err(anyhow::anyhow!("scope too long (max 512 characters)")),
+            Some(s) if s.starts_with('/') => {
+                let canonical = fs::canonicalize(s)
+                    .map_err(|e| anyhow::anyhow!("scope path does not exist: {}: {}", s, e))?;
+                Ok(canonical.to_string_lossy().to_string())
+            }
+            Some(s) if s.starts_with("./") || s.starts_with("../") => {
+                let resolved = cwd.join(s);
+                let canonical = fs::canonicalize(&resolved).map_err(|e| {
+                    anyhow::anyhow!("scope path does not exist: {:?}: {}", resolved, e)
+                })?;
+                Ok(canonical.to_string_lossy().to_string())
+            }
+            Some(s) => {
+                // Opaque identifier — use as-is
+                Ok(s.to_string())
+            }
+            None => {
+                let canonical = fs::canonicalize(cwd).unwrap_or_else(|_| cwd.to_path_buf());
+                Ok(canonical.to_string_lossy().to_string())
+            }
+        }
     }
 
     pub fn find_markdown_files(&self) -> Result<Vec<PathBuf>> {
@@ -298,5 +384,85 @@ impl Workspace {
         let hash = self.project_hash()?;
         let db_path = base_dir().join("dbs").join(hash);
         crate::store::Store::init(&db_path.to_string_lossy(), "memory").await
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_project_hash_regression() {
+        let cwd = std::env::current_dir().unwrap();
+        let old_hash = blake3::hash(fs::canonicalize(&cwd).unwrap().to_string_lossy().as_bytes())
+            .to_hex()
+            .to_string();
+
+        let identifier = Workspace::resolve_identifier(None, &cwd).unwrap();
+        let new_hash = Workspace::project_hash_for(&identifier);
+
+        assert_eq!(
+            old_hash, new_hash,
+            "Hash regression: scope=None produces different hash than old blake3(canonicalize(cwd))"
+        );
+    }
+
+    #[test]
+    fn test_scope_explicit_path_equals_implicit() {
+        let cwd = std::env::current_dir().unwrap();
+        let canonical = fs::canonicalize(&cwd).unwrap();
+
+        let implicit = Workspace::resolve_identifier(None, &cwd).unwrap();
+        let explicit =
+            Workspace::resolve_identifier(Some(&canonical.to_string_lossy()), &cwd).unwrap();
+
+        assert_eq!(
+            implicit, explicit,
+            "Explicit scope with canonical path must match implicit (no --scope)"
+        );
+    }
+
+    #[test]
+    fn test_opaque_scope_deterministic() {
+        let hash1 = Workspace::project_hash_for("thread:abc-123");
+        let hash2 = Workspace::project_hash_for("thread:abc-123");
+        assert_eq!(hash1, hash2, "Same scope must produce same hash");
+        assert_ne!(
+            hash1,
+            Workspace::project_hash_for("thread:xyz-999"),
+            "Different scopes must produce different hashes"
+        );
+    }
+
+    #[test]
+    fn test_none_scope_uses_cwd_not_server_cwd() {
+        // Regression: when scope=None (no --scope flag),
+        // discover_with_scope must derive identifier from the `cwd` parameter
+        // (which is the MCP rootUri path), NOT from the process cwd.
+        // The process cwd may differ from rootUri when the IDE spawns the server.
+
+        let project_dir = std::env::temp_dir().join("rms-test-cwd-diff");
+        std::fs::create_dir_all(&project_dir).ok();
+
+        let cwd_elsewhere = std::env::temp_dir(); // different from project_dir
+
+        let id_from_project = Workspace::resolve_identifier(None, &project_dir).unwrap();
+        let id_from_elsewhere = Workspace::resolve_identifier(None, &cwd_elsewhere).unwrap();
+
+        // None scope → each call uses its own cwd
+        assert_ne!(
+            id_from_project, id_from_elsewhere,
+            "scope=None must resolve to different identifiers for different cwd paths"
+        );
+
+        // Verify: resolve_identifier(None, cwd) actually uses cwd, not process cwd
+        let proc_cwd = std::env::current_dir().unwrap();
+        let id_from_proc = Workspace::resolve_identifier(None, &proc_cwd).unwrap();
+        assert_eq!(
+            id_from_project,
+            Workspace::resolve_identifier(Some(&id_from_project), &cwd_elsewhere,).unwrap(),
+            "Explicit scope with project path must produce same identifier regardless of cwd"
+        );
+        // Clean up: if someone runs discover_with_scope, it may create vault dirs
     }
 }

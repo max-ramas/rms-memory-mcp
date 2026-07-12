@@ -22,6 +22,11 @@ pub struct Frontmatter {
     pub doc_type: Option<String>,
     pub status: Option<String>,
     pub link: Option<String>,
+    pub last_modified_by: Option<String>,
+    pub timestamp: Option<String>,
+    pub created_at: Option<String>,
+    pub confidence: Option<f64>,
+    pub source: Option<String>,
 }
 
 impl Document {

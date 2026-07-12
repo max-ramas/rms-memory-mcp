@@ -1,18 +1,26 @@
 use crate::document::Document;
 use std::path::{Path, PathBuf};
 
+fn is_safe_link(link: &str) -> bool {
+    if link.is_empty() || link.starts_with('/') {
+        return false;
+    }
+    !link.split('/').any(|c| c == "..")
+}
+
 /// Resolves a linked document.
 /// If the file at `file_path` contains a `link` in its frontmatter,
 /// returns the resolved absolute path to the source file.
 /// Otherwise, returns the original `file_path` unmodified.
+/// Path traversal via `link:` frontmatter is rejected.
 pub fn resolve_link(file_path: &Path) -> PathBuf {
     if let Ok(doc) = Document::parse(file_path)
         && let Some(fm) = doc.frontmatter
         && let Some(link) = fm.link
+        && is_safe_link(&link)
         && let Some(parent) = file_path.parent()
     {
         let resolved = parent.join(&link);
-        // Try to canonicalize if it exists, otherwise return joined path
         if let Ok(canon) = resolved.canonicalize() {
             return canon;
         }
@@ -27,6 +35,7 @@ pub fn get_linked_content(file_path: &Path) -> Option<String> {
     if let Ok(doc) = Document::parse(file_path)
         && let Some(fm) = doc.frontmatter
         && let Some(link) = fm.link
+        && is_safe_link(&link)
         && let Some(parent) = file_path.parent()
     {
         let resolved = parent.join(&link);

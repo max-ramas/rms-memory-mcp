@@ -85,3 +85,53 @@ To transition from a "toy server" to an instrumental platform, 10 resilience pro
   - Compiles optimized native binaries for `x86_64-unknown-linux-gnu`, `x86_64-pc-windows-msvc`, `x86_64-apple-darwin`, and `aarch64-apple-darwin`.
   - Packages and uploads them instantly as GitHub Release assets.
 - **Single-Line Installers:** `install.sh` (cURL/Bash) and `install.ps1` (PowerShell) automatically detect target system architecture, fetch the optimal GitHub release binary, map it to the exact correct path (`~/.cargo/bin` or user-defined), and add it to standard OS `PATH` vars.
+
+### 10. Generalized Scope Resolver (`--scope`)
+
+The vault system is no longer tied to filesystem paths. Any non-empty string can serve as a scope identifier:
+
+```bash
+rms-memory --scope "/home/user/project" serve   # path-based (regression-safe)
+rms-memory --scope "thread:abc-123" serve        # arbitrary identifier
+rms-memory --scope "lead:acme-corp" serve        # CRM entity
+```
+
+- **Blake3 Hashing:** `Workspace::project_hash_for(identifier)` hashes any string deterministically. Path-based scopes produce identical hashes to pre-1.0.3 behavior — no migration needed.
+- **Unified Storage:** All vaults live under `base_dir()/dbs/<blake3_hash>/` regardless of scope type. Path-based and opaque scopes never collide.
+- **Validation:** Empty strings rejected; max 512 characters; path-like prefixes (`/`, `./`, `../`) are canonicalized; everything else treated as opaque identifier.
+- **Auto-Discovery:** For opaque scopes, `Workspace::discover_with_scope()` creates the standard vault directory structure at `base_dir()/vaults/<hash>/` without requiring a registry entry.
+
+### 11. Audit Metadata
+
+Every write operation now injects provenance metadata into the document's YAML frontmatter:
+
+```yaml
+---
+last_modified_by: OpenCode       # from MCP clientInfo.name
+timestamp: 2026-07-11T10:00:00Z  # ISO 8601, updated on every write
+created_at: 2026-07-10T08:00:00Z # set once, never overwritten
+confidence: 0.85                  # optional 0.0–1.0
+source: "SEC filing 10-K, p.42"   # optional citation
+---
+```
+
+- **Caller Identity:** The MCP `initialize` handler extracts `clientInfo.name` (e.g., "Cursor", "Claude Code", "OpenCode") and stores it as `caller_id` in `AppContext`. Falls back to `"unknown"` if not provided.
+- **Automatic Injection:** `tools/write.rs` applies audit fields automatically — agents don't need to pass `last_modified_by` or `timestamp` explicitly. `confidence` and `source` are written only if the agent provides them.
+- **Backward Compatibility:** Documents without audit fields parse normally — all fields are `Option`, missing values are `None`.
+- **LanceDB Schema Migration:** `Store::open_table()` auto-adds the `confidence` column via `NewColumnTransform::SqlExpressions("CAST(NULL AS FLOAT)")` if missing. FTS index is recreated afterwards. Race-condition safe. Zero-downtime upgrade.
+- **Confidence-Aware Search:** `rms_search` accepts `min_confidence` (float 0.0–1.0). Filter is `confidence IS NULL OR confidence >= X` — pre-migration records without confidence are always included, never silently excluded.
+- **Two-Level Vaults:** Combine scope + audit for multi-context agents: project-level vault stores high-confidence canon; thread-level vault stores session episodes.
+
+### 12. Security & Robustness Hardening (v1.0.3 audit)
+
+The codebase underwent a 3-agent (Tester + Reviewer + Optimizer) comprehensive audit. Key fixes delivered:
+
+- **Panic-Free Database Layer:** All `unwrap()` / `panic!()` calls in `store.rs` replaced with `Context`-based `Result` propagation. Schema mismatches now return errors instead of crashing the server process.
+- **Path Traversal Prevention (3 vectors closed):**
+  1. `link:` frontmatter field — `is_safe_link()` rejects absolute paths and `..` components
+  2. File system symlinks — `resolve_vault_path()` canonicalizes and validates containment within `workspace_root`
+  3. Direct `../` in request paths — `validate_path()` uses `Path::components()` for robust rejection
+- **Error Observability:** All previously swallowed errors (`let _ = sync_vault`, `Err(_e) => {}`) now emit `tracing::error!` / `tracing::warn!` diagnostics. Server operators can now see when vault syncs fail, LanceDB connections drop, or requests are malformed.
+- **JSON-RPC Compliance:** Malformed requests now return proper `-32700 Parse error` RPC responses. Requests exceeding 1MB are rejected with an explicit error code. Previously both cases resulted in silent client timeouts.
+- **Resource Limits:** `rms_search` `limit` parameter capped at 100. Request size limit of 1MB enforced on stdin. File watcher uses `try_send` (non-blocking) instead of `blocking_send` to prevent event flood deadlocks.
+- **Code De-duplication:** `VectorStore` trait removed (single implementation = unnecessary abstraction). `CommandRunner` trait removed (enum dispatch existed alongside). Vault directory creation extracted to `create_vault_dirs()`. JSON response wrapper extracted to `tools/response.rs`. Shared path validation extracted to `tools/validation.rs`.

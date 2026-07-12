@@ -1,6 +1,6 @@
 [package]
 name = "rms-memory-mcp"
-version = "1.0.2"
+version = "1.0.3"
 edition = "2024"
 description = "Persistent, local-first memory for your AI coding agents."
 license = "MIT"

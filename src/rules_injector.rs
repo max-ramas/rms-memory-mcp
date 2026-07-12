@@ -86,7 +86,10 @@ pub fn inject_rules(project_root: &Path, options: InjectOptions) -> Result<()> {
 fn append_to_gitignore(project_root: &Path, files: &[String]) -> Result<()> {
     let gitignore_path = project_root.join(".gitignore");
     let mut content = if gitignore_path.exists() {
-        fs::read_to_string(&gitignore_path).unwrap_or_default()
+        fs::read_to_string(&gitignore_path).unwrap_or_else(|e| {
+            tracing::warn!("Cannot read existing .gitignore ({}), starting fresh", e);
+            String::new()
+        })
     } else {
         String::new()
     };

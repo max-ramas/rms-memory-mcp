@@ -1,10 +1,13 @@
-use crate::commands::CommandRunner;
 use anyhow::Result;
 use clap::{Parser, Subcommand};
 
 #[derive(Parser)]
 #[command(name = "rms-memory", version = env!("CARGO_PKG_VERSION"), about = "RMS Memory MCP Server")]
 pub struct Cli {
+    /// Override the scope identifier (path, thread ID, project name, etc.)
+    #[arg(long, short = 's', global = true)]
+    pub scope: Option<String>,
+
     #[command(subcommand)]
     pub command: Commands,
 }
@@ -40,19 +43,20 @@ pub enum Commands {
 impl Cli {
     pub async fn execute() -> Result<()> {
         let cli = Cli::parse();
+        let scope = cli.scope.clone();
         match &cli.command {
-            Commands::Config(args) => args.run().await,
-            Commands::Init(args) => args.run().await,
-            Commands::Import(args) => args.run().await,
-            Commands::Serve(args) => args.run().await,
-            Commands::Reindex(args) => args.run().await,
-            Commands::Doctor(args) => args.run().await,
-            Commands::Install(args) => args.run().await,
-            Commands::Uninstall(args) => args.run().await,
-            Commands::Gc(args) => args.run().await,
-            Commands::Sync(args) => args.run().await,
-            Commands::Log(args) => args.run().await,
-            Commands::ExportLlms(args) => args.run().await,
+            Commands::Config(args) => args.run(scope).await,
+            Commands::Init(args) => args.run(scope).await,
+            Commands::Import(args) => args.run(scope).await,
+            Commands::Serve(args) => args.run(scope).await,
+            Commands::Reindex(args) => args.run(scope).await,
+            Commands::Doctor(args) => args.run(scope).await,
+            Commands::Install(args) => args.run(scope).await,
+            Commands::Uninstall(args) => args.run(scope).await,
+            Commands::Gc(args) => args.run(scope).await,
+            Commands::Sync(args) => args.run(scope).await,
+            Commands::Log(args) => args.run(scope).await,
+            Commands::ExportLlms(args) => args.run(scope).await,
         }
     }
 }

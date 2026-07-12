@@ -1,4 +1,3 @@
-use super::CommandRunner;
 use anyhow::Result;
 use clap::Args;
 
@@ -14,8 +13,8 @@ pub struct ConfigArgs {
     pub auto_import: Option<String>,
 }
 
-impl CommandRunner for ConfigArgs {
-    async fn run(&self) -> Result<()> {
+impl ConfigArgs {
+    pub async fn run(&self, _scope: Option<String>) -> Result<()> {
         let mut registry = crate::workspace::Registry::load().unwrap_or_default();
         let mut updated = false;
 

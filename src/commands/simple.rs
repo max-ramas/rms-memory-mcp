@@ -1,4 +1,3 @@
-use super::CommandRunner;
 use crate::indexer::Indexer;
 use crate::workspace::Workspace;
 use anyhow::Result;
@@ -7,10 +6,10 @@ use clap::Args;
 #[derive(Args, Debug)]
 pub struct ImportArgs;
 
-impl CommandRunner for ImportArgs {
-    async fn run(&self) -> Result<()> {
+impl ImportArgs {
+    pub async fn run(&self, scope: Option<String>) -> Result<()> {
         let current_dir = std::env::current_dir()?;
-        let workspace = Workspace::discover(&current_dir, None)?;
+        let workspace = Workspace::discover_with_scope(scope.as_deref(), &current_dir, None)?;
         let import_service =
             crate::import::ImportService::new(workspace.code_path.clone(), workspace.root.clone());
         let docs = import_service.detect_existing_docs();
@@ -27,11 +26,11 @@ impl CommandRunner for ImportArgs {
 #[derive(Args, Debug)]
 pub struct ServeArgs;
 
-impl CommandRunner for ServeArgs {
-    async fn run(&self) -> Result<()> {
+impl ServeArgs {
+    pub async fn run(&self, scope: Option<String>) -> Result<()> {
         let registry = crate::workspace::Registry::load().unwrap_or_default();
         let max_backups = registry.global.max_backups.unwrap_or(5);
-        crate::mcp_server::McpServer::run(None, None, None, max_backups).await?;
+        crate::mcp_server::McpServer::run(None, None, None, max_backups, scope).await?;
         Ok(())
     }
 }
@@ -39,10 +38,10 @@ impl CommandRunner for ServeArgs {
 #[derive(Args, Debug)]
 pub struct ReindexArgs;
 
-impl CommandRunner for ReindexArgs {
-    async fn run(&self) -> Result<()> {
+impl ReindexArgs {
+    pub async fn run(&self, scope: Option<String>) -> Result<()> {
         let current_dir = std::env::current_dir()?;
-        let workspace = Workspace::discover(&current_dir, None)?;
+        let workspace = Workspace::discover_with_scope(scope.as_deref(), &current_dir, None)?;
         println!("Reindexing Vault at {:?}", workspace.root);
 
         let store = workspace.get_store().await?;
@@ -58,10 +57,10 @@ impl CommandRunner for ReindexArgs {
 #[derive(Args, Debug)]
 pub struct DoctorArgs;
 
-impl CommandRunner for DoctorArgs {
-    async fn run(&self) -> Result<()> {
+impl DoctorArgs {
+    pub async fn run(&self, scope: Option<String>) -> Result<()> {
         let current_dir = std::env::current_dir()?;
-        let workspace = Workspace::discover(&current_dir, None)?;
+        let workspace = Workspace::discover_with_scope(scope.as_deref(), &current_dir, None)?;
         println!("Doctor checks for {:?}", workspace.root);
         println!("{}", "─".repeat(60));
 
@@ -230,8 +229,8 @@ pub struct InstallArgs {
     pub dry_run: bool,
 }
 
-impl CommandRunner for InstallArgs {
-    async fn run(&self) -> Result<()> {
+impl InstallArgs {
+    pub async fn run(&self, _scope: Option<String>) -> Result<()> {
         crate::installer::run_installer(self.yes, self.dry_run).await?;
         Ok(())
     }
@@ -246,8 +245,8 @@ pub struct UninstallArgs {
     pub dry_run: bool,
 }
 
-impl CommandRunner for UninstallArgs {
-    async fn run(&self) -> Result<()> {
+impl UninstallArgs {
+    pub async fn run(&self, _scope: Option<String>) -> Result<()> {
         crate::installer::run_uninstaller(self.yes, self.dry_run).await?;
         Ok(())
     }
@@ -256,8 +255,8 @@ impl CommandRunner for UninstallArgs {
 #[derive(Args, Debug)]
 pub struct LogArgs;
 
-impl CommandRunner for LogArgs {
-    async fn run(&self) -> Result<()> {
+impl LogArgs {
+    pub async fn run(&self, _scope: Option<String>) -> Result<()> {
         let log_file = crate::workspace::base_dir().join("rms.log");
         if !log_file.exists() {
             println!("Log file does not exist yet.");
@@ -275,10 +274,10 @@ impl CommandRunner for LogArgs {
 #[derive(Args, Debug)]
 pub struct SyncArgs;
 
-impl CommandRunner for SyncArgs {
-    async fn run(&self) -> Result<()> {
+impl SyncArgs {
+    pub async fn run(&self, scope: Option<String>) -> Result<()> {
         let current_dir = std::env::current_dir()?;
-        let workspace = Workspace::discover(&current_dir, None)?;
+        let workspace = Workspace::discover_with_scope(scope.as_deref(), &current_dir, None)?;
         let store = workspace.get_store().await?;
         let indexer = Indexer::new()?;
         crate::indexer::sync_vault(&workspace, &store, indexer).await?;
@@ -293,10 +292,10 @@ pub struct ExportLlmsArgs {
     pub out: Option<String>,
 }
 
-impl CommandRunner for ExportLlmsArgs {
-    async fn run(&self) -> Result<()> {
+impl ExportLlmsArgs {
+    pub async fn run(&self, scope: Option<String>) -> Result<()> {
         let current_dir = std::env::current_dir()?;
-        let workspace = Workspace::discover(&current_dir, None)?;
+        let workspace = Workspace::discover_with_scope(scope.as_deref(), &current_dir, None)?;
         let files = workspace.find_markdown_files()?;
         let file_count = files.len();
 

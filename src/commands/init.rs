@@ -1,4 +1,3 @@
-use super::CommandRunner;
 use anyhow::Result;
 use clap::Args;
 
@@ -12,11 +11,15 @@ pub struct InitArgs {
     pub full: bool,
 }
 
-impl CommandRunner for InitArgs {
-    async fn run(&self) -> Result<()> {
+impl InitArgs {
+    pub async fn run(&self, scope: Option<String>) -> Result<()> {
         let current_dir = std::env::current_dir()?;
+        let start_dir = scope
+            .as_deref()
+            .map(std::path::PathBuf::from)
+            .unwrap_or(current_dir.clone());
         let start_canon =
-            std::fs::canonicalize(&current_dir).unwrap_or_else(|_| current_dir.to_path_buf());
+            std::fs::canonicalize(&start_dir).unwrap_or_else(|_| start_dir.to_path_buf());
         let folder_name = start_canon
             .file_name()
             .and_then(|n| n.to_str())
@@ -29,12 +32,7 @@ impl CommandRunner for InitArgs {
                 .join(&folder_name)
                 .to_string_lossy()
                 .to_string();
-            std::fs::create_dir_all(std::path::Path::new(&vault_path).join("rules"))?;
-            std::fs::create_dir_all(std::path::Path::new(&vault_path).join("decisions"))?;
-            std::fs::create_dir_all(std::path::Path::new(&vault_path).join("architecture"))?;
-            std::fs::create_dir_all(std::path::Path::new(&vault_path).join("artifacts"))?;
-            std::fs::create_dir_all(std::path::Path::new(&vault_path).join("docs"))?;
-            std::fs::create_dir_all(std::path::Path::new(&vault_path).join("api"))?;
+            crate::workspace::create_vault_dirs(std::path::Path::new(&vault_path))?;
 
             registry.projects.insert(
                 folder_name.clone(),

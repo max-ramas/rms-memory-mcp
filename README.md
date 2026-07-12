@@ -38,18 +38,34 @@ You're developing a single project but switching between different agents — Cu
 | 📜 **Rules-as-Code Patching** | Non-destructive AST patching of `.cursorrules`, `.zed/assistant.md`, etc. Opt-in by default. |
 | 🧪 **Dry-Run & Auditing** | `--dry-run` everywhere. Every write gets a rolling `.bak` backup. |
 | 🛡️ **Ten-Point Resiliency** | GC, background sync, write-guard snapshots, macOS sandbox bypass, `llms.txt` export, path traversal + injection protection, zombie prevention, graceful shutdown. |
+| 🔒 **Security Hardened** | Panic-free database layer, symlink traversal blocked, JSON-RPC error responses, request size limits. 3-agent audit completed with 14 critical/high bugs resolved. |
+| 🧠 **Audit Metadata** | Every record auto-receives `last_modified_by`, `timestamp`, `confidence`, `source` — agents can filter by reliability. |
+| 🔀 **Multi-Scope** | `--scope` flag supports arbitrary identifiers beyond filesystem paths (thread IDs, lead IDs, etc.). |
 
 ## 📦 Installation
 
-### Option 1: Cargo (Recommended)
+### Option 1: Homebrew (macOS Apple Silicon & Linux)
 
-If you have Rust installed, simply install from crates.io:
+```bash
+brew tap max-ramas/tap
+brew install rms-memory-mcp
+```
+
+Installs a prebuilt binary — no Rust toolchain required. The formula updates
+automatically with every release.
+
+> **Not covered by Homebrew:** macOS Intel (dropped as of v1.0.1) and
+> Windows (Homebrew doesn't run there — use Option 2 or the `.zip` below).
+
+### Option 2: Cargo
+
+If you have Rust installed:
 
 ```bash
 cargo install rms-memory-mcp
 ```
 
-### Option 2: Build from Source
+### Option 3: Build from Source
 
 ```bash
 # 1. Clone the repository
@@ -60,10 +76,14 @@ cd rms-memory-mcp
 cargo build --release
 
 # 3. Add the binary to your global PATH
-cp target/release/rms-memory-mcp ~/.cargo/bin/
+cp target/release/rms-memory ~/.cargo/bin/
 ```
 
-> Prebuilt binaries for `x86_64-unknown-linux-gnu`, `x86_64-pc-windows-msvc`, and `aarch64-apple-darwin` (Apple Silicon) are published on every [release](https://github.com/max-ramas/rms-memory-mcp/releases). One-line installers (`install.sh` / `install.ps1`) auto-detect your architecture.
+> Prebuilt binaries for `aarch64-apple-darwin` (Apple Silicon), `x86_64-unknown-linux-gnu`,
+> `aarch64-unknown-linux-gnu`, and `x86_64-pc-windows-msvc` are published on every
+> [release](https://github.com/max-ramas/rms-memory-mcp/releases), along with
+> `.deb`/`.rpm` packages for Linux. One-line installers (`install.sh` / `install.ps1`)
+> auto-detect your architecture.
 
 ## 🚀 Quick Start
 
@@ -74,6 +94,14 @@ rms-memory install
 ```
 
 This scans `~/.config/` and `~/Library/Application Support/` and hooks `rms-memory` directly into **Cursor**, **Zed**, **Claude Code**, **OpenCode**, and others — no manual JSON editing.
+
+For virtual projects without a filesystem path (threads, leads, etc.), use `--scope`:
+
+```bash
+rms-memory --scope "thread:abc-123" serve
+```
+
+[See multi-scope documentation →](docs/multi-scope-usage.md)
 
 ### Configure your vault
 
@@ -106,12 +134,15 @@ The next time you open a project in a connected IDE, the server reads the `rootU
 | `rms-memory init` | Registers a project into the global registry. `--dry-run` supported. `--full` forces creation of all IDE rule templates. |
 | `rms-memory import` | Scans for existing docs (`README.md`, `docs/`, `ADR/`) and imports them — interactively or via `--auto-import`. |
 | `rms-memory install` | Hooks the server into supported IDEs. `--dry-run` supported. |
+| `rms-memory uninstall` | Removes the server from all discovered IDE configurations. |
+| `rms-memory doctor` | Runs 5-point vault health diagnostics (structure, IDs, links, store, registry). |
 | `rms-memory config` | Interactive setup wizard for global settings (`vault-path`, `auto-add`, `inject-rules`, etc). |
 | `rms-memory reindex` | Forces a full re-index of the current project vault. |
 | `rms-memory sync` | Incremental LanceDB delete-then-insert sync (also runs automatically during `serve`). |
 | `rms-memory gc` | Prunes orphaned LanceDB indices belonging to deleted vaults. |
 | `rms-memory log` | Tails the telemetry log (`~/.rms-memory/rms.log`). |
 | `rms-memory export-llms` | Compiles the current vault into a single `llms.txt` payload. |
+| **All commands** | Accept `--scope <id>` to target arbitrary vaults (threads, leads, etc). See `docs/multi-scope-usage.md`. |
 
 ## 🔌 MCP Tools Exposed
 
@@ -121,8 +152,8 @@ Tool descriptions are written to be **action-oriented**, so agents use the vault
 <tr><th>Tool</th><th>Purpose</th><th>Input</th></tr>
 <tr>
 <td><code>rms-memory_rms_search</code></td>
-<td>Semantic search across the vault. Agents are instructed to call this <em>first</em>, before making any changes.</td>
-<td><code>{ query, limit, include_content }</code></td>
+<td>Semantic search across the vault. Agents are instructed to call this <em>first</em>, before making any changes. Supports <code>min_confidence</code> filtering.</td>
+<td><code>{ query, limit, include_content, min_confidence }</code></td>
 </tr>
 <tr>
 <td><code>rms-memory_rms_read</code></td>
@@ -131,8 +162,8 @@ Tool descriptions are written to be **action-oriented**, so agents use the vault
 </tr>
 <tr>
 <td><code>rms-memory_rms_write</code></td>
-<td>Persists new decisions, constraints, or rules. Agents are prompted to call this <em>proactively</em> after solving a tricky bug or learning a preference.</td>
-<td><code>{ path, content, mode: replace|append|create }</code></td>
+<td>Persists new decisions, constraints, or rules. Agents are prompted to call this <em>proactively</em> after solving a tricky bug or learning a preference. Auto-injects audit metadata.</td>
+<td><code>{ path, content, mode: replace|append|create, confidence, source }</code></td>
 </tr>
 </table>
 

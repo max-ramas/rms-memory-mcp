@@ -213,10 +213,16 @@ pub async fn sync_vault(
         }
     };
 
-    let existing_docs = store
-        .get_all_document_timestamps(&table)
-        .await
-        .unwrap_or_default();
+    let existing_docs = match store.get_all_document_timestamps(&table).await {
+        Ok(docs) => docs,
+        Err(e) => {
+            tracing::error!(
+                "Failed to read document timestamps: {}. Performing full recheck.",
+                e
+            );
+            std::collections::HashMap::new()
+        }
+    };
     let mut to_delete = Vec::new();
     let mut to_index = Vec::new();
 
@@ -297,6 +303,11 @@ pub async fn sync_vault(
             .and_then(|fm| fm.doc_type.clone())
             .unwrap_or_else(|| "note".to_string());
         let content_hash = blake3::hash(doc.content.as_bytes()).to_string();
+        let confidence = doc
+            .frontmatter
+            .as_ref()
+            .and_then(|fm| fm.confidence)
+            .map(|c| c as f32);
 
         let raw_links = doc.extract_links();
         let mut normalized_links = Vec::new();
@@ -350,6 +361,7 @@ pub async fn sync_vault(
                 heading: chunk.heading,
                 text: chunk.text,
                 vector,
+                confidence,
             });
         }
     }
@@ -413,6 +425,11 @@ pub async fn index_vault_full(
             .and_then(|fm| fm.doc_type.clone())
             .unwrap_or_else(|| "note".to_string());
         let content_hash = blake3::hash(doc.content.as_bytes()).to_string();
+        let confidence = doc
+            .frontmatter
+            .as_ref()
+            .and_then(|fm| fm.confidence)
+            .map(|c| c as f32);
 
         let raw_links = doc.extract_links();
         let mut normalized_links = Vec::new();
@@ -466,6 +483,7 @@ pub async fn index_vault_full(
                 heading: chunk.heading,
                 text: chunk.text,
                 vector,
+                confidence,
             });
         }
     }

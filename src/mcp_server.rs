@@ -47,7 +47,9 @@ fn spawn_sync_watcher(
         // Initial sync
         match tokio::task::spawn_blocking(crate::indexer::Indexer::new).await {
             Ok(Ok(sync_indexer)) => {
-                let _ = crate::indexer::sync_vault(&workspace, &store, sync_indexer).await;
+                if let Err(e) = crate::indexer::sync_vault(&workspace, &store, sync_indexer).await {
+                    tracing::error!("Initial sync failed: {:#}", e);
+                }
             }
             _ => {
                 tracing::error!("Failed to create indexer for initial sync");
@@ -78,7 +80,7 @@ fn spawn_sync_watcher(
                         }
                     }
                     if should_trigger {
-                        let _ = tx.blocking_send(());
+                        let _ = tx.try_send(());
                     }
                 }
             },
@@ -118,7 +120,11 @@ fn spawn_sync_watcher(
                     // Reuse model from disk cache (no re-download)
                     match tokio::task::spawn_blocking(crate::indexer::Indexer::new).await {
                         Ok(Ok(sync_indexer)) => {
-                            let _ = crate::indexer::sync_vault(&workspace, &store, sync_indexer).await;
+                            if let Err(e) =
+                                crate::indexer::sync_vault(&workspace, &store, sync_indexer).await
+                            {
+                                tracing::error!("Background sync failed: {:#}", e);
+                            }
                         }
                         _ => {
                             tracing::error!("Failed to create indexer for background sync");
@@ -138,6 +144,7 @@ impl McpServer {
         indexer: Option<Arc<Mutex<Indexer>>>,
         workspace_root: Option<std::path::PathBuf>,
         max_backups: usize,
+        scope: Option<String>,
     ) -> Result<()> {
         let (shutdown_tx, _shutdown_rx) = tokio::sync::watch::channel(false);
         let shutdown_tx_for_server = shutdown_tx.clone();
@@ -147,6 +154,8 @@ impl McpServer {
                 indexer,
                 workspace_root,
                 max_backups,
+                scope,
+                caller_id: "unknown".to_string(),
             },
             shutdown_tx: shutdown_tx_for_server,
         };
@@ -160,6 +169,23 @@ impl McpServer {
             let bytes_read = reader.read_line(&mut line)?;
             if bytes_read == 0 {
                 break; // EOF
+            }
+            if line.len() > 1_048_576 {
+                tracing::error!("Request exceeds 1MB size limit, rejecting.");
+                let err_res = RpcResponse {
+                    jsonrpc: "2.0".to_string(),
+                    id: serde_json::Value::Null,
+                    result: None,
+                    error: Some(RpcError {
+                        code: -32700,
+                        message: "Request too large (max 1MB)".to_string(),
+                    }),
+                };
+                let mut res_str = serde_json::to_string(&err_res)?;
+                res_str.push('\n');
+                stdout.write_all(res_str.as_bytes())?;
+                stdout.flush()?;
+                continue;
             }
 
             let req: Result<RpcRequest, _> = serde_json::from_str(&line);
@@ -197,6 +223,19 @@ impl McpServer {
                 }
                 Err(e) => {
                     tracing::error!("Failed to parse JSON-RPC: {}", e);
+                    let err_res = RpcResponse {
+                        jsonrpc: "2.0".to_string(),
+                        id: serde_json::Value::Null,
+                        result: None,
+                        error: Some(RpcError {
+                            code: -32700,
+                            message: format!("Parse error: {}", e),
+                        }),
+                    };
+                    let mut res_str = serde_json::to_string(&err_res)?;
+                    res_str.push('\n');
+                    stdout.write_all(res_str.as_bytes())?;
+                    stdout.flush()?;
                 }
             }
         }
@@ -210,16 +249,21 @@ impl McpServer {
         match method {
             "initialize" => {
                 let mut path = None;
-                if let Some(params_obj) = params.as_ref().and_then(|p| p.as_object())
-                    && let Some(root_uri) = params_obj.get("rootUri").and_then(|v| v.as_str())
-                {
-                    let path_str = if let Some(stripped) = root_uri.strip_prefix("file://") {
-                        stripped
-                    } else {
-                        root_uri
-                    };
-                    if path_str != "/" && !path_str.is_empty() {
-                        path = Some(std::path::PathBuf::from(path_str));
+                if let Some(params_obj) = params.as_ref().and_then(|p| p.as_object()) {
+                    if let Some(client_info) = params_obj.get("clientInfo")
+                        && let Some(client_name) = client_info.get("name").and_then(|v| v.as_str())
+                    {
+                        self.ctx.caller_id = client_name.to_string();
+                    }
+                    if let Some(root_uri) = params_obj.get("rootUri").and_then(|v| v.as_str()) {
+                        let path_str = if let Some(stripped) = root_uri.strip_prefix("file://") {
+                            stripped
+                        } else {
+                            root_uri
+                        };
+                        if path_str != "/" && !path_str.is_empty() {
+                            path = Some(std::path::PathBuf::from(path_str));
+                        }
                     }
                 }
 
@@ -228,7 +272,11 @@ impl McpServer {
                     std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("/"))
                 });
 
-                if let Ok(workspace) = crate::workspace::Workspace::discover(&path, None) {
+                if let Ok(workspace) = crate::workspace::Workspace::discover_with_scope(
+                    self.ctx.scope.as_deref(),
+                    &path,
+                    None,
+                ) {
                     self.ctx.workspace_root = Some(workspace.root.clone());
 
                     match workspace.get_store().await {
@@ -240,7 +288,9 @@ impl McpServer {
                             );
                             self.ctx.store = Some(store);
                         }
-                        Err(_e) => {}
+                        Err(e) => {
+                            tracing::error!("Failed to open LanceDB store for workspace: {:#}", e);
+                        }
                     }
                 } else {
                     // Fallback: use global vault when no project is registered for this path
@@ -289,13 +339,14 @@ impl McpServer {
                 "tools": [
                     {
                         "name": "rms_search",
-                        "description": "Search the local RMS Memory vector database (LanceDB) for project documentation, architectural decisions, and context rules using semantic similarity. Use this tool FIRST to understand the repository's background, past decisions, or rules before making changes. Provide a detailed semantic query.",
+                        "description": "Search the local RMS Memory vector database (LanceDB) for project documentation, architectural decisions, and context rules using semantic similarity. Use this tool FIRST to understand the repository's background, past decisions, or rules before making changes. Provide a detailed semantic query. When using min_confidence: start WITHOUT it (omit the parameter) to see all available results. If you use a high threshold (e.g. 0.9) and get zero results, retry with a lower threshold or omit min_confidence entirely — low-confidence records may still contain useful information.",
                         "inputSchema": {
                             "type": "object",
                             "properties": {
                                 "query": { "type": "string", "description": "The semantic query string to search for." },
                                 "limit": { "type": "integer", "description": "Maximum number of chunks to return. Default is 10." },
-                                "include_content": { "type": "boolean", "description": "Whether to include full chunk text in results." }
+                                "include_content": { "type": "boolean", "description": "Whether to include full chunk text in results." },
+                                "min_confidence": { "type": "number", "description": "Optional minimum confidence threshold (0.0–1.0). Records with NULL confidence are always included. CAUTION: do NOT use high values (e.g. 0.9+) unless you need strict filtering. If zero results, retry without this parameter." }
                             },
                             "required": ["query"]
                         }
@@ -321,7 +372,9 @@ impl McpServer {
                                 "id": { "type": "string" },
                                 "path": { "type": "string", "description": "Relative path to save the document (e.g., 'decisions/001-db.md')." },
                                 "content": { "type": "string", "description": "The markdown content to write." },
-                                "mode": { "type": "string", "enum": ["create", "append", "replace"], "description": "Write mode." }
+                                "mode": { "type": "string", "enum": ["create", "append", "replace"], "description": "Write mode." },
+                                "confidence": { "type": "number", "description": "Optional confidence score (0.0–1.0) indicating reliability of this record." },
+                                "source": { "type": "string", "description": "Optional free-text citation or source reference for this record." }
                             },
                             "required": ["path", "mode", "content"]
                         }

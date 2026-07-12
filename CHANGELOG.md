@@ -2,6 +2,42 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.0.3] - 2026-07-12
+
+### Added
+- **Generalized Scope Resolver (`--scope`):** String-based identifier system replacing path-only vault isolation. `blake3(identifier)` supports arbitrary scopes (`"thread:12345"`, `"lead:acme-corp"`) alongside filesystem paths. Unified `base_dir()/dbs/<hash>/` for all scopes — no regression for existing projects.
+- **Caller Identity Tracking:** MCP `initialize` extracts `clientInfo.name` → `caller_id` in `AppContext`. `last_modified_by` reflects the actual editing client (Cursor, Claude Code, OpenCode).
+- **Audit Metadata:** Five YAML frontmatter fields: `last_modified_by` (auto), `timestamp` (ISO 8601, updated per write), `created_at` (set once), `confidence` (0.0–1.0, LanceDB-indexed), `source` (free-text citation). All `Option` with `#[serde(skip_serializing_if)]` — no clutter for unset fields.
+- **Confidence-Aware Search:** `rms_search` accepts `min_confidence`. Filter: `confidence IS NULL OR confidence >= X` — pre-migration records without confidence are always included. Agent guidance in tool description warns against starting with high thresholds.
+- **Zero-Downtime Schema Migration:** `Store::open_table()` auto-adds `confidence` column via `NewColumnTransform::AllNulls` if missing. FTS index recreated. Race-condition safe. No manual `reindex`.
+- **Project-Level Vault Pattern:** `docs/multi-scope-usage.md` — two-level architecture (product canon vs. thread episodes). Caller merges results client-side.
+- **3-Agent Audit Completed:** Tester (44) + Reviewer (34) + Optimizer (16) findings. 94 total, cross-referenced into 11 fix groups. All critical/high bugs closed.
+
+### Security
+- **Path Traversal (3 vectors):** `is_safe_link()` in `link.rs` rejects absolute/`..` frontmatter paths. `resolve_vault_path()` in `tools/validation.rs` canonicalizes + validates symlink containment. Shared `validate_path()` uses `Path::components()` across read/write.
+- **Panic-Free Database Layer:** 12 `unwrap()`/`panic!()` in `store.rs` replaced with `Context`-based `Result`. Server returns errors instead of crashing on schema mismatch.
+- **Request Size Limit:** 1MB cap on stdin reads + search `limit` clamped to `min(100)`.
+- **JSON-RPC Compliance:** Malformed requests return `-32700 Parse error`. Oversized requests return `-32700 Request too large`.
+
+### Fixed
+- **sync_vault timestamps:** `unwrap_or_default()` → explicit error log — no more mass-reindex on transient DB errors.
+- **Sync error logging:** `let _ = sync_vault(...)` → `tracing::error!` — silent vault staleness eliminated.
+- **Store init errors:** `Err(_e) => {}` → `tracing::error!` — LanceDB connection failures now visible.
+- **File watcher channel:** `blocking_send` → `try_send` — prevents thread blocking under event flood.
+- **Installer macOS unwrap:** `.to_str().unwrap()` → `.unwrap_or("")`.
+- **Rules injector gitignore:** `unwrap_or_default()` → error-logged fallback — no silent overwrite.
+- **Scope ≠ rootUri mismatch:** `scope: Option<String>` — `None` auto-detects from rootUri at connect time, restoring v1.0.2 behavior.
+- **`rms_search` guidance:** Tool description warns against starting with high `min_confidence`.
+- **SQL migration:** `CAST(NULL AS FLOAT)` → `AllNulls(ArrowSchema)` for guaranteed NULL.
+
+### Changed
+- **`CommandRunner` trait removed** — direct method calls on `Args` structs instead of trait dispatch. Depends on `--scope` via parameter.
+- **`VectorStore` trait removed** — `search()` and `read_document()` made inherent `pub` methods on `Store`.
+- **Shared `tools/response.rs`** — single `json_text_response()` replaces duplicate `json!({...})` across search/read/write.
+- **Shared `tools/validation.rs`** — single `resolve_vault_path()` with symlink safety.
+- **DRY vault dirs:** `create_vault_dirs()` — 3 copy-pasted sites → 1 function.
+- **`Frontmatter`** extended, `SearchResult` carries `confidence`, codebase audit cleanups.
+
 ## [1.0.2] - 2026-07-08
 
 ### Security

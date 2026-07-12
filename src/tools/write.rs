@@ -1,20 +1,72 @@
 use super::AppContext;
 use anyhow::Result;
-use serde_json::json;
 
-fn validate_path(path_str: &str) -> Result<()> {
-    if std::path::Path::new(path_str).is_absolute() {
-        return Err(anyhow::anyhow!(
-            "Path must be relative to the vault, but received absolute path: {}",
-            path_str
-        ));
+fn inject_audit_metadata(
+    content: &str,
+    caller_id: &str,
+    args: &serde_json::Map<String, serde_json::Value>,
+) -> String {
+    use chrono::Utc;
+
+    let now = Utc::now().to_rfc3339();
+    let conf_value = args.get("confidence").and_then(|v| v.as_f64());
+
+    if content.starts_with("---\n") || content.starts_with("---\r\n") {
+        // Existing frontmatter — parse and patch
+        if let Some(end_idx) = content
+            .find("\n---\n")
+            .or_else(|| content.find("\r\n---\r\n"))
+        {
+            let fm_text = &content[4..end_idx];
+            if let Ok(mut fm) = serde_yaml::from_str::<crate::document::Frontmatter>(fm_text) {
+                let existing_created = fm.created_at.clone();
+                fm.last_modified_by = Some(caller_id.to_string());
+                fm.timestamp = Some(now.clone());
+                if existing_created.is_none() {
+                    fm.created_at = Some(now);
+                }
+                if let Some(c) = conf_value
+                    && (0.0..=1.0).contains(&c)
+                {
+                    fm.confidence = Some(c);
+                }
+                if let Some(s) = args.get("source").and_then(|v| v.as_str()) {
+                    fm.source = Some(s.to_string());
+                }
+                let updated_fm = serde_yaml::to_string(&fm)
+                    .unwrap_or_default()
+                    .trim_end()
+                    .to_string();
+                let remainder = &content[end_idx..];
+                return format!("---\n{}\n{}", updated_fm, remainder);
+            }
+        }
     }
-    if path_str.split('/').any(|c| c == "..") {
-        return Err(anyhow::anyhow!(
-            "Path traversal detected: '..' is not allowed in vault paths"
-        ));
+
+    // No existing frontmatter — create new
+    let fm = crate::document::Frontmatter {
+        memory_version: None,
+        id: None,
+        alias: None,
+        doc_type: None,
+        status: None,
+        link: None,
+        last_modified_by: Some(caller_id.to_string()),
+        timestamp: Some(now.clone()),
+        created_at: Some(now),
+        confidence: conf_value.filter(|c| (0.0..=1.0).contains(c)),
+        source: args
+            .get("source")
+            .and_then(|v| v.as_str())
+            .map(String::from),
+    };
+    // Only serialize non-None optional fields
+    let fm_yaml = serde_yaml::to_string(&fm).unwrap_or_default();
+    if content.is_empty() {
+        format!("---\n{}---\n", fm_yaml)
+    } else {
+        format!("---\n{}---\n\n{}", fm_yaml.trim_end(), content)
     }
-    Ok(())
 }
 
 pub async fn execute(
@@ -26,14 +78,13 @@ pub async fn execute(
         .as_ref()
         .ok_or_else(|| anyhow::anyhow!("Workspace root not initialized"))?;
     let path_str = args.get("path").and_then(|v| v.as_str()).unwrap_or("");
-    validate_path(path_str)?;
+    let initial_file_path = super::validation::resolve_vault_path(workspace_root, path_str)?;
     let content = args.get("content").and_then(|v| v.as_str()).unwrap_or("");
     let mode = args
         .get("mode")
         .and_then(|v| v.as_str())
         .unwrap_or("replace");
 
-    let initial_file_path = workspace_root.join(path_str);
     let file_path = crate::link::resolve_link(&initial_file_path);
 
     // CREATE mode: reject if file already exists
@@ -43,6 +94,9 @@ pub async fn execute(
             path_str
         ));
     }
+
+    // Inject audit metadata into frontmatter
+    let content = inject_audit_metadata(content, &ctx.caller_id, args);
 
     // WRITE-GUARD: Backup file if it exists
     if file_path.exists() && ctx.max_backups > 0 {
@@ -113,7 +167,8 @@ pub async fn execute(
         }
     }
 
-    Ok(json!({
-        "content": [{"type": "text", "text": format!("Successfully wrote to {}", path_str)}]
-    }))
+    Ok(super::response::json_text_response(&format!(
+        "Successfully wrote to {}",
+        path_str
+    )))
 }
