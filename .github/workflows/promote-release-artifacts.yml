@@ -28,12 +28,12 @@ jobs:
       - name: Verify release exists
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release view "${{ inputs.tag }}"
+        run: gh release view "${{ inputs.tag }}" --repo max-ramas/rms-memory-mcp
 
       - name: Upload release assets
         env:
           GH_TOKEN: ${{ github.token }}
-        run: find artifacts -type f -print0 | xargs -0 gh release upload "${{ inputs.tag }}" --clobber
+        run: find artifacts -type f -print0 | xargs -0 gh release upload "${{ inputs.tag }}" --repo max-ramas/rms-memory-mcp --clobber
 
       - name: Notify homebrew tap
         env:
