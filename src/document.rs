@@ -78,7 +78,7 @@ impl Document {
             })
     }
 
-    /// Repairs only duplicate top-level `id:` keys, retaining the first ID.
+    /// Repairs duplicate, missing, and observed attached-delimiter frontmatter IDs.
     /// A backup is created before the source file is replaced.
     pub fn repair_duplicate_ids(path: &Path) -> Result<bool> {
         let text = fs::read_to_string(path)?;
@@ -126,17 +126,23 @@ impl Document {
             }
             repaired_lines.push(line);
         }
-        if id_count <= 1 && !recovered_attached_delimiter {
+        let mut repaired_frontmatter = repaired_lines.join(newline);
+        let parsed =
+            serde_yaml::from_str::<Frontmatter>(&repaired_frontmatter).with_context(|| {
+                format!(
+                    "Frontmatter has errors beyond duplicate ids in {}",
+                    path.display()
+                )
+            })?;
+        let missing_id = parsed.id.is_none();
+        if id_count <= 1 && !recovered_attached_delimiter && !missing_id {
             return Ok(false);
         }
-
-        let repaired_frontmatter = repaired_lines.join(newline);
-        serde_yaml::from_str::<Frontmatter>(&repaired_frontmatter).with_context(|| {
-            format!(
-                "Frontmatter has errors beyond duplicate ids in {}",
-                path.display()
-            )
-        })?;
+        if missing_id {
+            repaired_frontmatter.push_str(newline);
+            repaired_frontmatter.push_str("id: ");
+            repaired_frontmatter.push_str(&Uuid::new_v4().to_string());
+        }
         let repaired = format!("---{newline}{repaired_frontmatter}{remainder}");
 
         let timestamp = chrono::Utc::now().format("%Y%m%d%H%M%S%3f");
@@ -314,5 +320,21 @@ mod tests {
         let doc = Document::parse(&file_path).unwrap();
         assert_eq!(doc.frontmatter.unwrap().source.as_deref(), Some("test"));
         assert_eq!(doc.content.trim_start(), "# Content");
+    }
+
+    #[test]
+    fn repair_frontmatter_adds_an_id_to_legacy_document() {
+        let dir = tempdir().unwrap();
+        let file_path = dir.path().join("legacy.md");
+        fs::write(&file_path, "---\ntype: decision\n---\n# Content").unwrap();
+
+        assert!(Document::repair_duplicate_ids(&file_path).unwrap());
+        assert!(
+            Document::parse(&file_path)
+                .unwrap()
+                .frontmatter
+                .and_then(|frontmatter| frontmatter.id)
+                .is_some()
+        );
     }
 }

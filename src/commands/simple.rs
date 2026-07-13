@@ -82,7 +82,7 @@ impl ReindexArgs {
 
 #[derive(Args, Debug)]
 pub struct DoctorArgs {
-    /// Repair duplicate top-level `id:` keys after creating a backup
+    /// Repair duplicate, missing, or attached frontmatter IDs after creating a backup
     #[arg(long)]
     pub repair_frontmatter: bool,
     /// Repair one explicit file inside a registered project or global vault
@@ -126,9 +126,9 @@ impl DoctorArgs {
             }
 
             if crate::document::Document::repair_duplicate_ids(&path)? {
-                println!("Repaired duplicate IDs: {}", path.display());
+                println!("Repaired frontmatter IDs: {}", path.display());
             } else {
-                println!("No duplicate IDs found: {}", path.display());
+                println!("No repairable frontmatter IDs found: {}", path.display());
             }
             return Ok(());
         }
@@ -174,6 +174,23 @@ impl DoctorArgs {
                         .and_then(|fm| fm.id.as_ref())
                         .is_none()
                     {
+                        if self.repair_frontmatter {
+                            match crate::document::Document::repair_duplicate_ids(f) {
+                                Ok(true) => {
+                                    println!("  🔧 Repaired frontmatter IDs: {}", f.display());
+                                    continue;
+                                }
+                                Ok(false) => {}
+                                Err(repair_error) => {
+                                    invalid_frontmatter.push(format!(
+                                        "{}: valid frontmatter is missing an ID (repair failed: {:#})",
+                                        f.display(),
+                                        repair_error
+                                    ));
+                                    continue;
+                                }
+                            }
+                        }
                         missing_ids.push(f.to_string_lossy().to_string());
                     }
                 }
@@ -181,7 +198,7 @@ impl DoctorArgs {
                     if self.repair_frontmatter {
                         match crate::document::Document::repair_duplicate_ids(f) {
                             Ok(true) => {
-                                println!("  🔧 Repaired duplicate IDs: {}", f.display());
+                                println!("  🔧 Repaired frontmatter IDs: {}", f.display());
                                 continue;
                             }
                             Ok(false) => {}
