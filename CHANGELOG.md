@@ -6,6 +6,7 @@ All notable changes to this project will be documented in this file.
 
 ### Added
 - **Semantic code parser spike:** Tree-sitter Rust extraction now produces stable semantic items for functions, structs, enums, traits, impl blocks, and module docs, with preamble-aware fixtures covering nested modules, attributes, generics, and multiple inherent impls.
+- **Go semantic code adapter:** the 1.0.5 code corpus now dispatches Rust and Go through a language registry. Go indexing covers package docs, functions and receiver methods, structs, interfaces, aliases, constants, variables, import/call graph hints, stable IDs, preamble-aware chunks, and code-search language metadata.
 - **Preamble-aware code segmentation:** oversized semantic items receive stable segment indexes; each segment repeats its documentation, attributes, and declaration signature while retaining bounded body overlap.
 - **Manual semantic code indexing:** `rms-memory reindex --code` now builds an isolated LanceDB `code_chunks` table from Rust source while respecting nested `.gitignore`, hard exclusions, a 512 KiB file limit, and embedding batches of eight.
 - **GUI-ready graph foundation:** canonical Vault/code/external node keys, versioned derived-edge identities, provenance and resolution contracts, plus separate graph node, edge, and user-override schemas prepare the core for editable visual relationships without tying it to MCP or HTTP.
@@ -17,7 +18,7 @@ All notable changes to this project will be documented in this file.
 - **Markdown relationship graph:** vault full indexing and changed-file sync now materialize `links_to` edges. Known document paths resolve to stable Vault nodes; missing targets are retained as unresolved external nodes.
 - **Federated retrieval:** `rms_search` now accepts `corpus=vault|code|all`, and `rms_code_search` exposes a code-only path with file/symbol/line metadata. Mixed-corpus retrieval uses deterministic Reciprocal Rank Fusion rather than incompatible raw vector distances.
 - **Multi-process verification:** regression tests now exercise three independent writer processes, concurrent reader availability, and lock-owner crash recovery for the per-project index lock.
-- **Opt-in code watcher:** project configuration now supports `code_index_mode = "off" | "manual" | "watch"` (default `off`). Watch mode debounces Rust source paths for three seconds and shares a completed-generation marker to prevent duplicate cross-IDE reindexes.
+- **Opt-in code watcher:** project configuration now supports `code_index_mode = "off" | "manual" | "watch"` (default `off`). Watch mode debounces supported Rust and Go source paths for three seconds and shares a completed-generation marker to prevent duplicate cross-IDE reindexes.
 
 ### Fixed
 - **Memory frontmatter integrity:** `rms_write` now places the closing YAML delimiter on its own line and assigns an ID to newly created or legacy ID-less records. `doctor --repair-frontmatter` recovers the known attached-delimiter form and adds UUIDs to valid legacy records without IDs, always after creating backups.

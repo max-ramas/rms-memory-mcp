@@ -82,6 +82,9 @@ async fn index_code_full_inner(
     let graph_generation = store.next_graph_generation().await?;
     let mut graph_nodes = HashMap::new();
     let mut graph_edges = HashMap::new();
+    for language in crate::code_parser::LanguageId::ALL {
+        graph_edges.insert(language.extractor_version().to_string(), HashMap::new());
+    }
 
     let mut walker = WalkBuilder::new(root);
     walker
@@ -99,7 +102,7 @@ async fn index_code_full_inner(
             }
         };
         let path = entry.path();
-        if is_hard_excluded(path) || !is_rust_file(path) {
+        if is_hard_excluded(path) || !is_supported_code_path(path) {
             continue;
         }
         stats.files_scanned += 1;
@@ -131,14 +134,16 @@ async fn index_code_full_inner(
             .context("Code walker yielded a path outside the workspace")?
             .to_string_lossy()
             .replace('\\', "/");
-        let items = match crate::code_parser::parse_rust_file(&file_path, &source) {
-            Ok(items) => items,
+        let parsed = match crate::code_parser::parse_code_file(&file_path, &source) {
+            Ok(parsed) => parsed,
             Err(error) => {
                 tracing::warn!("Cannot parse {}: {error}", path.display());
                 stats.files_skipped += 1;
                 continue;
             }
         };
+        let language = parsed.language;
+        let items = parsed.items;
         stats.files_indexed += 1;
         stats.items_indexed += items.len();
         let item_keys = items
@@ -157,7 +162,7 @@ async fn index_code_full_inner(
                     label: item.qualified_symbol.clone(),
                     path: Some(item.file_path.clone()),
                     metadata_json: serde_json::json!({
-                        "language": "rust",
+                        "language": language.as_str(),
                         "module_path": item.module_path,
                     })
                     .to_string(),
@@ -185,10 +190,11 @@ async fn index_code_full_inner(
                         segment_index: segment.segment_index,
                         content_hash: segment.content_hash,
                         content: segment.content,
+                        language: language.as_str().to_string(),
                     }),
             );
         }
-        for hint in crate::code_parser::extract_rust_relation_hints(&file_path, &source, &items)? {
+        for hint in parsed.relation_hints {
             let source_key = crate::graph::GraphNodeKey::code(&hint.source_item_key)?;
             if !item_keys.contains(hint.source_item_key.as_str()) {
                 insert_graph_node(
@@ -197,11 +203,11 @@ async fn index_code_full_inner(
                         node_key: source_key.clone(),
                         corpus: "code".to_string(),
                         source_id: hint.source_item_key.clone(),
-                        kind: "rust_module".to_string(),
+                        kind: format!("{}_module", language.as_str()),
                         label: file_path.clone(),
                         path: Some(file_path.clone()),
                         metadata_json: serde_json::json!({
-                            "language": "rust",
+                            "language": language.as_str(),
                             "synthetic": true,
                         })
                         .to_string(),
@@ -217,37 +223,42 @@ async fn index_code_full_inner(
                     node_key: target_key.clone(),
                     corpus: "external".to_string(),
                     source_id: hint.target_identifier.clone(),
-                    kind: "rust_symbol_hint".to_string(),
+                    kind: format!("{}_symbol_hint", language.as_str()),
                     label: hint.target_identifier.clone(),
                     path: None,
-                    metadata_json: serde_json::json!({ "language": "rust" }).to_string(),
+                    metadata_json: serde_json::json!({ "language": language.as_str() }).to_string(),
                     generation: Some(graph_generation),
                     updated_at: chrono::Utc::now().to_rfc3339(),
                 },
             );
-            let relation = crate::graph::EdgeRelation::new(hint.relation.as_str())?;
-            let extractor = "rust-tree-sitter-v1".to_string();
+            let relation = crate::graph::EdgeRelation::new(&hint.relation)?;
+            let extractor = language.extractor_version().to_string();
             let edge_key =
                 crate::graph::derived_edge_key(&extractor, &source_key, &target_key, &relation)?;
-            graph_edges.insert(
-                edge_key.clone(),
-                crate::graph::GraphEdgeRecord {
-                    edge_key,
-                    source_key,
-                    target_key,
-                    relation,
-                    origin: crate::graph::EdgeOrigin::Derived,
-                    extractor: Some(extractor),
-                    resolution: crate::graph::EdgeResolution::Unresolved,
-                    confidence: None,
-                    generation: Some(graph_generation),
-                    metadata_json:
-                        serde_json::json!({ "language": "rust", "syntactic_hint": true })
-                            .to_string(),
-                    created_at: chrono::Utc::now().to_rfc3339(),
-                    updated_at: chrono::Utc::now().to_rfc3339(),
-                },
-            );
+            graph_edges
+                .get_mut(&extractor)
+                .expect("every supported language has a graph extractor bucket")
+                .insert(
+                    edge_key.clone(),
+                    crate::graph::GraphEdgeRecord {
+                        edge_key,
+                        source_key,
+                        target_key,
+                        relation,
+                        origin: crate::graph::EdgeOrigin::Derived,
+                        extractor: Some(extractor),
+                        resolution: crate::graph::EdgeResolution::Unresolved,
+                        confidence: None,
+                        generation: Some(graph_generation),
+                        metadata_json: serde_json::json!({
+                            "language": language.as_str(),
+                            "syntactic_hint": true,
+                        })
+                        .to_string(),
+                        created_at: chrono::Utc::now().to_rfc3339(),
+                        updated_at: chrono::Utc::now().to_rfc3339(),
+                    },
+                );
         }
     }
 
@@ -324,7 +335,7 @@ async fn index_code_full_inner(
                     symbol_name: chunk.symbol_name,
                     qualified_symbol: chunk.qualified_symbol,
                     kind: chunk.kind,
-                    language: "rust".to_string(),
+                    language: chunk.language,
                     start_line: chunk.start_line,
                     end_line: chunk.end_line,
                     segment_index: chunk.segment_index,
@@ -353,14 +364,17 @@ async fn index_code_full_inner(
     if table_created {
         store.create_code_fts_index(&table).await?;
     }
-    store
-        .reconcile_derived_graph(
-            "rust-tree-sitter-v1",
-            graph_generation,
-            graph_nodes.into_values().collect(),
-            graph_edges.into_values().collect(),
-        )
-        .await?;
+    let graph_nodes = graph_nodes.into_values().collect::<Vec<_>>();
+    for (extractor, edges) in graph_edges {
+        store
+            .reconcile_derived_graph(
+                &extractor,
+                graph_generation,
+                graph_nodes.clone(),
+                edges.into_values().collect(),
+            )
+            .await?;
+    }
     Ok(stats)
 }
 
@@ -386,10 +400,11 @@ struct PendingCodeChunk {
     item_hash: String,
     content_hash: String,
     content: String,
+    language: String,
 }
 
-fn is_rust_file(path: &Path) -> bool {
-    path.is_file() && path.extension().is_some_and(|extension| extension == "rs")
+pub fn is_supported_code_path(path: &Path) -> bool {
+    crate::code_parser::language_for_path(path).is_some()
 }
 
 fn is_hard_excluded(path: &Path) -> bool {
@@ -405,15 +420,18 @@ mod tests {
     use super::*;
 
     #[test]
-    fn only_rust_files_outside_hard_excluded_dirs_are_candidates() {
+    fn supported_source_files_outside_hard_excluded_dirs_are_candidates() {
         let directory = tempfile::tempdir().unwrap();
         let rust_file = directory.path().join("lib.rs");
+        let go_file = directory.path().join("main.go");
         let markdown_file = directory.path().join("README.md");
         std::fs::write(&rust_file, "pub fn candidate() {}\n").unwrap();
+        std::fs::write(&go_file, "package main\n").unwrap();
         std::fs::write(&markdown_file, "# Not code\n").unwrap();
-        assert!(is_rust_file(&rust_file));
-        assert!(!is_rust_file(&markdown_file));
-        assert!(!is_rust_file(Path::new("src/lib.rs.bak")));
+        assert!(is_supported_code_path(&rust_file));
+        assert!(is_supported_code_path(&go_file));
+        assert!(!is_supported_code_path(&markdown_file));
+        assert!(!is_supported_code_path(Path::new("src/lib.rs.bak")));
         assert!(is_hard_excluded(Path::new("target/debug/build.rs")));
         assert!(is_hard_excluded(Path::new("vendor/crate/lib.rs")));
         assert!(is_hard_excluded(Path::new(".git/hooks/pre-commit.rs")));
@@ -474,6 +492,7 @@ mod tests {
             .unwrap();
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].qualified_symbol, "example");
+        assert_eq!(results[0].language, "rust");
         assert_eq!(results[0].segment_index, 0);
     }
 

@@ -171,7 +171,7 @@ fn spawn_code_watcher(
                             | notify::EventKind::Create(_)
                             | notify::EventKind::Remove(_)
                     )
-                    && event.paths.iter().any(|path| is_watched_rust_path(path))
+                    && event.paths.iter().any(|path| is_watched_code_path(path))
                 {
                     let _ = tx.try_send(std::time::SystemTime::now());
                 }
@@ -234,10 +234,8 @@ fn spawn_code_watcher(
     });
 }
 
-fn is_watched_rust_path(path: &std::path::Path) -> bool {
-    path.extension()
-        .and_then(|extension| extension.to_str())
-        .is_some_and(|extension| extension.eq_ignore_ascii_case("rs"))
+fn is_watched_code_path(path: &std::path::Path) -> bool {
+    crate::code_indexer::is_supported_code_path(path)
         && !path.components().any(|component| {
             matches!(
                 component.as_os_str().to_str(),
@@ -478,7 +476,7 @@ impl McpServer {
                     },
                     {
                         "name": "rms_code_search",
-                        "description": "Search only the derived semantic code index. Results include file, symbol, kind, line range, and segment index. The code index is optional, so an unindexed project returns an empty result list.",
+                        "description": "Search only the derived semantic code index. Results include language, file, symbol, kind, line range, and segment index. The code index is optional, so an unindexed project returns an empty result list.",
                         "inputSchema": {
                             "type": "object",
                             "properties": {
@@ -541,16 +539,19 @@ impl McpServer {
 mod tests {
     #[test]
     fn code_watcher_filters_non_source_and_generated_paths() {
-        assert!(super::is_watched_rust_path(std::path::Path::new(
+        assert!(super::is_watched_code_path(std::path::Path::new(
             "src/lib.rs"
         )));
-        assert!(!super::is_watched_rust_path(std::path::Path::new(
+        assert!(super::is_watched_code_path(std::path::Path::new(
+            "src/main.go"
+        )));
+        assert!(!super::is_watched_code_path(std::path::Path::new(
             "README.md"
         )));
-        assert!(!super::is_watched_rust_path(std::path::Path::new(
+        assert!(!super::is_watched_code_path(std::path::Path::new(
             "target/debug/lib.rs"
         )));
-        assert!(!super::is_watched_rust_path(std::path::Path::new(
+        assert!(!super::is_watched_code_path(std::path::Path::new(
             ".git/hooks/check.rs"
         )));
     }

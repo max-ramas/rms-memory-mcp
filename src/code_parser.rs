@@ -1,6 +1,88 @@
 use anyhow::{Result, anyhow};
 use serde::{Deserialize, Serialize};
+use std::path::Path;
 use tree_sitter::{Node, Parser};
+
+/// A language supported by the semantic code index.  This is deliberately
+/// separate from file extensions: callers ask the registry to detect a
+/// language, then dispatch through the matching adapter.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Hash)]
+#[serde(rename_all = "snake_case")]
+pub enum LanguageId {
+    Rust,
+    Go,
+}
+
+impl LanguageId {
+    pub const ALL: [Self; 2] = [Self::Rust, Self::Go];
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Rust => "rust",
+            Self::Go => "go",
+        }
+    }
+
+    pub fn extractor_version(self) -> &'static str {
+        match self {
+            Self::Rust => "rust-tree-sitter-v1",
+            Self::Go => "go-tree-sitter-v1",
+        }
+    }
+}
+
+/// The language registry used by the indexer and source watcher.  It accepts a
+/// path that no longer exists too, which is necessary to react to delete and
+/// rename events.
+pub fn language_for_path(path: &Path) -> Option<LanguageId> {
+    match path.extension().and_then(|extension| extension.to_str()) {
+        Some(extension) if extension.eq_ignore_ascii_case("rs") => Some(LanguageId::Rust),
+        Some(extension) if extension.eq_ignore_ascii_case("go") => Some(LanguageId::Go),
+        _ => None,
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct ParsedCodeFile {
+    pub language: LanguageId,
+    pub items: Vec<ParsedCodeItem>,
+    pub relation_hints: Vec<CodeRelationHint>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CodeRelationHint {
+    pub source_item_key: String,
+    pub relation: String,
+    pub target_identifier: String,
+}
+
+/// Dispatches source parsing through the language registry.  Adapters return
+/// syntax-only relationship hints; storage, embeddings, locks, and MCP remain
+/// outside this boundary.
+pub fn parse_code_file(file_path: &str, source: &str) -> Result<ParsedCodeFile> {
+    let language = language_for_path(Path::new(file_path))
+        .ok_or_else(|| anyhow!("Unsupported semantic code language: {file_path}"))?;
+    let items = match language {
+        LanguageId::Rust => parse_rust_file(file_path, source)?,
+        LanguageId::Go => parse_go_file(file_path, source)?,
+    };
+    let relation_hints = match language {
+        LanguageId::Rust => extract_rust_relation_hints(file_path, source, &items)?
+            .into_iter()
+            .map(|hint| CodeRelationHint {
+                source_item_key: hint.source_item_key,
+                relation: hint.relation.as_str().to_string(),
+                target_identifier: hint.target_identifier,
+            })
+            .collect(),
+        LanguageId::Go => extract_go_relation_hints(file_path, source, &items)?,
+    };
+    Ok(ParsedCodeFile {
+        language,
+        items,
+        relation_hints,
+    })
+}
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
@@ -11,6 +93,10 @@ pub enum CodeKind {
     Trait,
     Impl,
     ModuleDoc,
+    Interface,
+    TypeAlias,
+    Constant,
+    Variable,
 }
 
 impl CodeKind {
@@ -393,6 +479,377 @@ fn walk_relation_nodes(
     }
 }
 
+/// Parses one Go source file into language-neutral semantic items.  The first
+/// Go adapter intentionally stays lexical: package names, declarations,
+/// receivers, imports, and calls are useful without pretending to perform
+/// compiler-accurate module or type resolution.
+pub fn parse_go_file(file_path: &str, source: &str) -> Result<Vec<ParsedCodeItem>> {
+    let mut parser = Parser::new();
+    parser
+        .set_language(&tree_sitter_go::LANGUAGE.into())
+        .map_err(|error| anyhow!("Failed to load Go grammar: {error}"))?;
+    let tree = parser
+        .parse(source, None)
+        .ok_or_else(|| anyhow!("Tree-sitter returned no Go syntax tree"))?;
+    if tree.root_node().has_error() {
+        return Err(anyhow!("Go source contains syntax errors: {file_path}"));
+    }
+
+    let root = tree.root_node();
+    let package = go_package_name(root, source);
+    let mut items = Vec::new();
+    let mut cursor = root.walk();
+    let mut pending_preamble = Vec::new();
+    for child in root.named_children(&mut cursor) {
+        match child.kind() {
+            "comment" => pending_preamble.push(child),
+            "package_clause" => {
+                if !pending_preamble.is_empty() {
+                    items.push(build_go_package_doc(
+                        &pending_preamble,
+                        file_path,
+                        source,
+                        &package,
+                    ));
+                }
+                pending_preamble.clear();
+            }
+            "function_declaration" | "method_declaration" => {
+                items.push(build_go_item(
+                    child,
+                    &pending_preamble,
+                    file_path,
+                    source,
+                    &package,
+                    CodeKind::Function,
+                ));
+                pending_preamble.clear();
+            }
+            "type_declaration" => {
+                let mut declaration_cursor = child.walk();
+                for spec in child.named_children(&mut declaration_cursor) {
+                    if spec.kind() == "type_spec" {
+                        items.push(build_go_item(
+                            spec,
+                            &pending_preamble,
+                            file_path,
+                            source,
+                            &package,
+                            go_type_kind(spec),
+                        ));
+                        pending_preamble.clear();
+                    }
+                }
+            }
+            "const_declaration" => {
+                collect_go_value_specs(
+                    child,
+                    "const_spec",
+                    CodeKind::Constant,
+                    &pending_preamble,
+                    file_path,
+                    source,
+                    &package,
+                    &mut items,
+                );
+                pending_preamble.clear();
+            }
+            "var_declaration" => {
+                collect_go_value_specs(
+                    child,
+                    "var_spec",
+                    CodeKind::Variable,
+                    &pending_preamble,
+                    file_path,
+                    source,
+                    &package,
+                    &mut items,
+                );
+                pending_preamble.clear();
+            }
+            _ => pending_preamble.clear(),
+        }
+    }
+    Ok(items)
+}
+
+fn go_package_name(root: Node<'_>, source: &str) -> String {
+    let mut cursor = root.walk();
+    root.named_children(&mut cursor)
+        .find(|node| node.kind() == "package_clause")
+        .and_then(|node| {
+            node.child_by_field_name("name").or_else(|| {
+                let mut cursor = node.walk();
+                node.named_children(&mut cursor).next()
+            })
+        })
+        .map(|node| node_text(node, source).to_string())
+        .unwrap_or_default()
+}
+
+fn go_type_kind(spec: Node<'_>) -> CodeKind {
+    match spec.child_by_field_name("type").map(|node| node.kind()) {
+        Some("struct_type") => CodeKind::Struct,
+        Some("interface_type") => CodeKind::Interface,
+        _ => CodeKind::TypeAlias,
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn collect_go_value_specs(
+    declaration: Node<'_>,
+    spec_kind: &str,
+    kind: CodeKind,
+    preamble_nodes: &[Node<'_>],
+    file_path: &str,
+    source: &str,
+    package: &str,
+    items: &mut Vec<ParsedCodeItem>,
+) {
+    let mut cursor = declaration.walk();
+    for spec in declaration.named_children(&mut cursor) {
+        if spec.kind() == spec_kind {
+            items.push(build_go_item(
+                spec,
+                preamble_nodes,
+                file_path,
+                source,
+                package,
+                kind,
+            ));
+        }
+    }
+}
+
+fn build_go_item(
+    node: Node<'_>,
+    preamble_nodes: &[Node<'_>],
+    file_path: &str,
+    source: &str,
+    package: &str,
+    kind: CodeKind,
+) -> ParsedCodeItem {
+    let body = go_item_body(node, source);
+    let signature = if node.child_by_field_name("body").is_some() {
+        item_signature(node, source)
+    } else {
+        body.clone()
+    };
+    let preamble = join_nodes(preamble_nodes, source);
+    let content = if preamble.is_empty() {
+        body.clone()
+    } else {
+        format!("{preamble}\n{body}")
+    };
+    let name = node
+        .child_by_field_name("name")
+        .map(|name| node_text(name, source).to_string())
+        .or_else(|| first_go_identifier(node, source))
+        .unwrap_or_default();
+    let receiver = if node.kind() == "method_declaration" {
+        node.child_by_field_name("receiver")
+            .map(|receiver| normalize_go_receiver(node_text(receiver, source)))
+            .unwrap_or_default()
+    } else {
+        String::new()
+    };
+    let identity = if receiver.is_empty() {
+        name.clone()
+    } else {
+        format!("{receiver}.{name}")
+    };
+    let qualified_symbol = qualify(package, &identity);
+    let item_key = blake3::hash(
+        format!(
+            "go\0{file_path}\0{package}\0{}\0{identity}",
+            kind_name(kind)
+        )
+        .as_bytes(),
+    )
+    .to_string();
+    let start = preamble_nodes.first().copied().unwrap_or(node);
+    ParsedCodeItem {
+        item_key,
+        file_path: file_path.to_string(),
+        module_path: package.to_string(),
+        symbol_name: name,
+        qualified_symbol,
+        kind,
+        start_line: start.start_position().row as u32 + 1,
+        end_line: inclusive_end_line(node),
+        preamble,
+        signature,
+        body,
+        item_hash: blake3::hash(content.as_bytes()).to_string(),
+        content,
+        source_start_byte: start.start_byte(),
+        source_end_byte: node.end_byte(),
+    }
+}
+
+fn go_item_body(node: Node<'_>, source: &str) -> String {
+    let prefix = match node.kind() {
+        "type_spec" => "type ",
+        "const_spec" => "const ",
+        "var_spec" => "var ",
+        _ => "",
+    };
+    format!("{prefix}{}", node_text(node, source))
+}
+
+fn build_go_package_doc(
+    nodes: &[Node<'_>],
+    file_path: &str,
+    source: &str,
+    package: &str,
+) -> ParsedCodeItem {
+    let content = join_nodes(nodes, source);
+    let qualified_symbol = qualify(package, "<package_doc>");
+    ParsedCodeItem {
+        item_key: blake3::hash(
+            format!("go\0{file_path}\0{package}\0module_doc\0{qualified_symbol}").as_bytes(),
+        )
+        .to_string(),
+        file_path: file_path.to_string(),
+        module_path: package.to_string(),
+        symbol_name: String::new(),
+        qualified_symbol,
+        kind: CodeKind::ModuleDoc,
+        start_line: nodes
+            .first()
+            .expect("package docs are non-empty")
+            .start_position()
+            .row as u32
+            + 1,
+        end_line: inclusive_end_line(*nodes.last().expect("package docs are non-empty")),
+        preamble: String::new(),
+        signature: String::new(),
+        body: content.clone(),
+        item_hash: blake3::hash(content.as_bytes()).to_string(),
+        content,
+        source_start_byte: nodes
+            .first()
+            .expect("package docs are non-empty")
+            .start_byte(),
+        source_end_byte: nodes.last().expect("package docs are non-empty").end_byte(),
+    }
+}
+
+fn first_go_identifier(node: Node<'_>, source: &str) -> Option<String> {
+    let mut cursor = node.walk();
+    node.named_children(&mut cursor)
+        .find(|child| child.kind() == "identifier")
+        .map(|child| node_text(child, source).to_string())
+}
+
+fn normalize_go_receiver(receiver: &str) -> String {
+    receiver
+        .trim_matches(|character: char| {
+            character.is_whitespace() || character == '(' || character == ')'
+        })
+        .split_whitespace()
+        .last()
+        .unwrap_or_default()
+        .trim_start_matches('*')
+        .to_string()
+}
+
+pub fn extract_go_relation_hints(
+    file_path: &str,
+    source: &str,
+    items: &[ParsedCodeItem],
+) -> Result<Vec<CodeRelationHint>> {
+    let mut parser = Parser::new();
+    parser
+        .set_language(&tree_sitter_go::LANGUAGE.into())
+        .map_err(|error| anyhow!("Failed to load Go grammar: {error}"))?;
+    let tree = parser
+        .parse(source, None)
+        .ok_or_else(|| anyhow!("Tree-sitter returned no Go syntax tree"))?;
+    if tree.root_node().has_error() {
+        return Err(anyhow!("Go source contains syntax errors: {file_path}"));
+    }
+    let package = go_package_name(tree.root_node(), source);
+    let mut hints = Vec::new();
+    walk_go_relation_nodes(
+        tree.root_node(),
+        file_path,
+        source,
+        items,
+        &package,
+        &mut hints,
+    );
+    hints.sort_by(|left, right| {
+        (
+            &left.source_item_key,
+            &left.relation,
+            &left.target_identifier,
+        )
+            .cmp(&(
+                &right.source_item_key,
+                &right.relation,
+                &right.target_identifier,
+            ))
+    });
+    hints.dedup();
+    Ok(hints)
+}
+
+fn go_package_item_key(file_path: &str, package: &str) -> String {
+    blake3::hash(format!("go\0{file_path}\0{package}\0package").as_bytes()).to_string()
+}
+
+fn walk_go_relation_nodes(
+    node: Node<'_>,
+    file_path: &str,
+    source: &str,
+    items: &[ParsedCodeItem],
+    package: &str,
+    hints: &mut Vec<CodeRelationHint>,
+) {
+    let owner = || {
+        items
+            .iter()
+            .filter(|item| {
+                item.source_start_byte <= node.start_byte()
+                    && node.end_byte() <= item.source_end_byte
+            })
+            .min_by_key(|item| item.source_end_byte - item.source_start_byte)
+            .map(|item| item.item_key.clone())
+            .unwrap_or_else(|| go_package_item_key(file_path, package))
+    };
+    match node.kind() {
+        "import_spec" => {
+            let target = node_text(node, source)
+                .split_whitespace()
+                .last()
+                .unwrap_or_default()
+                .trim_matches('"');
+            if !target.is_empty() {
+                hints.push(CodeRelationHint {
+                    source_item_key: owner(),
+                    relation: "uses".to_string(),
+                    target_identifier: format!("go-import:{target}"),
+                });
+            }
+        }
+        "call_expression" => {
+            if let Some(function) = node.child_by_field_name("function") {
+                hints.push(CodeRelationHint {
+                    source_item_key: owner(),
+                    relation: "calls_symbol".to_string(),
+                    target_identifier: format!("go-symbol:{}", node_text(function, source).trim()),
+                });
+            }
+        }
+        _ => {}
+    }
+    let mut cursor = node.walk();
+    for child in node.named_children(&mut cursor) {
+        walk_go_relation_nodes(child, file_path, source, items, package, hints);
+    }
+}
+
 /// Splits an oversized semantic item while retaining its documentation,
 /// attributes, and declaration signature in every resulting segment.
 pub fn split_with_preamble(item: &ParsedCodeItem) -> Vec<CodeSegment> {
@@ -581,6 +1038,10 @@ fn kind_name(kind: CodeKind) -> &'static str {
         CodeKind::Trait => "trait",
         CodeKind::Impl => "impl",
         CodeKind::ModuleDoc => "module_doc",
+        CodeKind::Interface => "interface",
+        CodeKind::TypeAlias => "type_alias",
+        CodeKind::Constant => "constant",
+        CodeKind::Variable => "variable",
     }
 }
 
@@ -608,6 +1069,15 @@ mod tests {
         std::fs::read_to_string(
             std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
                 .join("tests/fixtures/rust")
+                .join(name),
+        )
+        .unwrap()
+    }
+
+    fn go_fixture(name: &str) -> String {
+        std::fs::read_to_string(
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("tests/fixtures/go")
                 .join(name),
         )
         .unwrap()
@@ -822,6 +1292,80 @@ fn helper() { let _ = Thing::default(); }
             hint.relation == RustRelationKind::CallsSymbol
                 && hint.target_identifier == "rust-symbol:Thing::default"
         }));
+    }
+
+    #[test]
+    fn go_adapter_extracts_docs_receivers_and_type_shapes() {
+        let source = go_fixture("service.go");
+        let parsed = parse_code_file("internal/billing/service.go", &source).unwrap();
+        assert_eq!(parsed.language, LanguageId::Go);
+        assert_eq!(parsed.items.len(), 5);
+        let package_doc = parsed
+            .items
+            .iter()
+            .find(|item| item.kind == CodeKind::ModuleDoc)
+            .unwrap();
+        assert_eq!(package_doc.qualified_symbol, "billing::<package_doc>");
+        assert!(
+            package_doc
+                .content
+                .contains("Package billing owns payment operations")
+        );
+        let service = parsed
+            .items
+            .iter()
+            .find(|item| item.symbol_name == "Service")
+            .unwrap();
+        assert_eq!(service.kind, CodeKind::Struct);
+        assert_eq!(service.module_path, "billing");
+        assert!(service.body.starts_with("type Service struct"));
+        assert!(service.preamble.contains("Service dispatches payments"));
+        let gateway = parsed
+            .items
+            .iter()
+            .find(|item| item.symbol_name == "Gateway")
+            .unwrap();
+        assert_eq!(gateway.kind, CodeKind::Interface);
+        let charge = parsed
+            .items
+            .iter()
+            .find(|item| item.symbol_name == "Charge")
+            .unwrap();
+        assert_eq!(charge.qualified_symbol, "billing::Service.Charge");
+        assert_eq!(charge.kind, CodeKind::Function);
+        assert!(
+            parsed
+                .relation_hints
+                .iter()
+                .any(|hint| hint.target_identifier == "go-import:context")
+        );
+        assert!(
+            parsed
+                .relation_hints
+                .iter()
+                .any(|hint| hint.target_identifier == "go-symbol:s.client.Charge")
+        );
+    }
+
+    #[test]
+    fn go_item_identity_survives_unrelated_line_edits() {
+        let source = go_fixture("service.go");
+        let original = parse_go_file("internal/billing/service.go", &source).unwrap();
+        let shifted = parse_go_file(
+            "internal/billing/service.go",
+            &format!("// unrelated header\n{source}"),
+        )
+        .unwrap();
+        let original_charge = original
+            .iter()
+            .find(|item| item.qualified_symbol == "billing::Service.Charge")
+            .unwrap();
+        let shifted_charge = shifted
+            .iter()
+            .find(|item| item.qualified_symbol == "billing::Service.Charge")
+            .unwrap();
+        assert_eq!(original_charge.item_key, shifted_charge.item_key);
+        assert_eq!(original_charge.start_line + 1, shifted_charge.start_line);
     }
 
     #[test]

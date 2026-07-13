@@ -17,6 +17,8 @@ The complete knowledge lifecycle is:
 Architecture and decisions (Vault) → Current implementation (Code) → Results and evidence (Artifacts)
 ```
 
+The approved multilingual extension is specified in `docs/multilanguage-code-memory-plan.md`. It preserves this contract while moving Rust behind a language-adapter boundary and adding Go, TypeScript/TSX, JavaScript/JSX, Python, C, C++, Java, Ruby, Swift, and a two-stage Vue SFC pipeline.
+
 ## Implementation status (2026-07-13)
 
 - Slice 0 is implemented: fail-closed frontmatter parsing, read-only background sync, cross-process writer lock, watcher retry, repair tooling, and PID-aware lock diagnostics.
@@ -225,7 +227,7 @@ Current `_distance` values use lower-is-better semantics, but `corpus=all` never
 
 ## Explicit non-goals for v1
 
-- Go, TypeScript, and JavaScript parsers.
+- Adding a grammar without production fixtures, stable identity, incremental reuse, watcher coverage, and real-project dogfood. Multilingual support is now planned, but unqualified adapters remain experimental.
 - Compiler-accurate Rust name resolution or a complete call graph.
 - Method-level impl chunking.
 - Editing source files through MCP.

@@ -44,6 +44,8 @@ pub struct UnifiedSearchResult {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub kind: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub language: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub start_line: Option<u32>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub end_line: Option<u32>,
@@ -63,6 +65,7 @@ impl UnifiedSearchResult {
             rrf_score: None,
             qualified_symbol: None,
             kind: None,
+            language: None,
             start_line: None,
             end_line: None,
             segment_index: None,
@@ -80,6 +83,7 @@ impl UnifiedSearchResult {
             rrf_score: None,
             qualified_symbol: Some(result.qualified_symbol),
             kind: Some(result.kind),
+            language: Some(result.language),
             start_line: Some(result.start_line),
             end_line: Some(result.end_line),
             segment_index: Some(result.segment_index),
@@ -265,6 +269,7 @@ mod tests {
             rrf_score: None,
             qualified_symbol: None,
             kind: None,
+            language: None,
             start_line: None,
             end_line: None,
             segment_index: None,

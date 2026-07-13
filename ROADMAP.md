@@ -54,11 +54,11 @@ This document outlines the strategic direction and upcoming milestones for RMS M
 - [x] Codex IDE: auto-install into `~/.codex/mcp.json`.
 - [x] Runtime verified: load avg 648 → 8.31 (-98.7%), CPU 380% → 0%, 3 IDE processes.
 - [x] PID-aware per-project writer lock, fail-closed frontmatter parsing, and read-only background sync.
-- [x] Rust tree-sitter semantic chunks with preamble-preserving segmentation, stable IDs, and vector reuse for unchanged segments.
+- [x] Rust and Go tree-sitter semantic chunks with preamble-preserving segmentation, stable IDs, vector reuse for unchanged segments, and language-aware search metadata.
 - [x] Explicit `reindex --vault|--code|--all`; code indexing remains opt-in through `code_index_mode = off|manual|watch` (default `off`).
 - [x] Derived graph nodes/edges plus durable manual edges and suppress/restore overrides, separated from retrieval chunks.
 - [x] Federated `rms_search(corpus=vault|code|all)` and `rms_code_search`; mixed results use Reciprocal Rank Fusion.
-- [x] Opt-in Rust watcher: three-second coalescing and shared completion markers prevent duplicate reindexing across IDE processes.
+- [x] Opt-in Rust/Go watcher: three-second coalescing and shared completion markers prevent duplicate reindexing across IDE processes.
 - [x] Live MCP JSON-RPC probe: `rms_search(corpus=vault|code|all)` and `rms_code_search` returned expected corpus provenance and RRF output.
 - [x] Five-server watch soak: rapid Rust saves advanced one shared completion marker; all test servers returned to 0.0% idle CPU.
 - [x] Legacy memory integrity repair: explicit doctor repair assigned UUIDs to 14 valid ID-less records with backups.
@@ -77,6 +77,18 @@ This document outlines the strategic direction and upcoming milestones for RMS M
 This enables downstream consumers to use just `rms-memory-index` without the MCP layer.
 
 The already implemented graph, revisioned configuration manager, and transport-neutral jobs/events layer form the core contract for a future GUI. The GUI will use its own human-oriented API rather than MCP, which remains the IDE/agent protocol.
+
+## Multilanguage Code Memory — 1.0.5 extension in progress
+
+- [x] Initial language-neutral registry/dispatcher for Rust and Go, preserving Rust item IDs and extractor identity.
+- [x] Go adapter: package docs, declarations, receiver-aware method identities, syntax-level import/call hints, code-table persistence, and watcher detection.
+- [ ] Dogfood Go indexing on the user's largest available repository and record resource measurements.
+- [ ] TypeScript/TSX, JavaScript/JSX, Python, and C production adapters.
+- [ ] C++, Java, Ruby, and active Swift grammar qualification plus production adapters.
+- [ ] Vue 3 SFC shell parsing with explicit nested JS/TS parsing and original-source mapping.
+- [ ] Mixed-language watcher, migration, packaging, and resource release gate.
+
+The production contract and delivery slices are defined in `docs/multilanguage-code-memory-plan.md`.
 
 ## v2.0 — Multi-Vault & Advanced Context (Future)
 

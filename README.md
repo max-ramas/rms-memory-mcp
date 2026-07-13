@@ -34,7 +34,7 @@ You're developing a single project but switching between different agents — Cu
 | 🔍 **Hybrid Retrieval (LanceDB)** | Embedded Vector Search + Tantivy Full-Text Search for zero-fail context hits. |
 | 🌐 **Multilingual Semantic Parsing** | `fastembed-rs` + `multilingual-e5-small` — native Russian & English understanding. |
 | 🌳 **AST Markdown Chunker** | `pulldown-cmark`-based chunking keeps code blocks and lists bound to their parent heading. |
-| 🧩 **Semantic Code Memory** | Optional Rust indexing uses tree-sitter items, stable segment identities, and repeated preambles so large implementations remain intelligible when split. |
+| 🧩 **Semantic Code Memory** | Optional Rust and Go indexing uses tree-sitter items, stable segment identities, and repeated preambles so large implementations remain intelligible when split. |
 | 🕸️ **Knowledge Graph Foundation** | Derived Markdown/code relationships and durable user overrides are stored separately from retrieval chunks, ready for a future visual editor. |
 | 🔀 **Federated Corpus Search** | Search `vault`, `code`, or `all`; mixed results use Reciprocal Rank Fusion rather than incompatible raw vector distances. |
 | ⚙️ **Dynamic Auto-Installer** | `rms-memory install` scans your system and wires itself into every supported IDE. |
@@ -131,14 +131,14 @@ The next time you open a project in a connected IDE, the server reads the `rootU
 
 ### Optional semantic code memory
 
-Markdown memory remains the default corpus. Rust source indexing is separate and never changes source files:
+Markdown memory remains the default corpus. Rust and Go source indexing are separate and never change source files:
 
 ```bash
 rms-memory reindex --code  # build/update only derived code memory
 rms-memory reindex --all   # refresh Markdown vault + code memory
 ```
 
-Registered projects support `code_index_mode = "off" | "manual" | "watch"`; the default is `off`. Set it from the project root with `rms-memory config --code-index-mode watch` (or add `--scope <project-path>`). `watch` is explicitly opt-in, coalesces Rust saves for three seconds, and coordinates concurrent IDE processes so an unchanged workspace stays idle.
+Registered projects support `code_index_mode = "off" | "manual" | "watch"`; the default is `off`. Set it from the project root with `rms-memory config --code-index-mode watch` (or add `--scope <project-path>`). `watch` is explicitly opt-in, coalesces Rust and Go saves for three seconds, and coordinates concurrent IDE processes so an unchanged workspace stays idle. Code search results include their source language.
 
 ## 🛠 CLI Commands
 
