@@ -135,7 +135,7 @@ The next time you open a project in a connected IDE, the server reads the `rootU
 | `rms-memory import` | Scans for existing docs (`README.md`, `docs/`, `ADR/`) and imports them — interactively or via `--auto-import`. |
 | `rms-memory install` | Hooks the server into supported IDEs. `--dry-run` supported. |
 | `rms-memory uninstall` | Removes the server from all discovered IDE configurations. |
-| `rms-memory doctor` | Runs 5-point vault health diagnostics (structure, IDs, links, store, registry). |
+| `rms-memory doctor` | Runs 5-point vault health diagnostics. `--repair-frontmatter` safely repairs duplicate IDs with backups; `--repair-path` targets one registered-vault file. |
 | `rms-memory config` | Interactive setup wizard for global settings (`vault-path`, `auto-add`, `inject-rules`, etc). |
 | `rms-memory reindex` | Forces a full re-index of the current project vault. |
 | `rms-memory sync` | Incremental LanceDB delete-then-insert sync (also runs automatically during `serve`). |

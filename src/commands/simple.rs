@@ -55,10 +55,58 @@ impl ReindexArgs {
 }
 
 #[derive(Args, Debug)]
-pub struct DoctorArgs;
+pub struct DoctorArgs {
+    /// Repair duplicate top-level `id:` keys after creating a backup
+    #[arg(long)]
+    pub repair_frontmatter: bool,
+    /// Repair one explicit file inside a registered project or global vault
+    #[arg(long, requires = "repair_frontmatter")]
+    pub repair_path: Option<std::path::PathBuf>,
+}
 
 impl DoctorArgs {
     pub async fn run(&self, scope: Option<String>) -> Result<()> {
+        if let Some(requested_path) = &self.repair_path {
+            let path = std::fs::canonicalize(requested_path)?;
+            if !path.is_file()
+                || !path
+                    .extension()
+                    .and_then(|ext| ext.to_str())
+                    .is_some_and(|ext| ext.eq_ignore_ascii_case("md"))
+            {
+                return Err(anyhow::anyhow!(
+                    "Repair path must be an existing Markdown file"
+                ));
+            }
+
+            let registry = crate::workspace::Registry::load()?;
+            let mut vault_roots = registry
+                .projects
+                .values()
+                .map(|project| &project.vault_path)
+                .collect::<Vec<_>>();
+            if let Some(global) = &registry.global.global_vault_path {
+                vault_roots.push(global);
+            }
+            let is_in_registered_vault = vault_roots.iter().any(|root| {
+                std::fs::canonicalize(root)
+                    .map(|canonical_root| path.starts_with(canonical_root))
+                    .unwrap_or(false)
+            });
+            if !is_in_registered_vault {
+                return Err(anyhow::anyhow!(
+                    "Repair path is outside every registered RMS Memory vault"
+                ));
+            }
+
+            if crate::document::Document::repair_duplicate_ids(&path)? {
+                println!("Repaired duplicate IDs: {}", path.display());
+            } else {
+                println!("No duplicate IDs found: {}", path.display());
+            }
+            return Ok(());
+        }
+
         let current_dir = std::env::current_dir()?;
         let workspace = Workspace::discover_with_scope(scope.as_deref(), &current_dir, None)?;
         println!("Doctor checks for {:?}", workspace.root);
@@ -90,15 +138,40 @@ impl DoctorArgs {
         println!("\n[2/5] Document IDs...");
         let files = workspace.find_markdown_files().unwrap_or_default();
         let mut missing_ids = Vec::new();
+        let mut invalid_frontmatter = Vec::new();
         for f in &files {
-            if let Ok(doc) = crate::document::Document::parse(f)
-                && doc
-                    .frontmatter
-                    .as_ref()
-                    .and_then(|fm| fm.id.as_ref())
-                    .is_none()
-            {
-                missing_ids.push(f.to_string_lossy().to_string());
+            match crate::document::Document::parse(f) {
+                Ok(doc) => {
+                    if doc
+                        .frontmatter
+                        .as_ref()
+                        .and_then(|fm| fm.id.as_ref())
+                        .is_none()
+                    {
+                        missing_ids.push(f.to_string_lossy().to_string());
+                    }
+                }
+                Err(error) => {
+                    if self.repair_frontmatter {
+                        match crate::document::Document::repair_duplicate_ids(f) {
+                            Ok(true) => {
+                                println!("  🔧 Repaired duplicate IDs: {}", f.display());
+                                continue;
+                            }
+                            Ok(false) => {}
+                            Err(repair_error) => {
+                                invalid_frontmatter.push(format!(
+                                    "{}: {:#} (repair failed: {:#})",
+                                    f.display(),
+                                    error,
+                                    repair_error
+                                ));
+                                continue;
+                            }
+                        }
+                    }
+                    invalid_frontmatter.push(format!("{}: {:#}", f.display(), error));
+                }
             }
         }
         if missing_ids.is_empty() {
@@ -112,6 +185,17 @@ impl DoctorArgs {
                 println!("     - {}", path);
             }
             issues += missing_ids.len() as u32;
+        }
+        if !invalid_frontmatter.is_empty() {
+            println!(
+                "  ❌ {} files have invalid YAML frontmatter:",
+                invalid_frontmatter.len()
+            );
+            for error in &invalid_frontmatter {
+                println!("     - {}", error);
+            }
+            println!("     Run `rms-memory doctor --repair-frontmatter` for duplicate id keys.");
+            issues += invalid_frontmatter.len() as u32;
         }
 
         // 3. Check for broken Markdown links

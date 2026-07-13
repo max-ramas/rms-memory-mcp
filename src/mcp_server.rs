@@ -48,8 +48,12 @@ fn spawn_sync_watcher(
         // Initial sync
         {
             let mut idx = indexer.lock().await;
-            if let Err(e) = crate::indexer::sync_vault(&workspace, &store, &mut idx).await {
-                tracing::error!("Initial sync failed: {:#}", e);
+            match crate::indexer::try_sync_vault(&workspace, &store, &mut idx).await {
+                Ok(crate::indexer::SyncStatus::Completed) => {}
+                Ok(crate::indexer::SyncStatus::Busy) => {
+                    tracing::info!("Initial sync skipped: another process is indexing this vault.");
+                }
+                Err(e) => tracing::error!("Initial sync failed: {:#}", e),
             }
         }
 
@@ -68,7 +72,12 @@ fn spawn_sync_watcher(
                     let mut should_trigger = false;
                     for path in &event.paths {
                         let p = path.to_string_lossy();
-                        if !p.contains(".lancedb")
+                        let is_markdown = path
+                            .extension()
+                            .and_then(|ext| ext.to_str())
+                            .is_some_and(|ext| ext.eq_ignore_ascii_case("md"));
+                        if is_markdown
+                            && !p.contains(".lancedb")
                             && !p.contains(".bak")
                             && !p.ends_with("store.json")
                             && !p.ends_with(".log")
@@ -125,10 +134,17 @@ fn spawn_sync_watcher(
                 _ = &mut debounce_timer, if pending_sync => {
                     pending_sync = false;
                     let mut idx = indexer.lock().await;
-                    if let Err(e) =
-                        crate::indexer::sync_vault(&workspace, &store, &mut idx).await
-                    {
-                        tracing::error!("Background sync failed: {:#}", e);
+                    match crate::indexer::try_sync_vault(&workspace, &store, &mut idx).await {
+                        Ok(crate::indexer::SyncStatus::Completed) => {}
+                        Ok(crate::indexer::SyncStatus::Busy) => {
+                            pending_sync = true;
+                            debounce_timer.as_mut().reset(
+                                tokio::time::Instant::now()
+                                    + tokio::time::Duration::from_secs(3),
+                            );
+                            tracing::debug!("Background sync deferred: index lock is busy.");
+                        }
+                        Err(e) => tracing::error!("Background sync failed: {:#}", e),
                     }
                 }
             }

@@ -2,6 +2,14 @@
 
 All notable changes to this project will be documented in this file.
 
+## [Unreleased]
+
+### Fixed
+- **Self-sustaining CPU storm:** malformed YAML frontmatter is now reported as an error instead of being treated as missing metadata. Background indexing no longer calls `ensure_id()` or writes to Markdown files.
+- **Cross-IDE indexing amplification:** vault sync and full reindex use a per-project filesystem lock. Watcher sync retries after lock contention while manual commands wait asynchronously.
+- **Frontmatter recovery:** `rms-memory doctor --repair-frontmatter` removes duplicate top-level `id:` keys after creating a timestamped backup. `--repair-path` can target one file inside a registered vault. Other YAML errors are never rewritten automatically.
+- **Watcher noise:** automatic sync now reacts only to Markdown files and continues to ignore backups.
+
 ## [1.0.5] - 2026-07-13
 
 ### Performance

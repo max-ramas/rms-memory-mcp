@@ -1,6 +1,8 @@
 use anyhow::{Context, Result};
 use fastembed::{EmbeddingModel, InitOptions, TextEmbedding};
+use fs2::FileExt;
 use pulldown_cmark::{Event, Options, Parser, Tag};
+use std::fs::OpenOptions;
 use std::path::Path;
 
 pub struct Indexer {
@@ -11,6 +13,37 @@ pub struct Indexer {
 pub struct Chunk {
     pub heading: String,
     pub text: String,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SyncStatus {
+    Completed,
+    Busy,
+}
+
+fn try_index_lock(store: &crate::store::Store) -> Result<Option<std::fs::File>> {
+    std::fs::create_dir_all(&store.storage_path)?;
+    let lock_path = Path::new(&store.storage_path).join(".index.lock");
+    let file = OpenOptions::new()
+        .create(true)
+        .truncate(false)
+        .read(true)
+        .write(true)
+        .open(lock_path)?;
+    match file.try_lock_exclusive() {
+        Ok(()) => Ok(Some(file)),
+        Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => Ok(None),
+        Err(error) => Err(error.into()),
+    }
+}
+
+async fn acquire_index_lock(store: &crate::store::Store) -> Result<std::fs::File> {
+    loop {
+        if let Some(file) = try_index_lock(store)? {
+            return Ok(file);
+        }
+        tokio::time::sleep(tokio::time::Duration::from_millis(200)).await;
+    }
 }
 
 impl Indexer {
@@ -193,12 +226,33 @@ pub async fn sync_vault(
     store: &crate::store::Store,
     indexer: &mut Indexer,
 ) -> Result<()> {
+    let _lock = acquire_index_lock(store).await?;
+    sync_vault_inner(workspace, store, indexer).await
+}
+
+pub async fn try_sync_vault(
+    workspace: &crate::workspace::Workspace,
+    store: &crate::store::Store,
+    indexer: &mut Indexer,
+) -> Result<SyncStatus> {
+    let Some(_lock) = try_index_lock(store)? else {
+        return Ok(SyncStatus::Busy);
+    };
+    sync_vault_inner(workspace, store, indexer).await?;
+    Ok(SyncStatus::Completed)
+}
+
+async fn sync_vault_inner(
+    workspace: &crate::workspace::Workspace,
+    store: &crate::store::Store,
+    indexer: &mut Indexer,
+) -> Result<()> {
     // Try to open existing table
     let table = match store.open_table().await {
         Ok(t) => t,
         Err(_) => {
             // Fallback to full index
-            return index_vault_full(workspace, store, indexer).await;
+            return index_vault_full_inner(workspace, store, indexer).await;
         }
     };
 
@@ -254,12 +308,16 @@ pub async fn sync_vault(
 
         let mut doc = match crate::document::Document::parse(&file_path) {
             Ok(d) => d,
-            Err(_) => continue,
+            Err(error) => {
+                tracing::error!(
+                    "Skipping invalid document {}: {:#}",
+                    file_path.display(),
+                    error
+                );
+                continue;
+            }
         };
-        let doc_id = match doc.ensure_id() {
-            Ok(id) => id,
-            Err(_) => continue,
-        };
+        let doc_id = doc.index_id(Path::new(&rel_path));
 
         // If it's a linked document, swap the content with the source file content
         if let Some(linked_content) = crate::link::get_linked_content(&file_path) {
@@ -394,6 +452,15 @@ pub async fn index_vault_full(
     store: &crate::store::Store,
     indexer: &mut Indexer,
 ) -> Result<()> {
+    let _lock = acquire_index_lock(store).await?;
+    index_vault_full_inner(workspace, store, indexer).await
+}
+
+async fn index_vault_full_inner(
+    workspace: &crate::workspace::Workspace,
+    store: &crate::store::Store,
+    indexer: &mut Indexer,
+) -> Result<()> {
     let _ = store.db.drop_table(&store.table_name, &[]).await;
     let table = store.create_table().await?;
     store.create_fts_index(&table).await?;
@@ -410,11 +477,14 @@ pub async fn index_vault_full(
 
         let mut doc = match crate::document::Document::parse(&file_path) {
             Ok(d) => d,
-            Err(_) => continue,
-        };
-        let doc_id = match doc.ensure_id() {
-            Ok(id) => id,
-            Err(_) => continue,
+            Err(error) => {
+                tracing::error!(
+                    "Skipping invalid document {}: {:#}",
+                    file_path.display(),
+                    error
+                );
+                continue;
+            }
         };
 
         // If it's a linked document, swap the content with the source file content
@@ -429,6 +499,7 @@ pub async fn index_vault_full(
         let rel_path = file_path
             .strip_prefix(&workspace.root)
             .unwrap_or(&file_path);
+        let doc_id = doc.index_id(rel_path);
         let title = rel_path
             .file_stem()
             .unwrap_or_default()
@@ -529,5 +600,24 @@ pub fn normalize_link(workspace_root: &Path, current_file: &Path, link: &str) ->
         rel.to_string_lossy().to_string()
     } else {
         current_dir.to_string_lossy().to_string()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn index_lock_allows_only_one_writer() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = crate::store::Store::init(&dir.path().to_string_lossy(), "memory")
+            .await
+            .unwrap();
+
+        let first = try_index_lock(&store).unwrap().unwrap();
+        assert!(try_index_lock(&store).unwrap().is_none());
+
+        drop(first);
+        assert!(try_index_lock(&store).unwrap().is_some());
     }
 }
