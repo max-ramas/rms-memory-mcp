@@ -377,6 +377,82 @@ impl DoctorArgs {
                 issues
             );
         }
+
+        // ─── Stamp Project ───
+        if self.stamp_project {
+            let project_key = self
+                .project
+                .clone()
+                .or_else(|| workspace.project_key());
+
+            if let Some(key) = &project_key {
+                println!(
+                    "\n[🔖] Stamp-project mode: project = '{key}'{}",
+                    if self.apply { " (applying)" } else { " (dry-run)" }
+                );
+
+                let files = workspace.find_markdown_files().unwrap_or_default();
+                let mut stamped = 0;
+                let mut skipped = 0;
+
+                for f in &files {
+                    if let Some(file) = &self.file {
+                        let target = std::path::Path::new(file);
+                        if f.file_name() != target.file_name() {
+                            continue;
+                        }
+                    }
+
+                    match std::fs::read_to_string(f) {
+                        Ok(content) => {
+                            if content.contains(&format!("project: {}", key)) {
+                                skipped += 1;
+                                continue;
+                            }
+                            if self.apply {
+                                let new_content = if content.starts_with("---\n") {
+                                    content.replacen(
+                                        "---\n",
+                                        &format!("---\nproject: {}\n", key),
+                                        1,
+                                    )
+                                } else {
+                                    format!("---\nproject: {key}\n---\n\n{content}", key = key)
+                                };
+                                let bak = format!("{}.stamp-project.bak", f.to_string_lossy());
+                                let _ = std::fs::copy(f, &bak);
+                                if let Err(e) = std::fs::write(f, &new_content) {
+                                    eprintln!("  ❌ Failed to stamp {}: {}", f.display(), e);
+                                } else {
+                                    stamped += 1;
+                                    println!("  ✅ Stamped: {}", f.display());
+                                }
+                            } else {
+                                stamped += 1;
+                                println!("  [DRY-RUN] Would stamp: {}", f.display());
+                            }
+                        }
+                        Err(e) => {
+                            eprintln!("  ❌ Cannot read {}: {}", f.display(), e);
+                        }
+                    }
+                }
+
+                println!(
+                    "\n    {} stamped, {} skipped (already tagged)",
+                    stamped, skipped
+                );
+
+                if !self.apply {
+                    println!("    Use --apply to write changes.\n");
+                }
+            } else {
+                eprintln!(
+                    "No project key found for this workspace. Use --project <key> to specify."
+                );
+            }
+        }
+
         Ok(())
     }
 }
