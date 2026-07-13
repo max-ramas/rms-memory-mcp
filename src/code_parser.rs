@@ -11,15 +11,51 @@ use tree_sitter::{Node, Parser};
 pub enum LanguageId {
     Rust,
     Go,
+    JavaScript,
+    Jsx,
+    TypeScript,
+    Tsx,
+    Python,
+    C,
+    Cpp,
+    Java,
+    Ruby,
+    Swift,
+    Vue,
 }
 
 impl LanguageId {
-    pub const ALL: [Self; 2] = [Self::Rust, Self::Go];
+    pub const ALL: [Self; 13] = [
+        Self::Rust,
+        Self::Go,
+        Self::JavaScript,
+        Self::Jsx,
+        Self::TypeScript,
+        Self::Tsx,
+        Self::Python,
+        Self::C,
+        Self::Cpp,
+        Self::Java,
+        Self::Ruby,
+        Self::Swift,
+        Self::Vue,
+    ];
 
     pub fn as_str(self) -> &'static str {
         match self {
             Self::Rust => "rust",
             Self::Go => "go",
+            Self::JavaScript => "javascript",
+            Self::Jsx => "jsx",
+            Self::TypeScript => "typescript",
+            Self::Tsx => "tsx",
+            Self::Python => "python",
+            Self::C => "c",
+            Self::Cpp => "cpp",
+            Self::Java => "java",
+            Self::Ruby => "ruby",
+            Self::Swift => "swift",
+            Self::Vue => "vue",
         }
     }
 
@@ -27,6 +63,17 @@ impl LanguageId {
         match self {
             Self::Rust => "rust-tree-sitter-v1",
             Self::Go => "go-tree-sitter-v1",
+            Self::JavaScript => "javascript-tree-sitter-v1",
+            Self::Jsx => "javascript-tree-sitter-v1",
+            Self::TypeScript => "typescript-tree-sitter-v1",
+            Self::Tsx => "typescript-tree-sitter-v1",
+            Self::Python => "python-tree-sitter-v1",
+            Self::C => "c-tree-sitter-v1",
+            Self::Cpp => "cpp-tree-sitter-v1",
+            Self::Java => "java-tree-sitter-v1",
+            Self::Ruby => "ruby-tree-sitter-v1",
+            Self::Swift => "swift-tree-sitter-v1",
+            Self::Vue => "vue-sfc-tree-sitter-v1",
         }
     }
 }
@@ -38,6 +85,17 @@ pub fn language_for_path(path: &Path) -> Option<LanguageId> {
     match path.extension().and_then(|extension| extension.to_str()) {
         Some(extension) if extension.eq_ignore_ascii_case("rs") => Some(LanguageId::Rust),
         Some(extension) if extension.eq_ignore_ascii_case("go") => Some(LanguageId::Go),
+        Some("js" | "mjs" | "cjs") => Some(LanguageId::JavaScript),
+        Some("jsx") => Some(LanguageId::Jsx),
+        Some("ts" | "mts" | "cts") => Some(LanguageId::TypeScript),
+        Some("tsx") => Some(LanguageId::Tsx),
+        Some("py" | "pyi") => Some(LanguageId::Python),
+        Some("c") => Some(LanguageId::C),
+        Some("cc" | "cpp" | "cxx" | "c++") => Some(LanguageId::Cpp),
+        Some("java") => Some(LanguageId::Java),
+        Some("rb") => Some(LanguageId::Ruby),
+        Some("swift") => Some(LanguageId::Swift),
+        Some("vue") => Some(LanguageId::Vue),
         _ => None,
     }
 }
@@ -65,6 +123,14 @@ pub fn parse_code_file(file_path: &str, source: &str) -> Result<ParsedCodeFile> 
     let items = match language {
         LanguageId::Rust => parse_rust_file(file_path, source)?,
         LanguageId::Go => parse_go_file(file_path, source)?,
+        LanguageId::JavaScript | LanguageId::Jsx | LanguageId::TypeScript | LanguageId::Tsx => {
+            parse_web_file(file_path, source, language)?
+        }
+        LanguageId::Python => parse_python_file(file_path, source)?,
+        LanguageId::C | LanguageId::Cpp => parse_native_file(file_path, source, language)?,
+        LanguageId::Java | LanguageId::Ruby => parse_native_file(file_path, source, language)?,
+        LanguageId::Swift => parse_native_file(file_path, source, language)?,
+        LanguageId::Vue => parse_vue_file(file_path, source)?,
     };
     let relation_hints = match language {
         LanguageId::Rust => extract_rust_relation_hints(file_path, source, &items)?
@@ -76,6 +142,14 @@ pub fn parse_code_file(file_path: &str, source: &str) -> Result<ParsedCodeFile> 
             })
             .collect(),
         LanguageId::Go => extract_go_relation_hints(file_path, source, &items)?,
+        LanguageId::JavaScript | LanguageId::Jsx | LanguageId::TypeScript | LanguageId::Tsx => {
+            extract_web_relation_hints(file_path, source, &items, language)?
+        }
+        LanguageId::Python => extract_python_relation_hints(file_path, source, &items)?,
+        LanguageId::C | LanguageId::Cpp => Vec::new(),
+        LanguageId::Java | LanguageId::Ruby => Vec::new(),
+        LanguageId::Swift => Vec::new(),
+        LanguageId::Vue => Vec::new(),
     };
     Ok(ParsedCodeFile {
         language,
@@ -97,6 +171,7 @@ pub enum CodeKind {
     TypeAlias,
     Constant,
     Variable,
+    Class,
 }
 
 impl CodeKind {
@@ -850,6 +925,565 @@ fn walk_go_relation_nodes(
     }
 }
 
+fn parse_vue_file(file_path: &str, source: &str) -> Result<Vec<ParsedCodeItem>> {
+    let mut parser = Parser::new();
+    parser.set_language(&tree_sitter_vue3::LANGUAGE.into())?;
+    let tree = parser
+        .parse(source, None)
+        .ok_or_else(|| anyhow!("Tree-sitter returned no Vue syntax tree"))?;
+    let mut items = Vec::new();
+    fn walk(
+        node: Node<'_>,
+        file: &str,
+        source: &str,
+        items: &mut Vec<ParsedCodeItem>,
+    ) -> Result<()> {
+        if node.kind() == "script_element" {
+            let mut c = node.walk();
+            if let Some(raw) = node.named_children(&mut c).find(|n| n.kind() == "raw_text") {
+                let header = &source[node.start_byte()..raw.start_byte()];
+                let dialect = if header.contains("lang=\"ts\"") || header.contains("lang='ts'") {
+                    LanguageId::TypeScript
+                } else {
+                    LanguageId::JavaScript
+                };
+                for mut item in parse_web_file(file, node_text(raw, source), dialect)? {
+                    item.file_path = file.to_string();
+                    item.start_line += raw.start_position().row as u32;
+                    item.end_line += raw.start_position().row as u32;
+                    item.source_start_byte += raw.start_byte();
+                    item.source_end_byte += raw.start_byte();
+                    items.push(item);
+                }
+            }
+        }
+        let mut c = node.walk();
+        for child in node.named_children(&mut c) {
+            walk(child, file, source, items)?;
+        }
+        Ok(())
+    }
+    walk(tree.root_node(), file_path, source, &mut items)?;
+    Ok(items)
+}
+
+fn parse_web_file(
+    file_path: &str,
+    source: &str,
+    language: LanguageId,
+) -> Result<Vec<ParsedCodeItem>> {
+    let mut parser = Parser::new();
+    let grammar = match language {
+        LanguageId::JavaScript | LanguageId::Jsx => tree_sitter_javascript::LANGUAGE.into(),
+        LanguageId::TypeScript => tree_sitter_typescript::LANGUAGE_TYPESCRIPT.into(),
+        LanguageId::Tsx => tree_sitter_typescript::LANGUAGE_TSX.into(),
+        _ => unreachable!("web parser called for non-web language"),
+    };
+    parser
+        .set_language(&grammar)
+        .map_err(|error| anyhow!("Failed to load {} grammar: {error}", language.as_str()))?;
+    let tree = parser
+        .parse(source, None)
+        .ok_or_else(|| anyhow!("Tree-sitter returned no {} syntax tree", language.as_str()))?;
+    if tree.root_node().has_error() {
+        return Err(anyhow!(
+            "{} source contains syntax errors: {file_path}",
+            language.as_str()
+        ));
+    }
+    let module = Path::new(file_path)
+        .with_extension("")
+        .to_string_lossy()
+        .replace(['/', '\\'], "::");
+    let mut items = Vec::new();
+    walk_web_items(
+        tree.root_node(),
+        file_path,
+        source,
+        language,
+        &module,
+        &mut items,
+    );
+    Ok(items)
+}
+
+fn parse_native_file(
+    file_path: &str,
+    source: &str,
+    language: LanguageId,
+) -> Result<Vec<ParsedCodeItem>> {
+    let mut parser = Parser::new();
+    let grammar = match language {
+        LanguageId::C => tree_sitter_c::LANGUAGE.into(),
+        LanguageId::Cpp => tree_sitter_cpp::LANGUAGE.into(),
+        LanguageId::Java => tree_sitter_java::LANGUAGE.into(),
+        LanguageId::Ruby => tree_sitter_ruby::LANGUAGE.into(),
+        LanguageId::Swift => tree_sitter_swift::LANGUAGE.into(),
+        _ => unreachable!(),
+    };
+    parser.set_language(&grammar)?;
+    let tree = parser
+        .parse(source, None)
+        .ok_or_else(|| anyhow!("Tree-sitter returned no native syntax tree"))?;
+    if tree.root_node().has_error() {
+        return Err(anyhow!(
+            "{} source contains syntax errors: {file_path}",
+            language.as_str()
+        ));
+    }
+    let module = Path::new(file_path)
+        .with_extension("")
+        .to_string_lossy()
+        .replace(['/', '\\'], "::");
+    let mut items = Vec::new();
+    fn walk(
+        node: Node<'_>,
+        file: &str,
+        source: &str,
+        language: LanguageId,
+        module: &str,
+        items: &mut Vec<ParsedCodeItem>,
+    ) {
+        let kind = match node.kind() {
+            "function_definition" | "method_declaration" | "method" | "singleton_method" => {
+                Some(CodeKind::Function)
+            }
+            "struct_specifier" => Some(CodeKind::Struct),
+            "enum_specifier" => Some(CodeKind::Enum),
+            "class_specifier" | "class_declaration" | "class" | "module" => Some(CodeKind::Class),
+            "interface_declaration" => Some(CodeKind::Interface),
+            "type_definition" => Some(CodeKind::TypeAlias),
+            _ => None,
+        };
+        if let Some(kind) = kind {
+            items.push(build_web_item(
+                node,
+                file,
+                source,
+                language,
+                module,
+                &[],
+                kind,
+            ));
+        }
+        let mut c = node.walk();
+        for child in node.named_children(&mut c) {
+            walk(child, file, source, language, module, items);
+        }
+    }
+    walk(
+        tree.root_node(),
+        file_path,
+        source,
+        language,
+        &module,
+        &mut items,
+    );
+    Ok(items)
+}
+
+fn parse_python_file(file_path: &str, source: &str) -> Result<Vec<ParsedCodeItem>> {
+    let mut parser = Parser::new();
+    parser
+        .set_language(&tree_sitter_python::LANGUAGE.into())
+        .map_err(|error| anyhow!("Failed to load Python grammar: {error}"))?;
+    let tree = parser
+        .parse(source, None)
+        .ok_or_else(|| anyhow!("Tree-sitter returned no Python syntax tree"))?;
+    if tree.root_node().has_error() {
+        return Err(anyhow!("Python source contains syntax errors: {file_path}"));
+    }
+    let module = Path::new(file_path)
+        .with_extension("")
+        .to_string_lossy()
+        .replace(['/', '\\'], "::");
+    let mut items = Vec::new();
+    walk_python_items(
+        tree.root_node(),
+        file_path,
+        source,
+        &module,
+        &[],
+        &mut items,
+    );
+    Ok(items)
+}
+
+fn walk_python_items(
+    node: Node<'_>,
+    file_path: &str,
+    source: &str,
+    module: &str,
+    container: &[String],
+    items: &mut Vec<ParsedCodeItem>,
+) {
+    let kind = match node.kind() {
+        "function_definition" => Some(CodeKind::Function),
+        "class_definition" => Some(CodeKind::Class),
+        _ => None,
+    };
+    if let Some(kind) = kind {
+        items.push(build_web_item(
+            node,
+            file_path,
+            source,
+            LanguageId::Python,
+            module,
+            container,
+            kind,
+        ));
+    }
+    let mut next = container.to_vec();
+    if node.kind() == "class_definition"
+        && let Some(name) = web_symbol_name(node, source)
+    {
+        next.push(name);
+    }
+    let mut cursor = node.walk();
+    for child in node.named_children(&mut cursor) {
+        walk_python_items(child, file_path, source, module, &next, items);
+    }
+}
+
+fn walk_web_items(
+    node: Node<'_>,
+    file_path: &str,
+    source: &str,
+    language: LanguageId,
+    module: &str,
+    items: &mut Vec<ParsedCodeItem>,
+) {
+    walk_web_items_in(node, file_path, source, language, module, &[], items);
+}
+
+fn walk_web_items_in(
+    node: Node<'_>,
+    file_path: &str,
+    source: &str,
+    language: LanguageId,
+    module: &str,
+    container: &[String],
+    items: &mut Vec<ParsedCodeItem>,
+) {
+    let kind = match node.kind() {
+        "function_declaration" | "generator_function_declaration" | "method_definition" => {
+            Some(CodeKind::Function)
+        }
+        "class_declaration" | "abstract_class_declaration" => Some(CodeKind::Class),
+        "interface_declaration" => Some(CodeKind::Interface),
+        "enum_declaration" => Some(CodeKind::Enum),
+        "type_alias_declaration" => Some(CodeKind::TypeAlias),
+        "variable_declarator"
+            if node.child_by_field_name("value").is_some_and(|value| {
+                matches!(value.kind(), "arrow_function" | "function_expression")
+            }) =>
+        {
+            Some(CodeKind::Function)
+        }
+        _ => None,
+    };
+    if let Some(kind) = kind {
+        items.push(build_web_item(
+            node, file_path, source, language, module, container, kind,
+        ));
+    }
+    let mut child_container = container.to_vec();
+    if matches!(
+        node.kind(),
+        "class_declaration" | "abstract_class_declaration"
+    ) && let Some(name) = web_symbol_name(node, source)
+    {
+        child_container.push(name);
+    }
+    let mut cursor = node.walk();
+    for child in node.named_children(&mut cursor) {
+        walk_web_items_in(
+            child,
+            file_path,
+            source,
+            language,
+            module,
+            &child_container,
+            items,
+        );
+    }
+}
+
+fn build_web_item(
+    node: Node<'_>,
+    file_path: &str,
+    source: &str,
+    language: LanguageId,
+    module: &str,
+    container: &[String],
+    kind: CodeKind,
+) -> ParsedCodeItem {
+    let body = node_text(node, source).to_string();
+    let signature = item_signature(node, source);
+    let preamble = if language == LanguageId::Python {
+        python_preamble(node, source)
+    } else {
+        web_preamble(node, source)
+    };
+    let content = if preamble.is_empty() {
+        body.clone()
+    } else {
+        format!("{preamble}\n{body}")
+    };
+    let name = web_symbol_name(node, source).unwrap_or_default();
+    let identity = if container.is_empty() {
+        name.clone()
+    } else {
+        format!("{}.{}", container.join("."), name)
+    };
+    let qualified_symbol = qualify(module, &identity);
+    let item_key = blake3::hash(
+        format!(
+            "{}\0{file_path}\0{module}\0{}\0{identity}",
+            language.as_str(),
+            kind_name(kind)
+        )
+        .as_bytes(),
+    )
+    .to_string();
+    ParsedCodeItem {
+        item_key,
+        file_path: file_path.to_string(),
+        module_path: module.to_string(),
+        symbol_name: name,
+        qualified_symbol,
+        kind,
+        start_line: node.start_position().row as u32 + 1,
+        end_line: inclusive_end_line(node),
+        preamble,
+        signature,
+        item_hash: blake3::hash(content.as_bytes()).to_string(),
+        content,
+        body,
+        source_start_byte: node.start_byte(),
+        source_end_byte: node.end_byte(),
+    }
+}
+
+fn web_symbol_name(node: Node<'_>, source: &str) -> Option<String> {
+    node.child_by_field_name("name")
+        .map(|value| node_text(value, source).to_string())
+        .or_else(|| first_web_identifier(node, source))
+}
+
+fn web_preamble(node: Node<'_>, source: &str) -> String {
+    let prefix = &source[..node.start_byte()];
+    let mut lines = prefix.lines().rev().peekable();
+    while lines.peek().is_some_and(|line| line.trim().is_empty()) {
+        lines.next();
+    }
+    let mut docs = Vec::new();
+    while let Some(line) = lines.peek() {
+        let trimmed = line.trim();
+        if trimmed.starts_with('@')
+            || trimmed.starts_with("///")
+            || trimmed.starts_with("//")
+            || trimmed.ends_with("*/")
+            || trimmed.starts_with('*')
+            || trimmed.starts_with("/**")
+        {
+            docs.push(lines.next().unwrap().trim_end().to_string());
+        } else {
+            break;
+        }
+    }
+    docs.reverse();
+    docs.join("\n")
+}
+
+fn python_preamble(node: Node<'_>, source: &str) -> String {
+    let mut parts = web_preamble(node, source);
+    if let Some(body) = node.child_by_field_name("body") {
+        let mut cursor = body.walk();
+        if let Some(first) = body.named_children(&mut cursor).next()
+            && first.kind() == "expression_statement"
+        {
+            let text = node_text(first, source).trim();
+            if text.starts_with("\"\"\"")
+                || text.starts_with("'''")
+                || text.starts_with('"')
+                || text.starts_with('\'')
+            {
+                if !parts.is_empty() {
+                    parts.push('\n');
+                }
+                parts.push_str(text);
+            }
+        }
+    }
+    parts
+}
+
+fn extract_python_relation_hints(
+    file_path: &str,
+    source: &str,
+    items: &[ParsedCodeItem],
+) -> Result<Vec<CodeRelationHint>> {
+    let mut parser = Parser::new();
+    parser.set_language(&tree_sitter_python::LANGUAGE.into())?;
+    let tree = parser
+        .parse(source, None)
+        .ok_or_else(|| anyhow!("Tree-sitter returned no Python syntax tree"))?;
+    let mut hints = Vec::new();
+    fn walk(
+        node: Node<'_>,
+        file: &str,
+        source: &str,
+        items: &[ParsedCodeItem],
+        hints: &mut Vec<CodeRelationHint>,
+    ) {
+        let owner = || {
+            items
+                .iter()
+                .filter(|item| {
+                    item.source_start_byte <= node.start_byte()
+                        && node.end_byte() <= item.source_end_byte
+                })
+                .min_by_key(|item| item.source_end_byte - item.source_start_byte)
+                .map(|item| item.item_key.clone())
+                .unwrap_or_else(|| {
+                    blake3::hash(format!("python\0{file}\0module").as_bytes()).to_string()
+                })
+        };
+        if node.kind() == "import_statement" || node.kind() == "import_from_statement" {
+            hints.push(CodeRelationHint {
+                source_item_key: owner(),
+                relation: "uses".to_string(),
+                target_identifier: format!("python-import:{}", node_text(node, source).trim()),
+            });
+        }
+        if node.kind() == "call" {
+            if let Some(function) = node.child_by_field_name("function") {
+                hints.push(CodeRelationHint {
+                    source_item_key: owner(),
+                    relation: "calls_symbol".to_string(),
+                    target_identifier: format!(
+                        "python-symbol:{}",
+                        node_text(function, source).trim()
+                    ),
+                });
+            }
+        }
+        let mut c = node.walk();
+        for child in node.named_children(&mut c) {
+            walk(child, file, source, items, hints);
+        }
+    }
+    walk(tree.root_node(), file_path, source, items, &mut hints);
+    hints.sort_by(|a, b| {
+        (&a.source_item_key, &a.relation, &a.target_identifier).cmp(&(
+            &b.source_item_key,
+            &b.relation,
+            &b.target_identifier,
+        ))
+    });
+    hints.dedup();
+    Ok(hints)
+}
+
+fn first_web_identifier(node: Node<'_>, source: &str) -> Option<String> {
+    let mut cursor = node.walk();
+    node.named_children(&mut cursor)
+        .find(|child| child.kind().contains("identifier"))
+        .map(|child| node_text(child, source).to_string())
+}
+
+fn extract_web_relation_hints(
+    file_path: &str,
+    source: &str,
+    items: &[ParsedCodeItem],
+    language: LanguageId,
+) -> Result<Vec<CodeRelationHint>> {
+    let mut parser = Parser::new();
+    let grammar = match language {
+        LanguageId::JavaScript | LanguageId::Jsx => tree_sitter_javascript::LANGUAGE.into(),
+        LanguageId::TypeScript => tree_sitter_typescript::LANGUAGE_TYPESCRIPT.into(),
+        LanguageId::Tsx => tree_sitter_typescript::LANGUAGE_TSX.into(),
+        _ => unreachable!(),
+    };
+    parser
+        .set_language(&grammar)
+        .map_err(|error| anyhow!("Failed to load {} grammar: {error}", language.as_str()))?;
+    let tree = parser
+        .parse(source, None)
+        .ok_or_else(|| anyhow!("Tree-sitter returned no syntax tree"))?;
+    let mut hints = Vec::new();
+    walk_web_relations(
+        tree.root_node(),
+        file_path,
+        source,
+        items,
+        language,
+        &mut hints,
+    );
+    hints.sort_by(|a, b| {
+        (&a.source_item_key, &a.relation, &a.target_identifier).cmp(&(
+            &b.source_item_key,
+            &b.relation,
+            &b.target_identifier,
+        ))
+    });
+    hints.dedup();
+    Ok(hints)
+}
+
+fn walk_web_relations(
+    node: Node<'_>,
+    file_path: &str,
+    source: &str,
+    items: &[ParsedCodeItem],
+    language: LanguageId,
+    hints: &mut Vec<CodeRelationHint>,
+) {
+    let owner = || {
+        items
+            .iter()
+            .filter(|item| {
+                item.source_start_byte <= node.start_byte()
+                    && node.end_byte() <= item.source_end_byte
+            })
+            .min_by_key(|item| item.source_end_byte - item.source_start_byte)
+            .map(|item| item.item_key.clone())
+            .unwrap_or_else(|| {
+                blake3::hash(format!("{}\0{file_path}\0module", language.as_str()).as_bytes())
+                    .to_string()
+            })
+    };
+    if node.kind() == "import_statement" {
+        hints.push(CodeRelationHint {
+            source_item_key: owner(),
+            relation: "uses".to_string(),
+            target_identifier: format!(
+                "{}-import:{}",
+                language.as_str(),
+                node_text(node, source).trim()
+            ),
+        });
+    }
+    if node.kind() == "call_expression" {
+        if let Some(function) = node.child_by_field_name("function") {
+            hints.push(CodeRelationHint {
+                source_item_key: owner(),
+                relation: "calls_symbol".to_string(),
+                target_identifier: format!(
+                    "{}-symbol:{}",
+                    language.as_str(),
+                    node_text(function, source).trim()
+                ),
+            });
+        }
+    }
+    let mut cursor = node.walk();
+    for child in node.named_children(&mut cursor) {
+        walk_web_relations(child, file_path, source, items, language, hints);
+    }
+}
+
 /// Splits an oversized semantic item while retaining its documentation,
 /// attributes, and declaration signature in every resulting segment.
 pub fn split_with_preamble(item: &ParsedCodeItem) -> Vec<CodeSegment> {
@@ -1042,6 +1676,7 @@ fn kind_name(kind: CodeKind) -> &'static str {
         CodeKind::TypeAlias => "type_alias",
         CodeKind::Constant => "constant",
         CodeKind::Variable => "variable",
+        CodeKind::Class => "class",
     }
 }
 
@@ -1366,6 +2001,116 @@ fn helper() { let _ = Thing::default(); }
             .unwrap();
         assert_eq!(original_charge.item_key, shifted_charge.item_key);
         assert_eq!(original_charge.start_line + 1, shifted_charge.start_line);
+    }
+
+    #[test]
+    fn web_adapter_dispatches_dialects_and_extracts_lexical_hints() {
+        let source = "import { dep } from './dep';\nexport class Service { run() { return dep(); } }\nexport const handler = () => dep();\n";
+        let parsed = parse_code_file("src/service.ts", source).unwrap();
+        assert_eq!(parsed.language, LanguageId::TypeScript);
+        assert!(
+            parsed
+                .items
+                .iter()
+                .any(|item| item.kind == CodeKind::Class && item.symbol_name == "Service")
+        );
+        assert!(
+            parsed
+                .items
+                .iter()
+                .any(|item| item.kind == CodeKind::Function && item.symbol_name == "handler")
+        );
+        assert!(
+            parsed
+                .relation_hints
+                .iter()
+                .any(|hint| hint.relation == "uses")
+        );
+        assert!(
+            parsed
+                .relation_hints
+                .iter()
+                .any(|hint| hint.target_identifier == "typescript-symbol:dep")
+        );
+        assert_eq!(
+            language_for_path(Path::new("component.tsx")),
+            Some(LanguageId::Tsx)
+        );
+        assert_eq!(
+            language_for_path(Path::new("component.jsx")),
+            Some(LanguageId::Jsx)
+        );
+    }
+
+    #[test]
+    fn python_adapter_keeps_decorators_docstrings_and_lexical_hints() {
+        let source = "from app.client import Client\n\nclass Service:\n    @staticmethod\n    def run():\n        \"\"\"Runs a request.\"\"\"\n        return Client().send()\n";
+        let parsed = parse_code_file("app/service.py", source).unwrap();
+        assert_eq!(parsed.language, LanguageId::Python);
+        let run = parsed
+            .items
+            .iter()
+            .find(|item| item.symbol_name == "run")
+            .unwrap();
+        assert_eq!(run.qualified_symbol, "app::service::Service.run");
+        assert!(run.preamble.contains("@staticmethod"));
+        assert!(run.preamble.contains("Runs a request"));
+        assert!(
+            parsed
+                .relation_hints
+                .iter()
+                .any(|hint| hint.relation == "uses")
+        );
+        assert!(
+            parsed
+                .relation_hints
+                .iter()
+                .any(|hint| hint.target_identifier == "python-symbol:Client")
+        );
+    }
+
+    #[test]
+    fn native_adapters_dispatch_c_and_cpp_without_headers() {
+        let c = parse_code_file(
+            "native/api.c",
+            "typedef int Count; struct State { int value; }; int run(void) { return 0; }",
+        )
+        .unwrap();
+        assert_eq!(c.language, LanguageId::C);
+        assert!(c.items.iter().any(|item| item.kind == CodeKind::Function));
+        let cpp = parse_code_file(
+            "native/widget.cpp",
+            "class Widget {}; int run() { return 0; }",
+        )
+        .unwrap();
+        assert_eq!(cpp.language, LanguageId::Cpp);
+        assert!(cpp.items.iter().any(|item| item.kind == CodeKind::Class));
+        assert_eq!(language_for_path(Path::new("native/api.h")), None);
+    }
+
+    #[test]
+    fn native_adapters_dispatch_java_and_ruby() {
+        let java = parse_code_file("src/Service.java", "class Service { void run() {} }").unwrap();
+        assert_eq!(java.language, LanguageId::Java);
+        assert!(java.items.iter().any(|item| item.kind == CodeKind::Class));
+        let ruby =
+            parse_code_file("lib/service.rb", "class Service\n  def run\n  end\nend\n").unwrap();
+        assert_eq!(ruby.language, LanguageId::Ruby);
+        assert!(ruby.items.iter().any(|item| item.kind == CodeKind::Class));
+    }
+
+    #[test]
+    fn vue_script_is_reparsed_as_typescript_with_host_ranges() {
+        let source = "<template><main /></template>\n<script lang=\"ts\">\nexport function load() { return 1; }\n</script>\n";
+        let parsed = parse_code_file("src/App.vue", source).unwrap();
+        assert_eq!(parsed.language, LanguageId::Vue);
+        let load = parsed
+            .items
+            .iter()
+            .find(|item| item.symbol_name == "load")
+            .unwrap();
+        assert_eq!(load.file_path, "src/App.vue");
+        assert_eq!(load.start_line, 3);
     }
 
     #[test]
