@@ -14,7 +14,7 @@ This document outlines the strategic direction and upcoming milestones for RMS M
 - [x] Dynamic IDE Auto-Installer (12 IDEs: Claude, Cursor, Zed, OpenCode, VSCode, etc).
 - [x] Rules-as-Code IDE Patching (non-destructive AST block injection).
 - [x] Linked Documents architecture (zero-copy import with transparent read/write routing).
-- [x] Write-Guard snapshotting with rolling `.bak` backups.
+- [x] Write-Guard snapshotting with rolling `.bak` backups and fsync-backed atomic Markdown replacement for `create`/`replace`.
 - [x] macOS sandbox bypass (`codesign` entitlements).
 
 ## v1.0.2 — Security & Features (Released 2026-07-08)

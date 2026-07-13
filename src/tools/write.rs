@@ -1,5 +1,25 @@
 use super::AppContext;
-use anyhow::Result;
+use anyhow::{Context, Result};
+use std::io::Write;
+use std::path::Path;
+
+/// Replaces a Markdown document without exposing a partially truncated target
+/// file. The temporary file is created in the target directory so the final
+/// rename remains atomic on supported local filesystems.
+fn write_atomic(path: &Path, content: &str) -> Result<()> {
+    let parent = path
+        .parent()
+        .context("Cannot atomically write a path without a parent directory")?;
+    std::fs::create_dir_all(parent)?;
+    let mut temporary = tempfile::NamedTempFile::new_in(parent)?;
+    temporary.write_all(content.as_bytes())?;
+    temporary.as_file().sync_all()?;
+    temporary.persist(path).map_err(|error| error.error)?;
+    std::fs::File::open(parent)
+        .and_then(|directory| directory.sync_all())
+        .ok();
+    Ok(())
+}
 
 fn inject_audit_metadata(
     content: &str,
@@ -155,7 +175,6 @@ pub async fn execute(
 
     match mode {
         "append" => {
-            use std::io::Write;
             let mut f = std::fs::OpenOptions::new()
                 .append(true)
                 .create(true)
@@ -163,7 +182,7 @@ pub async fn execute(
             f.write_all(content.as_bytes())?;
         }
         "create" | "replace" => {
-            std::fs::write(&file_path, content)?;
+            write_atomic(&file_path, &content)?;
         }
         m => {
             return Err(anyhow::anyhow!(
@@ -206,5 +225,32 @@ mod tests {
                 .and_then(|frontmatter| frontmatter.id)
                 .is_some()
         );
+    }
+
+    #[test]
+    fn repeated_metadata_injection_keeps_one_id_and_the_complete_body() {
+        let args = serde_json::Map::new();
+        let first = inject_audit_metadata("# Complete body\n\nDo not truncate.", "writer-a", &args);
+        let second = inject_audit_metadata(&first, "writer-b", &args);
+        assert_eq!(second.matches("\nid:").count(), 1);
+        assert!(second.ends_with("# Complete body\n\nDo not truncate."));
+    }
+
+    #[test]
+    fn atomic_replace_never_exposes_a_frontmatter_only_result() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("memory.md");
+        std::fs::write(&path, "old body").unwrap();
+        let replacement = "---\nid: stable-id\n---\n\n# Complete replacement body\n";
+
+        write_atomic(&path, replacement).unwrap();
+
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), replacement);
+        let document = crate::document::Document::parse(&path).unwrap();
+        assert_eq!(
+            document.frontmatter.unwrap().id.as_deref(),
+            Some("stable-id")
+        );
+        assert_eq!(document.content, "\n# Complete replacement body\n");
     }
 }

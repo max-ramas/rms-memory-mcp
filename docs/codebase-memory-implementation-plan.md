@@ -21,7 +21,7 @@ The approved multilingual extension is specified in `docs/multilanguage-code-mem
 
 ## Implementation status (2026-07-13)
 
-- Slice 0 is implemented: fail-closed frontmatter parsing, read-only background sync, cross-process writer lock, watcher retry, repair tooling, and PID-aware lock diagnostics.
+- Slice 0 is implemented: fail-closed frontmatter parsing, read-only background sync, fsync-backed atomic Markdown replacement for `rms_write create|replace`, cross-process writer lock, watcher retry, repair tooling, and PID-aware lock diagnostics.
 - Slice 1 parser contract is implemented through a language-neutral Tree-sitter registry: Rust, Go, JS/JSX, TS/TSX, Python, C/C++, Java, Ruby, Swift, and inline Vue scripts dispatch into one code corpus while retaining stable IDs and preamble-aware segmentation. Vue maps inline script ranges to the host file; template/style and external-script semantics remain out of scope.
 - Slice 2 is implemented: semantic items emit stable, zero-based `segment_index` values; oversized chunks repeat their preamble and declaration signature, split body text at line boundaries when possible, and preserve a bounded character overlap.
 - Slice 3 is implemented: manual `reindex --code` builds the separate `code_chunks` table. Dogfood on this repository indexed 38 files into 188 items and 288 segments, with zero skipped files.

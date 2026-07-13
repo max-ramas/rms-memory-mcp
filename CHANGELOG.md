@@ -34,13 +34,19 @@ All notable changes to this project will be documented in this file.
 - **Generated code exclusions:** semantic code indexing excludes `.next`, `.nuxt`, `node_modules`, `target`, `vendor`, `coverage`, `.git`, and `.rms-memory`; generic `build` and `dist` remain available unless ignored by the project itself.
 - **C/C++ header ambiguity:** `.h` is deterministically indexed as C once; `.hpp`, `.hh`, and `.hxx` select C++.
 - **Watcher generation marker flake:** duplicate-generation suppression now compares the precise completion timestamp stored in `.code-index.updated`, with filesystem `mtime` retained only for legacy markers. This avoids timestamp-resolution failures on GitHub Actions and networked filesystems.
+- **Atomic Markdown writes:** `rms_write` `create` and `replace` now write and fsync a same-directory temporary file before atomically replacing the target and syncing its directory. This prevents a frontmatter-only or truncated vault file from becoming visible if a write is interrupted.
 
 ### Performance
 - **Thread Pool Reduction:** ONNX `with_intra_threads(1)` (was 2) and tokio `worker_threads=2` (was 12). Per-process thread count cut from ~45 to ~6. Runtime verified: load avg 648 → 8.31 (-98.7%), CPU 380% → 0% idle across 3 IDE processes.
-- **Fast-path skip fix:** `get_file_timestamps()` now returns `(doc_id, timestamp)` tuple, preventing `sync_vault` from deleting unchanged documents via the `current_doc_ids` check. Resolved chicken-and-egg: path-based mtime check skips parsing for unchanged files without losing document identity.
-- **Single Indexer instance:** One `Arc<Mutex<Indexer>>` created in `McpServer::run()`, shared between search handler and background sync. Eliminates N model reloads per process.
-- **Watcher `.bak` filter + logging:** Write-Guard snapshots ignored; `tracing::info!` with triggering file path on each event.
 - **Real-project stress gate:** concurrent GeoMail, License Server, RMS Monitoring, and GeoTax Site reindexes completed; after restarting four IDEs, seven `serve` processes remained at `0.0%` CPU with no background reindex.
+
+## [1.0.4] - 2026-07-12
+
+### Fixed
+- **Single Indexer instance:** Each watcher-triggered sync previously created a new `Indexer::new()` (loading ONNX model: 100-200MB RAM, 100-300ms). Now one `Arc<Mutex<Indexer>>` is created in `McpServer::run()` and shared between search handler and background sync. Eliminates N model reloads — idle CPU drops from ~380% to near-zero with 4 IDE processes.
+- **Path-based mtime check:** `sync_vault` now skips parsing unchanged files using `get_file_timestamps()` (path-keyed timestamps from LanceDB `path` column). Previously every file was parsed on every sync — chicken-and-egg: `doc_id` for mtime check required frontmatter parsing.
+- **Watcher `.bak` filter:** File watcher ignores Write-Guard snapshot files (`*.bak`), preventing self-triggering sync cycles.
+- **Watcher trigger logging:** `tracing::info!` with triggering file path on each watcher event (previously silent).
 
 ## [1.0.3] - 2026-07-12
 
