@@ -276,11 +276,11 @@ impl Store {
         Ok(map)
     }
 
-    /// Returns a map of relative file path → last stored mtime.
+    /// Returns a map of relative file path → (document_id, last stored mtime).
     pub async fn get_file_timestamps(
         &self,
         table: &Table,
-    ) -> Result<std::collections::HashMap<String, String>> {
+    ) -> Result<std::collections::HashMap<String, (String, String)>> {
         use futures::stream::StreamExt;
         use lancedb::query::{ExecutableQuery, QueryBase};
 
@@ -288,6 +288,7 @@ impl Store {
             .query()
             .select(lancedb::query::Select::Columns(vec![
                 "path".to_string(),
+                "document_id".to_string(),
                 "updated_at".to_string(),
             ]))
             .execute()
@@ -298,6 +299,9 @@ impl Store {
             let path_col = batch
                 .column_by_name("path")
                 .context("Missing 'path' column")?;
+            let doc_id_col = batch
+                .column_by_name("document_id")
+                .context("Missing 'document_id' column")?;
             let updated_at_col = batch
                 .column_by_name("updated_at")
                 .context("Missing 'updated_at' column")?;
@@ -305,6 +309,10 @@ impl Store {
                 .as_any()
                 .downcast_ref::<lancedb::arrow::arrow_array::StringArray>()
                 .context("'path' column is not a StringArray")?;
+            let doc_id_array = doc_id_col
+                .as_any()
+                .downcast_ref::<lancedb::arrow::arrow_array::StringArray>()
+                .context("'document_id' column is not a StringArray")?;
             let updated_at_array = updated_at_col
                 .as_any()
                 .downcast_ref::<lancedb::arrow::arrow_array::StringArray>()
@@ -312,7 +320,10 @@ impl Store {
             for i in 0..batch.num_rows() {
                 map.insert(
                     path_array.value(i).to_string(),
-                    updated_at_array.value(i).to_string(),
+                    (
+                        doc_id_array.value(i).to_string(),
+                        updated_at_array.value(i).to_string(),
+                    ),
                 );
             }
         }

@@ -1,6 +1,6 @@
 use rms_memory_mcp::{cli, workspace};
 
-#[tokio::main]
+#[tokio::main(worker_threads = 2)]
 async fn main() {
     let log_dir = crate::workspace::base_dir();
     std::fs::create_dir_all(&log_dir).ok();

@@ -216,6 +216,7 @@ Embedded LanceDB (`~/.rms-memory/dbs/`) combines vector similarity with full-tex
 | Zed | ✅ | `.zed/assistant.md` |
 | Claude Code | ✅ | `.claude/CLAUDE.md` |
 | OpenCode | ✅ | — |
+| Codex | ✅ | — |
 | VS Code | ✅ | — |
 | Antigravity | ✅ | — |
 

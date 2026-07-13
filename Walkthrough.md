@@ -138,9 +138,11 @@ The codebase underwent a 3-agent (Tester + Reviewer + Optimizer) comprehensive a
 
 ### 13. Performance Hardening (v1.0.4)
 
-Multi-IDE scenarios discovered a CPU storm: 4 processes consuming ~380% CPU and ~2.5GB memory at idle.
+Multi-IDE scenarios exposed a CPU storm: 4 processes consuming ~380% CPU, load avg 648, at idle.
 
-- **Single Model Instance:** `Arc<Mutex<Indexer>>` created once in `McpServer::run()` and shared between search handler and file watcher background sync. Previously each watcher-triggered sync created a new `Indexer::new()`, loading the ONNX model (100-200MB, 100-300ms) fresh each time.
-- **Path-Based Mtime Cache:** `sync_vault` now calls `get_file_timestamps()` (querying LanceDB by `path` column) to skip parsing unchanged files. Previously every file was parsed on every sync — chicken-and-egg with `doc_id`-based mtime check resolved via dual-key caching.
-- **`.bak` Filter:** Write-Guard snapshot files (`*.bak`) are now filtered from the file watcher, preventing self-triggering sync cycles.
-- **Runtime Verified:** CPU 380% → 0%, memory 2.5GB → 609MB across 3 IDE processes.
+- **Thread Pool Reduction:** ONNX `with_intra_threads(1)` (was 2) and tokio `worker_threads=2` (was 12). Per-process thread count cut from ~45 to ~6. Cross-process cascade from `ensure_id()` writes resolved via fast-path fix.
+- **Single Model Instance:** `Arc<Mutex<Indexer>>` created once in `McpServer::run()` and shared between search handler and file watcher background sync.
+- **Path-Based Mtime Cache:** `sync_vault` now uses `get_file_timestamps()` returning `(doc_id, timestamp)` tuples — skipped files correctly tracked in `current_doc_ids`, preventing silent vector deletion.
+- **`.bak` Filter:** Write-Guard snapshot files are now filtered from the file watcher.
+- **Codex IDE:** Auto-installer supports `~/.codex/mcp.json` alongside 11 existing IDEs.
+- **Runtime Verified:** load avg 648 → 8.31 (-98.7%), CPU 380% → 0%, memory 2.5GB → ~1.3GB across 3 IDE processes.

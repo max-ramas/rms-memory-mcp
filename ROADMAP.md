@@ -43,15 +43,16 @@ This document outlines the strategic direction and upcoming milestones for RMS M
 - [x] Request size limit (1MB) + search limit cap (`min(100)`).
 - [x] Code deduplication: `VectorStore` trait removed, `CommandRunner` trait removed, shared `response.rs`/`validation.rs`/`create_vault_dirs()`.
 
-## v1.0.4 — Performance Hardening (Released 2026-07-12)
+## v1.0.5 — Thread Reduction + Codex (Released 2026-07-13)
 
-**Goal:** Eliminate CPU storms and model reload overhead in multi-IDE scenarios.
+**Goal:** Resolve CPU storms and add Codex IDE support.
 
-- [x] Single `Arc<Mutex<Indexer>>` shared between search and background sync — 1 model load per process instead of N.
-- [x] Path-based mtime cache — `sync_vault` skips parsing unchanged files (chicken-and-egg resolved).
-- [x] Watcher `.bak` filter — prevents self-triggering sync cycles from Write-Guard snapshots.
-- [x] Watcher trigger logging — `tracing::info!` with triggering file path.
-- [x] Runtime verified: CPU 380% → 0%, memory 2.5GB → 609MB across 3 IDE processes.
+- [x] Thread pool reduction: ONNX `with_intra_threads(1)` + tokio `worker_threads=2` — per-process thread count from ~45 to ~6.
+- [x] Fast-path skip fix: `get_file_timestamps()` returns `(doc_id, timestamp)` — no more silent vector deletion on unchanged files.
+- [x] Single `Arc<Mutex<Indexer>>` shared between search and background sync.
+- [x] Watcher `.bak` filter + trigger logging.
+- [x] Codex IDE: auto-install into `~/.codex/mcp.json`.
+- [x] Runtime verified: load avg 648 → 8.31 (-98.7%), CPU 380% → 0%, 3 IDE processes.
 
 ## v1.1 — The Workspace Split & Ecosystem (Next)
 

@@ -53,7 +53,7 @@ impl Indexer {
         let result = TextEmbedding::try_new(
             InitOptions::new(EmbeddingModel::MultilingualE5Small)
                 .with_cache_dir(cache_dir.clone())
-                .with_intra_threads(2)
+                .with_intra_threads(1)
                 .with_show_download_progress(false),
         );
 
@@ -212,8 +212,9 @@ pub async fn sync_vault(
             std::collections::HashMap::new()
         }
     };
-    // Path-based cache: skip parsing files whose mtime hasn't changed
-    let path_timestamps = match store.get_file_timestamps(&table).await {
+    // Path-based cache: skip parsing files whose mtime hasn't changed.
+    // Returns map of path → (doc_id, last_seen_mtime).
+    let path_info = match store.get_file_timestamps(&table).await {
         Ok(ts) => ts,
         Err(e) => {
             tracing::error!(
@@ -243,10 +244,11 @@ pub async fn sync_vault(
             .map(|t| chrono::DateTime::<chrono::Utc>::from(t).to_rfc3339())
             .unwrap_or_else(|_| chrono::Utc::now().to_rfc3339());
 
-        // Fast path: skip if mtime unchanged
-        if let Some(stored) = path_timestamps.get(&rel_path)
-            && &mtime <= stored
+        // Fast path: skip if mtime unchanged, but still mark doc_id as current
+        if let Some((doc_id, stored_ts)) = path_info.get(&rel_path)
+            && &mtime <= stored_ts
         {
+            current_doc_ids.insert(doc_id.clone());
             continue;
         }
 

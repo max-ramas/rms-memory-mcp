@@ -126,6 +126,12 @@ pub fn get_ide_registry() -> Vec<IdeConfig> {
             opencode_payload,
         ),
         IdeConfig::new(
+            "Codex",
+            vec![".codex/mcp.json"],
+            "mcpServers",
+            standard_payload,
+        ),
+        IdeConfig::new(
             "ZCode",
             vec![
                 "Library/Application Support/ZCode/settings.json",

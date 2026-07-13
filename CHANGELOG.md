@@ -2,13 +2,21 @@
 
 All notable changes to this project will be documented in this file.
 
-## [1.0.4] - 2026-07-12
+## [1.0.5] - 2026-07-13
+
+### Performance
+- **Thread Pool Reduction:** ONNX `with_intra_threads(1)` (was 2) and tokio `worker_threads=2` (was 12). Per-process thread count cut from ~45 to ~6. Runtime verified: load avg 648 → 8.31 (-98.7%), CPU 380% → 0% idle across 3 IDE processes.
+- **Fast-path skip fix:** `get_file_timestamps()` now returns `(doc_id, timestamp)` tuple, preventing `sync_vault` from deleting unchanged documents via the `current_doc_ids` check. Resolved chicken-and-egg: path-based mtime check skips parsing for unchanged files without losing document identity.
+- **Single Indexer instance:** One `Arc<Mutex<Indexer>>` created in `McpServer::run()`, shared between search handler and background sync. Eliminates N model reloads per process.
+- **Watcher `.bak` filter + logging:** Write-Guard snapshots ignored; `tracing::info!` with triggering file path on each event.
+
+### Added
+- **Codex IDE support:** `rms-memory install` now auto-injects into `~/.codex/mcp.json` alongside existing 11 IDEs.
 
 ### Fixed
-- **Single Indexer instance:** Each watcher-triggered sync previously created a new `Indexer::new()` (loading ONNX model: 100-200MB RAM, 100-300ms). Now one `Arc<Mutex<Indexer>>` is created in `McpServer::run()` and shared between search handler and background sync. Eliminates N model reloads — idle CPU drops from ~380% to near-zero with 4 IDE processes.
-- **Path-based mtime check:** `sync_vault` now skips parsing unchanged files using `get_file_timestamps()` (path-keyed timestamps from LanceDB `path` column). Previously every file was parsed on every sync — chicken-and-egg: `doc_id` for mtime check required frontmatter parsing.
-- **Watcher `.bak` filter:** File watcher ignores Write-Guard snapshot files (`*.bak`), preventing self-triggering sync cycles.
-- **Watcher trigger logging:** `tracing::info!` with triggering file path on each watcher event (previously silent).
+- **sync_vault timestamps:** `unwrap_or_default()` → explicit error log — no more mass-reindex on transient DB errors.
+- **Sync/logging errors:** `let _ =` and `Err(_e) => {}` replaced with `tracing::error!` throughout.
+- **JSON-RPC compliance:** Malformed requests return `-32700`, 1MB size limit on stdin, search limit capped at 100.
 
 ## [1.0.3] - 2026-07-12
 
