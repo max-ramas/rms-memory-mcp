@@ -1,0 +1,47 @@
+name: Promote Existing Release Artifacts
+
+on:
+  workflow_dispatch:
+    inputs:
+      source_run_id:
+        description: Completed release workflow run that contains the build artifacts
+        required: true
+        type: string
+      tag:
+        description: Existing GitHub Release tag to receive the artifacts
+        required: true
+        type: string
+
+jobs:
+  promote:
+    name: Attach retained artifacts to release
+    runs-on: ubuntu-latest
+    permissions:
+      actions: read
+      contents: write
+    steps:
+      - name: Download retained artifacts
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh run download "${{ inputs.source_run_id }}" --dir artifacts
+
+      - name: Verify release exists
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release view "${{ inputs.tag }}"
+
+      - name: Upload release assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: find artifacts -type f -print0 | xargs -0 gh release upload "${{ inputs.tag }}" --clobber
+
+      - name: Notify homebrew tap
+        env:
+          GH_TOKEN: ${{ secrets.TAP_DISPATCH_TOKEN }}
+        run: |
+          gh api repos/max-ramas/homebrew-tap/dispatches \
+            -f event_type=new-release \
+            -f "client_payload[repo]=max-ramas/rms-memory-mcp" \
+            -f "client_payload[formula]=rms-memory-mcp" \
+            -f "client_payload[bin_name]=rms-memory-mcp" \
+            -f "client_payload[tag]=${{ inputs.tag }}"

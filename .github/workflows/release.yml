@@ -138,7 +138,9 @@ jobs:
 
   release:
     name: Create GitHub Release
-    needs: [build, publish-crates]
+    # Binary release is independent from crates.io publication. A registry
+    # verification failure must not hide successfully built release assets.
+    needs: build
     runs-on: ubuntu-latest
     permissions:
       contents: write
