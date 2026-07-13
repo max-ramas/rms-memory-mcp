@@ -26,6 +26,16 @@ You're developing a single project but switching between different agents — Cu
 
 **RMS Memory MCP** bridges this gap: a single, isolated, centralized Markdown vault — perfectly structured for LLM consumption — that any MCP-compatible IDE can read from and write to.
 
+---
+
+<div align="center">
+  <a href="https://ko-fi.com/M7I020HKXX" target="_blank" rel="noopener noreferrer">
+    <img src="https://ko-fi.com/img/githubbutton_sm.svg" alt="ko-fi">
+  </a>
+</div>
+
+---
+
 ## ✨ Key Features
 
 | | |
