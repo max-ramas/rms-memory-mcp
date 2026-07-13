@@ -154,6 +154,98 @@ fn spawn_sync_watcher(
     });
 }
 
+fn spawn_code_watcher(
+    workspace: crate::workspace::Workspace,
+    store: crate::store::Store,
+    indexer: Arc<Mutex<Indexer>>,
+    mut shutdown_rx: tokio::sync::watch::Receiver<bool>,
+) {
+    tokio::spawn(async move {
+        let (tx, mut rx) = tokio::sync::mpsc::channel::<std::time::SystemTime>(100);
+        let mut watcher = match notify::RecommendedWatcher::new(
+            move |result: notify::Result<notify::Event>| {
+                if let Ok(event) = result
+                    && matches!(
+                        event.kind,
+                        notify::EventKind::Modify(_)
+                            | notify::EventKind::Create(_)
+                            | notify::EventKind::Remove(_)
+                    )
+                    && event.paths.iter().any(|path| is_watched_rust_path(path))
+                {
+                    let _ = tx.try_send(std::time::SystemTime::now());
+                }
+            },
+            notify::Config::default(),
+        ) {
+            Ok(watcher) => watcher,
+            Err(error) => {
+                tracing::error!("Failed to create code watcher: {error}");
+                return;
+            }
+        };
+        use notify::Watcher;
+        if let Err(error) = watcher.watch(&workspace.code_path, notify::RecursiveMode::Recursive) {
+            tracing::error!("Failed to watch code path: {error}");
+            return;
+        }
+
+        let mut dirty_since = if crate::code_indexer::code_index_is_initialized(&store.storage_path)
+        {
+            None
+        } else {
+            Some(std::time::SystemTime::now())
+        };
+        let debounce = tokio::time::sleep(tokio::time::Duration::from_secs(3));
+        tokio::pin!(debounce);
+        if dirty_since.is_some() {
+            debounce.as_mut().reset(tokio::time::Instant::now());
+        }
+
+        loop {
+            tokio::select! {
+                _ = shutdown_rx.changed() => break,
+                observed = rx.recv() => {
+                    let Some(observed) = observed else { break; };
+                    dirty_since = Some(dirty_since.map_or(observed, |current| current.min(observed)));
+                    debounce.as_mut().reset(tokio::time::Instant::now() + tokio::time::Duration::from_secs(3));
+                }
+                _ = &mut debounce, if dirty_since.is_some() => {
+                    let observed = dirty_since.expect("guarded by select condition");
+                    if crate::code_indexer::code_index_is_fresh_since(&store.storage_path, observed) {
+                        dirty_since = None;
+                        continue;
+                    }
+                    let mut indexer = indexer.lock().await;
+                    match crate::code_indexer::try_index_code(&workspace, &store, &mut indexer).await {
+                        Ok(crate::code_indexer::CodeIndexStatus::Completed) => dirty_since = None,
+                        Ok(crate::code_indexer::CodeIndexStatus::Busy) => {
+                            debounce.as_mut().reset(tokio::time::Instant::now() + tokio::time::Duration::from_secs(3));
+                        }
+                        Err(error) => {
+                            tracing::error!("Background code index failed: {error:#}");
+                            dirty_since = None;
+                        }
+                    }
+                }
+            }
+        }
+        drop(watcher);
+    });
+}
+
+fn is_watched_rust_path(path: &std::path::Path) -> bool {
+    path.extension()
+        .and_then(|extension| extension.to_str())
+        .is_some_and(|extension| extension.eq_ignore_ascii_case("rs"))
+        && !path.components().any(|component| {
+            matches!(
+                component.as_os_str().to_str(),
+                Some(".git" | ".rms-memory" | "node_modules" | "target" | "vendor")
+            )
+        })
+}
+
 impl McpServer {
     pub async fn run(
         store: Option<crate::store::Store>,
@@ -308,6 +400,14 @@ impl McpServer {
                                 self.ctx.indexer.as_ref().unwrap().clone(),
                                 self.shutdown_tx.subscribe(),
                             );
+                            if workspace.code_index_mode == crate::workspace::CodeIndexMode::Watch {
+                                spawn_code_watcher(
+                                    workspace.clone(),
+                                    store.clone(),
+                                    self.ctx.indexer.as_ref().unwrap().clone(),
+                                    self.shutdown_tx.subscribe(),
+                                );
+                            }
                             self.ctx.store = Some(store);
                         }
                         Err(e) => {
@@ -320,7 +420,7 @@ impl McpServer {
                         "No project registered for path: {:?}. Trying global vault fallback.",
                         path
                     );
-                    if let Ok(registry) = crate::workspace::Registry::load()
+                    if let Ok(registry) = crate::config_manager::load_registry()
                         && let Some(global_vault) = &registry.global.global_vault_path
                     {
                         let vault_path = std::path::PathBuf::from(global_vault);
@@ -331,6 +431,7 @@ impl McpServer {
                                 code_path: path.clone(),
                                 include: vec!["**/*.md".to_string()],
                                 exclude: vec!["node_modules/**".to_string(), ".git/**".to_string()],
+                                code_index_mode: crate::workspace::CodeIndexMode::Off,
                             };
                             if let Ok(store) = workspace.get_store().await {
                                 spawn_sync_watcher(
@@ -362,14 +463,28 @@ impl McpServer {
                 "tools": [
                     {
                         "name": "rms_search",
-                        "description": "Search the local RMS Memory vector database (LanceDB) for project documentation, architectural decisions, and context rules using semantic similarity. Use this tool FIRST to understand the repository's background, past decisions, or rules before making changes. Provide a detailed semantic query. When using min_confidence: start WITHOUT it (omit the parameter) to see all available results. If you use a high threshold (e.g. 0.9) and get zero results, retry with a lower threshold or omit min_confidence entirely — low-confidence records may still contain useful information.",
+                        "description": "Search RMS Memory. `corpus=vault` (default) searches human Markdown memory; `code` searches derived semantic code; `all` ranks each corpus independently and combines them with Reciprocal Rank Fusion, never raw vector distances.",
                         "inputSchema": {
                             "type": "object",
                             "properties": {
                                 "query": { "type": "string", "description": "The semantic query string to search for." },
+                                "corpus": { "type": "string", "enum": ["vault", "code", "all"], "description": "Corpus to search. Defaults to vault." },
                                 "limit": { "type": "integer", "description": "Maximum number of chunks to return. Default is 10." },
                                 "include_content": { "type": "boolean", "description": "Whether to include full chunk text in results." },
                                 "min_confidence": { "type": "number", "description": "Optional minimum confidence threshold (0.0–1.0). Records with NULL confidence are always included. CAUTION: do NOT use high values (e.g. 0.9+) unless you need strict filtering. If zero results, retry without this parameter." }
+                            },
+                            "required": ["query"]
+                        }
+                    },
+                    {
+                        "name": "rms_code_search",
+                        "description": "Search only the derived semantic code index. Results include file, symbol, kind, line range, and segment index. The code index is optional, so an unindexed project returns an empty result list.",
+                        "inputSchema": {
+                            "type": "object",
+                            "properties": {
+                                "query": { "type": "string", "description": "The semantic code query." },
+                                "limit": { "type": "integer", "description": "Maximum results; default 10, maximum 100." },
+                                "include_content": { "type": "boolean", "description": "Whether to include indexed code content; default true." }
                             },
                             "required": ["query"]
                         }
@@ -411,6 +526,7 @@ impl McpServer {
 
                 match name {
                     "rms_search" => crate::tools::search::execute(&self.ctx, &args).await,
+                    "rms_code_search" => crate::tools::search::execute_code(&self.ctx, &args).await,
                     "rms_read" => crate::tools::read::execute(&self.ctx, &args).await,
                     "rms_write" => crate::tools::write::execute(&self.ctx, &args).await,
                     _ => anyhow::bail!("Unknown tool"),
@@ -418,5 +534,24 @@ impl McpServer {
             }
             _ => anyhow::bail!("Method not found"),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn code_watcher_filters_non_source_and_generated_paths() {
+        assert!(super::is_watched_rust_path(std::path::Path::new(
+            "src/lib.rs"
+        )));
+        assert!(!super::is_watched_rust_path(std::path::Path::new(
+            "README.md"
+        )));
+        assert!(!super::is_watched_rust_path(std::path::Path::new(
+            "target/debug/lib.rs"
+        )));
+        assert!(!super::is_watched_rust_path(std::path::Path::new(
+            ".git/hooks/check.rs"
+        )));
     }
 }

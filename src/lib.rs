@@ -1,4 +1,6 @@
+pub mod code_indexer;
 pub mod code_parser;
+pub mod config_manager;
 /// RMS Memory MCP Server
 ///
 /// This is the core library for RMS Memory, exposing its internal logic
@@ -7,10 +9,14 @@ pub mod code_parser;
 /// In future versions (v1.1+), these will be split into a proper Cargo Workspace.
 // Public API
 pub mod document;
+pub mod graph;
+pub mod graph_store;
 pub mod index_lock;
 pub mod indexer;
+pub mod jobs;
 pub mod store;
 pub mod tools;
+pub mod vault_graph;
 pub mod workspace;
 
 // Internal modules (hidden from docs.rs but available to the binary)

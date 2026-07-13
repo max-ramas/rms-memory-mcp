@@ -28,7 +28,7 @@ pub struct ServeArgs;
 
 impl ServeArgs {
     pub async fn run(&self, scope: Option<String>) -> Result<()> {
-        let registry = crate::workspace::Registry::load().unwrap_or_default();
+        let registry = crate::config_manager::load_registry().unwrap_or_default();
         let max_backups = registry.global.max_backups.unwrap_or(5);
         crate::mcp_server::McpServer::run(None, None, None, max_backups, scope).await?;
         Ok(())
@@ -36,18 +36,44 @@ impl ServeArgs {
 }
 
 #[derive(Args, Debug)]
-pub struct ReindexArgs;
+pub struct ReindexArgs {
+    /// Reindex Vault memory (the default when no corpus flag is provided)
+    #[arg(long, conflicts_with_all = ["code", "all"])]
+    pub vault: bool,
+    /// Reindex the derived semantic code memory
+    #[arg(long, conflicts_with_all = ["vault", "all"])]
+    pub code: bool,
+    /// Reindex both Vault and semantic code memory
+    #[arg(long, conflicts_with_all = ["vault", "code"])]
+    pub all: bool,
+}
 
 impl ReindexArgs {
     pub async fn run(&self, scope: Option<String>) -> Result<()> {
         let current_dir = std::env::current_dir()?;
         let workspace = Workspace::discover_with_scope(scope.as_deref(), &current_dir, None)?;
-        println!("Reindexing Vault at {:?}", workspace.root);
-
         let store = workspace.get_store().await?;
         let mut indexer = Indexer::new()?;
 
-        crate::indexer::index_vault_full(&workspace, &store, &mut indexer).await?;
+        if self.vault || self.all || !self.code {
+            println!("Reindexing Vault at {:?}", workspace.root);
+            crate::indexer::index_vault_full(&workspace, &store, &mut indexer).await?;
+        }
+        if self.code || self.all {
+            println!("Reindexing semantic code at {:?}", workspace.code_path);
+            let stats =
+                crate::code_indexer::index_code_full(&workspace, &store, &mut indexer).await?;
+            println!(
+                "Code index: {} files, {} items, {} segments ({} embedded, {} reused, {} removed; {} skipped)",
+                stats.files_indexed,
+                stats.items_indexed,
+                stats.segments_indexed,
+                stats.segments_embedded,
+                stats.segments_reused,
+                stats.segments_deleted,
+                stats.files_skipped
+            );
+        }
 
         println!("Reindex completed.");
         Ok(())
@@ -79,7 +105,7 @@ impl DoctorArgs {
                 ));
             }
 
-            let registry = crate::workspace::Registry::load()?;
+            let registry = crate::config_manager::load_registry()?;
             let mut vault_roots = registry
                 .projects
                 .values()
@@ -276,7 +302,7 @@ impl DoctorArgs {
 
         // 5. Check registry coherence
         println!("\n[5/5] Registry coherence...");
-        if let Ok(registry) = crate::workspace::Registry::load() {
+        if let Ok(registry) = crate::config_manager::load_registry() {
             let vault_canon =
                 std::fs::canonicalize(&workspace.root).unwrap_or_else(|_| workspace.root.clone());
             let vault_str = vault_canon.to_string_lossy().to_string();

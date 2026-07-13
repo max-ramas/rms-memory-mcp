@@ -26,7 +26,10 @@ impl InitArgs {
             .unwrap_or("UnknownProject")
             .to_string();
 
-        let mut registry = crate::workspace::Registry::load()?;
+        let manager = crate::config_manager::ConfigManager::open()?;
+        let snapshot = manager.snapshot();
+        let expected_revision = snapshot.revision;
+        let mut registry = snapshot.registry;
         if let Some(global_vault) = &registry.global.global_vault_path {
             let vault_path = std::path::Path::new(global_vault)
                 .join(&folder_name)
@@ -51,10 +54,11 @@ impl InitArgs {
                         "vendor/**".to_string(),
                         ".git/**".to_string(),
                     ],
+                    code_index_mode: crate::workspace::CodeIndexMode::Off,
                 },
             );
             if !self.dry_run {
-                registry.save()?;
+                manager.replace(expected_revision, registry.clone())?;
                 println!(
                     "Manually initialized project {} in global registry.",
                     folder_name

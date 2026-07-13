@@ -15,7 +15,10 @@ pub struct ConfigArgs {
 
 impl ConfigArgs {
     pub async fn run(&self, _scope: Option<String>) -> Result<()> {
-        let mut registry = crate::workspace::Registry::load().unwrap_or_default();
+        let manager = crate::config_manager::ConfigManager::open()?;
+        let snapshot = manager.snapshot();
+        let expected_revision = snapshot.revision;
+        let mut registry = snapshot.registry;
         let mut updated = false;
 
         if self.vault_path.is_none()
@@ -163,8 +166,11 @@ impl ConfigArgs {
         }
 
         if updated {
-            registry.save()?;
-            println!("Configuration saved successfully.");
+            let snapshot = manager.replace(expected_revision, registry)?;
+            println!(
+                "Configuration saved successfully (revision {}).",
+                snapshot.revision
+            );
         } else {
             println!("No changes made to configuration.");
         }

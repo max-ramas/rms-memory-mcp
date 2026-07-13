@@ -106,6 +106,7 @@ impl Drop for IndexLock {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::fs::OpenOptions;
     use std::io::{BufRead, BufReader};
     use std::process::{Command, Stdio};
 
@@ -164,6 +165,31 @@ mod tests {
     }
 
     #[test]
+    fn child_process_contends_for_multi_writer_test() {
+        if std::env::var_os("RMS_INDEX_LOCK_MULTI_WRITER_CHILD").is_none() {
+            return;
+        }
+        let storage = std::env::var("RMS_INDEX_LOCK_TEST_STORAGE").unwrap();
+        let events = std::env::var("RMS_INDEX_LOCK_TEST_EVENTS").unwrap();
+        let runtime = tokio::runtime::Runtime::new().unwrap();
+        let lock = runtime.block_on(acquire(&storage)).unwrap();
+        append_event(&events, format!("start:{}", std::process::id()));
+        std::thread::sleep(std::time::Duration::from_millis(100));
+        append_event(&events, format!("end:{}", std::process::id()));
+        drop(lock);
+    }
+
+    fn append_event(path: &str, event: String) {
+        let mut file = OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(path)
+            .unwrap();
+        writeln!(file, "{event}").unwrap();
+        file.sync_data().unwrap();
+    }
+
+    #[test]
     fn os_releases_lock_after_owner_process_is_killed() {
         let dir = tempfile::tempdir().unwrap();
         let storage = dir.path().to_string_lossy().into_owned();
@@ -200,5 +226,56 @@ mod tests {
             LockInspection::StaleMetadataCleared(owner)
         );
         assert_eq!(inspect(&storage).unwrap(), LockInspection::Unlocked);
+    }
+
+    #[test]
+    fn three_processes_serialize_writer_sections() {
+        let dir = tempfile::tempdir().unwrap();
+        let storage = dir.path().to_string_lossy().into_owned();
+        let events = dir.path().join("events.log");
+        let children = (0..3)
+            .map(|_| {
+                Command::new(std::env::current_exe().unwrap())
+                    .arg("index_lock::tests::child_process_contends_for_multi_writer_test")
+                    .arg("--exact")
+                    .env("RMS_INDEX_LOCK_MULTI_WRITER_CHILD", "1")
+                    .env("RMS_INDEX_LOCK_TEST_STORAGE", &storage)
+                    .env("RMS_INDEX_LOCK_TEST_EVENTS", &events)
+                    .spawn()
+                    .unwrap()
+            })
+            .collect::<Vec<_>>();
+        for mut child in children {
+            assert!(child.wait().unwrap().success());
+        }
+        let events = std::fs::read_to_string(events)
+            .unwrap()
+            .lines()
+            .map(str::to_string)
+            .collect::<Vec<_>>();
+        assert_eq!(events.len(), 6);
+        for pair in events.chunks_exact(2) {
+            let started = pair[0].strip_prefix("start:").unwrap();
+            let ended = pair[1].strip_prefix("end:").unwrap();
+            assert_eq!(started, ended, "writer sections overlapped: {pair:?}");
+        }
+        assert_eq!(inspect(&storage).unwrap(), LockInspection::Unlocked);
+    }
+
+    #[tokio::test]
+    async fn readers_remain_available_while_a_writer_lock_is_held() {
+        let dir = tempfile::tempdir().unwrap();
+        let storage = dir.path().to_string_lossy().into_owned();
+        let _writer = try_acquire(&storage).unwrap().unwrap();
+        let store = crate::store::Store::init(&storage, "memory").await.unwrap();
+        let (table, _) = store.open_or_create_code_table().await.unwrap();
+        assert_eq!(table.count_rows(None).await.unwrap(), 0);
+        assert!(
+            store
+                .search_code(vec![0.0; crate::store::VECTOR_DIMENSION], 1)
+                .await
+                .unwrap()
+                .is_empty()
+        );
     }
 }

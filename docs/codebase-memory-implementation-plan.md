@@ -7,6 +7,8 @@ RMS Memory will expose two complementary corpora through one MCP server:
 - **Vault memory** — human-editable Markdown containing decisions, rules, architecture, and artifacts.
 - **Code memory** — a derived, read-only semantic index of the current source tree.
 
+It will also maintain a transport-neutral **knowledge graph** over stable Vault documents and semantic code items. Search chunks are projections for retrieval; they are not stable graph identities.
+
 Markdown remains the source of truth for intent and history. Code chunks describe the implementation that exists now. Code indexing must never write to source files or silently create metadata in them.
 
 The complete knowledge lifecycle is:
@@ -19,7 +21,13 @@ Architecture and decisions (Vault) → Current implementation (Code) → Results
 
 - Slice 0 is implemented: fail-closed frontmatter parsing, read-only background sync, cross-process writer lock, watcher retry, repair tooling, and PID-aware lock diagnostics.
 - Slice 1 parser spike is implemented for Rust with fixture coverage for outer and inner docs, attributes, nested and documented modules, multiple impl blocks, generics, traits, enums, and undocumented items.
-- Slices 2–8 remain planned and must pass their acceptance gates in order; source watching stays disabled until Slice 7.
+- Slice 2 is implemented: semantic items emit stable, zero-based `segment_index` values; oversized chunks repeat their preamble and declaration signature, split body text at line boundaries when possible, and preserve a bounded character overlap.
+- Slice 3 is implemented: manual `reindex --code` builds the separate `code_chunks` table. Dogfood on this repository indexed 38 files into 188 items and 288 segments, with zero skipped files.
+- Slice 3.5 is in progress: canonical graph identities, versioned derived-edge keys, provenance/resolution types, and schemas for nodes, edges, and user overrides are implemented. The revisioned, atomically persisted ConfigManager with a change subscription now owns all internal CLI/MCP registry reads/writes. A transport-neutral job manager exposes structured progress, cooperative cancellation, and typed events. Graph tables now persist derived and user records; derived reconciliation is generation-based and override updates use CAS. Extractors and graph queries remain before Slice 4.
+- Slice 4 is implemented: `code_chunks` uses stable-id upserts, reuses a previous vector when the segment content hash is unchanged, and removes only ids no longer emitted by parsing. Code reindex emits Rust `use`, trait-implementation, and lexical call relationships as versioned unresolved graph hints; vault reindex/sync emits Markdown `links_to` edges, resolving known documents to `vault:<document_id>`. Release-dogfood timing remains pending.
+- Slice 5 is implemented: `rms_code_search` and `rms_search(corpus=vault|code|all)` expose both corpora; `all` uses RRF on source-local ranks. Slices 7–8 remain planned; source watching stays disabled until Slice 7.
+- Slice 6 is implemented: three independent writer processes serialize through the project lock, a reader remains available while a writer lock is held, and a killed lock owner releases the OS lock so metadata can be safely cleared.
+- Slice 7 is implemented: `ProjectConfig.code_index_mode` defaults to `off`; only `watch` enables Rust source watching. Paths are coalesced into a three-second quiet window, and a successful shared generation marker suppresses duplicate work in processes that lost the writer lock.
 
 ## Preconditions
 
@@ -76,6 +84,14 @@ Create a separate `code_chunks` table in the existing per-project database direc
 
 `item_key` is derived from `file_path + module_path + kind + qualified_symbol`. For an impl, the qualified symbol includes the trait, target type, and a deterministic occurrence discriminator when necessary. Duplicate symbol names in nested modules must not collide.
 
+## GUI-ready graph and core boundary
+
+The authoritative graph uses separate `graph_nodes`, `graph_edges`, and `graph_edge_overrides` tables. Edges reference `vault:<document_id>` or `code:<item_key>`, never chunk IDs. Derived rows carry a versioned extractor and generation; user rows are outside reindex ownership. User suppression of a derived edge is persisted as an override so the edge does not reappear on the next reindex.
+
+MCP, CLI, and the future GUI are adapters over one application API. The core exposes structured commands, queries, cancellable jobs, progress, and typed events. HTTP/SSE or Unix-socket transport is deferred until that boundary exists. Configuration access moves behind a revisioned `ConfigManager` with validation, an OS lock, atomic replace, change notifications, and compare-and-swap updates.
+
+The detailed contract is in `docs/gui-ready-core-architecture.md`.
+
 ## Chunking contract
 
 - Parse Rust with `tree-sitter` and `tree-sitter-rust`.
@@ -85,6 +101,7 @@ Create a separate `code_chunks` table in the existing per-project database direc
 - Methods remain inside their impl block in v1.
 - For an item up to 1500 characters, emit one segment.
 - For an oversized item, preserve doc comments, attributes, and signature as a preamble in every segment; split only the body with approximately 200 characters of overlap.
+- Segment sizes count Unicode characters. If the repeated preamble itself exceeds the target size, retain it intact and reduce the body budget rather than truncating semantic context.
 - Use a new `split_with_preamble` helper. The Markdown `split_large_node` helper cannot satisfy this contract unchanged.
 
 ## Incremental update algorithm
@@ -160,36 +177,45 @@ Current `_distance` values use lower-is-better semantics, but `corpus=all` never
 ### Slice 2 — Preamble-aware segmentation
 
 - Implement `split_with_preamble` and `segment_index`.
-- Acceptance: every oversized segment contains the full signature/docs; body overlap is measured; IDs are unique and stable.
+- Acceptance: every oversized segment contains the full signature/docs; body overlap is measured; IDs are unique and stable. **Implemented and covered by parser unit tests.**
 
 ### Slice 3 — Code table and manual full index
 
 - Add schema, migrations, Rust walker, hard excludes, nested `.gitignore`, and file-size limit.
 - Implement `reindex --code` and `reindex --all` only; no automatic watching.
-- Acceptance: dogfood on this repository, record scan time, parse time, embed time, peak RSS, file count, item count, and segment count.
+- Acceptance: dogfood on this repository, record scan time, parse time, embed time, peak RSS, file count, item count, and segment count. **Implemented; initial dogfood: 38 files, 188 items, 288 segments, 0 skipped. Fine-grained timing/RSS telemetry remains part of the release gate.**
+
+### Slice 3.5 — GUI foundation
+
+- freeze canonical graph node/edge keys, provenance, resolution state, and override semantics;
+- add graph table schemas and migration/round-trip tests; **implemented: on-demand table creation, generation reconciliation, user-row preservation, and CAS overrides**;
+- route registry reads/writes through a revisioned, atomically persisted `ConfigManager`; **implemented, with a cross-process lock, CAS, atomic replace, and `notify` watcher**;
+- introduce transport-neutral job progress and event interfaces; do not add HTTP yet; **implemented with bounded typed events and cooperative cancellation**;
+- acceptance: derived reconciliation cannot mutate user edges; suppressed derived edges stay suppressed; concurrent config updates produce a conflict rather than lost data.
 
 ### Slice 4 — Incremental replacement and embedding reuse
 
-- Implement `(item_key, segment_index)` matching, content-hash reuse, and orphan cleanup.
+- Implement `(item_key, segment_index)` matching, content-hash reuse, and orphan cleanup. **Implemented: stable id upsert preserves line metadata updates while exact content hashes reuse their existing vector; only absent ids are deleted.**
+- Extract Markdown links, Rust `use`, trait impl, and explicitly unresolved call-symbol relationships into the graph during reconciliation. **Implemented: Rust extraction through `rust-tree-sitter-v1` makes module-level `use` declarations, trait impls, and call syntax derived edges with `resolution=unresolved`; `markdown-links-v1` maps known links to `vault:<document_id>` and preserves unknown links as unresolved external nodes.**
 - Acceptance: adding lines above an item changes line metadata but neither ID nor embedding; editing one function embeds only its changed segments; deletion removes all rows.
 
 ### Slice 5 — Search APIs
 
 - Add `rms_code_search` and `rms_search(corpus=...)`.
 - Add code result metadata and merged ranking.
-- Acceptance: JSON-RPC tests cover all corpora, absent code table, empty index, `min_confidence`, lower-is-better distance handling, and limit-after-merge.
+- Acceptance: JSON-RPC tests cover all corpora, absent code table, empty index, `min_confidence`, lower-is-better distance handling, and limit-after-merge. **Implemented at the Store/MCP-handler layer: absent code table returns an empty corpus; `min_confidence` remains Vault-only; `corpus=all` runs independent searches then applies deterministic RRF with rank constant 60 and truncates only after fusion.**
 
 ### Slice 6 — Multi-process verification
 
 - Exercise three concurrent manual reindexes and simultaneous reads.
 - Test lock contention, dirty retry, process crash, and source changes during embedding.
-- Acceptance: one writer embeds each generation, readers remain available, no lost update, and no stale lock after crash.
+- Acceptance: one writer embeds each generation, readers remain available, no lost update, and no stale lock after crash. **Implemented: a three-child-process test observes non-overlapping writer sections; a live reader test succeeds while the lock is held; crash recovery verifies OS lock release and safe stale metadata clearing.**
 
 ### Slice 7 — Opt-in source watcher
 
 - Enable `code_index_mode=watch` with event coalescing by file path and a three-second quiet window.
 - Maintain a dirty generation rather than an unbounded event queue.
-- Acceptance: five IDE processes plus rapid saves produce one logical reindex generation and return to idle CPU.
+- Acceptance: five IDE processes plus rapid saves produce one logical reindex generation and return to idle CPU. **Implemented: `.rs` paths outside generated/excluded directories are coalesced for three seconds; the first writer records a completion marker while holding the writer flow, and contending processes drop the same dirty generation once the marker is newer than their observed save.**
 
 ### Slice 8 — Release gate
 
@@ -200,8 +226,9 @@ Current `_distance` values use lower-is-better semantics, but `corpus=all` never
 ## Explicit non-goals for v1
 
 - Go, TypeScript, and JavaScript parsers.
-- A doc-to-code backlink graph.
+- Compiler-accurate Rust name resolution or a complete call graph.
 - Method-level impl chunking.
 - Editing source files through MCP.
 - A permanent background daemon.
+- Shipping the GUI or binding a local HTTP server before the transport-neutral core API exists.
 - Dynamic resource throttling beyond fixed thread/batch/file-size limits.

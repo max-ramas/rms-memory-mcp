@@ -4,15 +4,36 @@ use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-#[derive(Deserialize, Serialize, Debug, Clone, Default)]
+pub const REGISTRY_SCHEMA_VERSION: u32 = 1;
+
+#[derive(Deserialize, Serialize, Debug, Clone, PartialEq, Eq)]
 pub struct Registry {
+    #[serde(default = "default_registry_schema_version")]
+    pub schema_version: u32,
+    #[serde(default)]
+    pub config_revision: u64,
     #[serde(default)]
     pub global: GlobalConfig,
     #[serde(default)]
     pub projects: HashMap<String, ProjectConfig>,
 }
 
-#[derive(Deserialize, Serialize, Debug, Clone, Default)]
+impl Default for Registry {
+    fn default() -> Self {
+        Self {
+            schema_version: REGISTRY_SCHEMA_VERSION,
+            config_revision: 0,
+            global: GlobalConfig::default(),
+            projects: HashMap::new(),
+        }
+    }
+}
+
+fn default_registry_schema_version() -> u32 {
+    REGISTRY_SCHEMA_VERSION
+}
+
+#[derive(Deserialize, Serialize, Debug, Clone, Default, PartialEq, Eq)]
 pub struct GlobalConfig {
     pub global_vault_path: Option<String>,
     pub auto_add_projects: Option<bool>,
@@ -21,7 +42,7 @@ pub struct GlobalConfig {
     pub auto_import_strategy: Option<String>,
 }
 
-#[derive(Deserialize, Serialize, Debug, Clone)]
+#[derive(Deserialize, Serialize, Debug, Clone, PartialEq, Eq)]
 pub struct ProjectConfig {
     pub code_path: String,
     pub vault_path: String,
@@ -29,6 +50,17 @@ pub struct ProjectConfig {
     pub include: Vec<String>,
     #[serde(default = "default_exclude")]
     pub exclude: Vec<String>,
+    #[serde(default)]
+    pub code_index_mode: CodeIndexMode,
+}
+
+#[derive(Deserialize, Serialize, Debug, Clone, Copy, Default, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum CodeIndexMode {
+    #[default]
+    Off,
+    Manual,
+    Watch,
 }
 
 fn default_include() -> Vec<String> {
@@ -124,6 +156,7 @@ pub struct Workspace {
     pub code_path: PathBuf,
     pub include: Vec<String>,
     pub exclude: Vec<String>,
+    pub code_index_mode: CodeIndexMode,
 }
 
 impl Workspace {
@@ -156,6 +189,7 @@ impl Workspace {
             code_path,
             include: default_include(),
             exclude: default_exclude(),
+            code_index_mode: CodeIndexMode::Off,
         })
     }
 
@@ -163,7 +197,10 @@ impl Workspace {
         start_dir: &Path,
         options: Option<crate::rules_injector::InjectOptions>,
     ) -> Result<Self> {
-        let mut registry = Registry::load()?;
+        let config_manager = crate::config_manager::ConfigManager::open()?;
+        let config_snapshot = config_manager.snapshot();
+        let config_revision = config_snapshot.revision;
+        let mut registry = config_snapshot.registry;
         let start_canon = fs::canonicalize(start_dir).unwrap_or_else(|_| start_dir.to_path_buf());
         let start_str = start_canon.to_string_lossy().to_string();
 
@@ -206,6 +243,7 @@ impl Workspace {
                 code_path: PathBuf::from(&project.code_path),
                 include: project.include.clone(),
                 exclude: project.exclude.clone(),
+                code_index_mode: project.code_index_mode,
             });
         }
 
@@ -240,12 +278,13 @@ impl Workspace {
                 vault_path: vault_path.clone(),
                 include: default_include(),
                 exclude: default_exclude(),
+                code_index_mode: CodeIndexMode::Off,
             };
 
             registry
                 .projects
                 .insert(folder_name, project_config.clone());
-            registry.save()?;
+            config_manager.replace(config_revision, registry.clone())?;
 
             if registry.global.inject_rules.unwrap_or(false) {
                 let inject_opts = options.unwrap_or_default();
@@ -292,6 +331,7 @@ impl Workspace {
                 code_path: PathBuf::from(&project_config.code_path),
                 include: project_config.include.clone(),
                 exclude: project_config.exclude.clone(),
+                code_index_mode: project_config.code_index_mode,
             })
         } else {
             Err(anyhow!(

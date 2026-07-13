@@ -320,6 +320,8 @@ async fn sync_vault_inner(
         }
     }
 
+    let graph_needs_reconcile = !to_delete.is_empty() || !to_index.is_empty();
+
     // 1. Delete old vectors
     for doc_id in &to_delete {
         tracing::info!("Sync: Deleting outdated/orphaned document_id: {}", doc_id);
@@ -329,6 +331,9 @@ async fn sync_vault_inner(
     // 2. Insert new vectors
     if to_index.is_empty() {
         tracing::info!("Sync: No changes detected. Vault is up to date.");
+        if graph_needs_reconcile {
+            crate::vault_graph::reconcile_vault_links(workspace, store).await?;
+        }
         return Ok(());
     }
 
@@ -415,6 +420,9 @@ async fn sync_vault_inner(
     if !records.is_empty() {
         store.insert_batch(&table, records).await?;
         tracing::info!("Sync: Upsert complete.");
+    }
+    if graph_needs_reconcile {
+        crate::vault_graph::reconcile_vault_links(workspace, store).await?;
     }
 
     Ok(())
@@ -553,6 +561,7 @@ async fn index_vault_full_inner(
     } else {
         tracing::info!("Full Reindex: No indexable content found.");
     }
+    crate::vault_graph::reconcile_vault_links(workspace, store).await?;
 
     Ok(())
 }

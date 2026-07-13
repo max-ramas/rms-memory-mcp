@@ -6,7 +6,7 @@ pub struct GcArgs;
 
 impl GcArgs {
     pub async fn run(&self, _scope: Option<String>) -> Result<()> {
-        let registry = crate::workspace::Registry::load()?;
+        let registry = crate::config_manager::load_registry()?;
         let dbs_dir = crate::workspace::base_dir().join("dbs");
         if !dbs_dir.exists() {
             println!("No databases found.");

@@ -13,6 +13,12 @@ pub enum CodeKind {
     ModuleDoc,
 }
 
+impl CodeKind {
+    pub fn as_str(self) -> &'static str {
+        kind_name(self)
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ParsedCodeItem {
     pub item_key: String,
@@ -24,10 +30,53 @@ pub struct ParsedCodeItem {
     pub start_line: u32,
     pub end_line: u32,
     pub preamble: String,
+    #[serde(skip)]
+    pub signature: String,
     pub body: String,
     pub content: String,
     pub item_hash: String,
+    #[serde(skip)]
+    source_start_byte: usize,
+    #[serde(skip)]
+    source_end_byte: usize,
 }
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RustRelationKind {
+    Uses,
+    Implements,
+    CallsSymbol,
+}
+
+impl RustRelationKind {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Uses => "uses",
+            Self::Implements => "implements",
+            Self::CallsSymbol => "calls_symbol",
+        }
+    }
+}
+
+/// A syntactic relationship hint. Targets deliberately remain lexical; a later
+/// resolver may promote them from unresolved to resolved/ambiguous.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RustRelationHint {
+    pub source_item_key: String,
+    pub relation: RustRelationKind,
+    pub target_identifier: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct CodeSegment {
+    pub item_key: String,
+    pub segment_index: u32,
+    pub content: String,
+    pub content_hash: String,
+}
+
+pub const CODE_SEGMENT_MAX_CHARS: usize = 1500;
+pub const CODE_SEGMENT_OVERLAP_CHARS: usize = 200;
 
 pub fn parse_rust_file(file_path: &str, source: &str) -> Result<Vec<ParsedCodeItem>> {
     let mut parser = Parser::new();
@@ -154,6 +203,7 @@ fn build_item(
         other => unreachable!("unsupported code item: {other}"),
     };
     let body = node_text(node, source).to_string();
+    let signature = item_signature(node, source);
     let preamble = join_nodes(preamble_nodes, source);
     let content = if preamble.is_empty() {
         body.clone()
@@ -192,9 +242,12 @@ fn build_item(
         start_line: start.start_position().row as u32 + 1,
         end_line: inclusive_end_line(node),
         preamble,
+        signature,
         body,
         item_hash: blake3::hash(content.as_bytes()).to_string(),
         content,
+        source_start_byte: start.start_byte(),
+        source_end_byte: node.end_byte(),
     }
 }
 
@@ -218,9 +271,240 @@ fn build_module_doc(
         start_line: nodes.first().unwrap().start_position().row as u32 + 1,
         end_line: inclusive_end_line(*nodes.last().unwrap()),
         preamble: String::new(),
+        signature: String::new(),
         body: content.clone(),
         item_hash: blake3::hash(content.as_bytes()).to_string(),
         content,
+        source_start_byte: nodes.first().unwrap().start_byte(),
+        source_end_byte: nodes.last().unwrap().end_byte(),
+    }
+}
+
+pub fn extract_rust_relation_hints(
+    file_path: &str,
+    source: &str,
+    items: &[ParsedCodeItem],
+) -> Result<Vec<RustRelationHint>> {
+    let mut parser = Parser::new();
+    parser
+        .set_language(&tree_sitter_rust::LANGUAGE.into())
+        .map_err(|error| anyhow!("Failed to load Rust grammar: {error}"))?;
+    let tree = parser
+        .parse(source, None)
+        .ok_or_else(|| anyhow!("Tree-sitter returned no Rust syntax tree"))?;
+    if tree.root_node().has_error() {
+        return Err(anyhow!("Rust source contains syntax errors: {file_path}"));
+    }
+    let mut hints = Vec::new();
+    walk_relation_nodes(tree.root_node(), file_path, source, items, &[], &mut hints);
+    hints.sort_by(|left, right| {
+        (
+            &left.source_item_key,
+            left.relation.as_str(),
+            &left.target_identifier,
+        )
+            .cmp(&(
+                &right.source_item_key,
+                right.relation.as_str(),
+                &right.target_identifier,
+            ))
+    });
+    hints.dedup_by(|left, right| {
+        left.source_item_key == right.source_item_key
+            && left.relation == right.relation
+            && left.target_identifier == right.target_identifier
+    });
+    Ok(hints)
+}
+
+/// Graph-only stable identity for a Rust file/module container. It deliberately
+/// differs from chunk item keys because a module can have imports without a
+/// documentable declaration that would produce a search chunk.
+pub fn rust_module_item_key(file_path: &str, module_path: &[String]) -> String {
+    blake3::hash(format!("{file_path}\0{}\0rust_module", module_path.join("::")).as_bytes())
+        .to_string()
+}
+
+fn walk_relation_nodes(
+    node: Node<'_>,
+    file_path: &str,
+    source: &str,
+    items: &[ParsedCodeItem],
+    module_path: &[String],
+    hints: &mut Vec<RustRelationHint>,
+) {
+    let owner = || {
+        items
+            .iter()
+            .filter(|item| {
+                item.source_start_byte <= node.start_byte()
+                    && node.end_byte() <= item.source_end_byte
+            })
+            .min_by_key(|item| item.source_end_byte - item.source_start_byte)
+            .map(|item| item.item_key.clone())
+            .unwrap_or_else(|| rust_module_item_key(file_path, module_path))
+    };
+    match node.kind() {
+        "use_declaration" => {
+            if let Some(argument) = node.child_by_field_name("argument") {
+                hints.push(RustRelationHint {
+                    source_item_key: owner(),
+                    relation: RustRelationKind::Uses,
+                    target_identifier: format!("rust-use:{}", node_text(argument, source).trim()),
+                });
+            }
+        }
+        "impl_item" => {
+            if let Some(trait_name) = node.child_by_field_name("trait") {
+                hints.push(RustRelationHint {
+                    source_item_key: owner(),
+                    relation: RustRelationKind::Implements,
+                    target_identifier: format!(
+                        "rust-trait:{}",
+                        node_text(trait_name, source).trim()
+                    ),
+                });
+            }
+        }
+        "call_expression" => {
+            if let Some(function) = node.child_by_field_name("function") {
+                hints.push(RustRelationHint {
+                    source_item_key: owner(),
+                    relation: RustRelationKind::CallsSymbol,
+                    target_identifier: format!(
+                        "rust-symbol:{}",
+                        node_text(function, source).trim()
+                    ),
+                });
+            }
+        }
+        _ => {}
+    }
+
+    let mut child_module_path = module_path.to_vec();
+    if node.kind() == "mod_item"
+        && let Some(name) = node.child_by_field_name("name")
+    {
+        child_module_path.push(node_text(name, source).to_string());
+    }
+    let mut cursor = node.walk();
+    for child in node.named_children(&mut cursor) {
+        walk_relation_nodes(child, file_path, source, items, &child_module_path, hints);
+    }
+}
+
+/// Splits an oversized semantic item while retaining its documentation,
+/// attributes, and declaration signature in every resulting segment.
+pub fn split_with_preamble(item: &ParsedCodeItem) -> Vec<CodeSegment> {
+    split_with_preamble_with_limits(item, CODE_SEGMENT_MAX_CHARS, CODE_SEGMENT_OVERLAP_CHARS)
+}
+
+pub fn split_with_preamble_with_limits(
+    item: &ParsedCodeItem,
+    max_chars: usize,
+    overlap_chars: usize,
+) -> Vec<CodeSegment> {
+    assert!(max_chars > 0, "max_chars must be positive");
+
+    if char_len(&item.content) <= max_chars {
+        return vec![make_segment(item, 0, item.content.clone())];
+    }
+
+    let repeated_preamble = match (item.preamble.is_empty(), item.signature.is_empty()) {
+        (true, true) => String::new(),
+        (true, false) => item.signature.clone(),
+        (false, true) => item.preamble.clone(),
+        (false, false) => format!("{}\n{}", item.preamble, item.signature),
+    };
+    let body = item
+        .body
+        .strip_prefix(&item.signature)
+        .unwrap_or(&item.body);
+    let body_budget = max_chars
+        .saturating_sub(char_len(&repeated_preamble))
+        .max(1);
+    let effective_overlap = overlap_chars.min(body_budget.saturating_sub(1));
+    let body_slices = split_body_with_overlap(body, body_budget, effective_overlap);
+
+    body_slices
+        .into_iter()
+        .enumerate()
+        .map(|(index, body_slice)| {
+            let content = format!("{repeated_preamble}{body_slice}");
+            make_segment(item, index as u32, content)
+        })
+        .collect()
+}
+
+fn make_segment(item: &ParsedCodeItem, segment_index: u32, content: String) -> CodeSegment {
+    CodeSegment {
+        item_key: item.item_key.clone(),
+        segment_index,
+        content_hash: blake3::hash(content.as_bytes()).to_string(),
+        content,
+    }
+}
+
+fn split_body_with_overlap(body: &str, max_chars: usize, overlap_chars: usize) -> Vec<String> {
+    if body.is_empty() {
+        return vec![String::new()];
+    }
+
+    let mut slices = Vec::new();
+    let mut start = 0;
+    while start < body.len() {
+        let mut end = advance_chars(body, start, max_chars);
+        if end < body.len()
+            && let Some(newline) = body[start..end].rfind('\n')
+            && newline > 0
+        {
+            end = start + newline + 1;
+        }
+        slices.push(body[start..end].to_string());
+        if end == body.len() {
+            break;
+        }
+
+        let next_start = retreat_chars(body, end, overlap_chars);
+        start = if next_start <= start { end } else { next_start };
+    }
+    slices
+}
+
+fn advance_chars(text: &str, start: usize, count: usize) -> usize {
+    text[start..]
+        .char_indices()
+        .nth(count)
+        .map(|(offset, _)| start + offset)
+        .unwrap_or(text.len())
+}
+
+fn retreat_chars(text: &str, end: usize, count: usize) -> usize {
+    if count == 0 {
+        return end;
+    }
+    text[..end]
+        .char_indices()
+        .rev()
+        .nth(count - 1)
+        .map(|(offset, _)| offset)
+        .unwrap_or(0)
+}
+
+fn char_len(text: &str) -> usize {
+    text.chars().count()
+}
+
+fn item_signature(node: Node<'_>, source: &str) -> String {
+    let node_start = node.start_byte();
+    let Some(body) = node.child_by_field_name("body") else {
+        return node_text(node, source).to_string();
+    };
+    let body_text = node_text(body, source);
+    if body_text.starts_with('{') {
+        format!("{}{{", &source[node_start..body.start_byte()])
+    } else {
+        source[node_start..body.start_byte()].to_string()
     }
 }
 
@@ -471,5 +755,84 @@ mod tests {
         assert_eq!((items[0].start_line, items[0].end_line), (1, 1));
         assert_eq!(items[1].qualified_symbol, "api::ping");
         items.iter().for_each(assert_identity_and_range);
+    }
+
+    #[test]
+    fn oversized_items_repeat_preamble_and_signature_with_stable_segments() {
+        let statements = (0..60)
+            .map(|index| format!("    let value_{index} = \"payload-{index:02}\";\n"))
+            .collect::<String>();
+        let source = format!(
+            "/// Explains the large operation.\n#[allow(unused_variables)]\npub fn large() {{{statements}}}\n"
+        );
+        let item = parse_rust_file("src/large.rs", &source)
+            .unwrap()
+            .pop()
+            .unwrap();
+        let segments = split_with_preamble_with_limits(&item, 260, 40);
+        assert!(segments.len() > 2);
+
+        let repeated = format!("{}\n{}", item.preamble, item.signature);
+        for (index, segment) in segments.iter().enumerate() {
+            assert_eq!(segment.item_key, item.item_key);
+            assert_eq!(segment.segment_index, index as u32);
+            assert!(segment.content.starts_with(&repeated));
+            assert_eq!(
+                segment.content_hash,
+                blake3::hash(segment.content.as_bytes()).to_string()
+            );
+            assert!(char_len(&segment.content) <= 260);
+        }
+
+        for pair in segments.windows(2) {
+            let left = pair[0].content.strip_prefix(&repeated).unwrap();
+            let right = pair[1].content.strip_prefix(&repeated).unwrap();
+            assert_eq!(&left[left.len() - 40..], &right[..40]);
+        }
+    }
+
+    #[test]
+    fn extracts_syntactic_use_impl_and_call_hints_without_claiming_resolution() {
+        let source = r#"
+use crate::shared::Thing;
+
+trait Render { fn render(&self); }
+struct Screen;
+impl Render for Screen {
+    fn render(&self) { helper(); }
+}
+fn helper() { let _ = Thing::default(); }
+"#;
+        let items = parse_rust_file("src/ui.rs", source).unwrap();
+        let hints = extract_rust_relation_hints("src/ui.rs", source, &items).unwrap();
+        assert!(hints.iter().any(|hint| {
+            hint.relation == RustRelationKind::Uses
+                && hint.target_identifier == "rust-use:crate::shared::Thing"
+                && hint.source_item_key == rust_module_item_key("src/ui.rs", &[])
+        }));
+        assert!(hints.iter().any(|hint| {
+            hint.relation == RustRelationKind::Implements
+                && hint.target_identifier == "rust-trait:Render"
+        }));
+        assert!(hints.iter().any(|hint| {
+            hint.relation == RustRelationKind::CallsSymbol
+                && hint.target_identifier == "rust-symbol:helper"
+        }));
+        assert!(hints.iter().any(|hint| {
+            hint.relation == RustRelationKind::CallsSymbol
+                && hint.target_identifier == "rust-symbol:Thing::default"
+        }));
+    }
+
+    #[test]
+    fn small_items_keep_their_original_content_as_segment_zero() {
+        let item = parse_rust_file("src/lib.rs", &fixture("outer_doc_fn.rs"))
+            .unwrap()
+            .pop()
+            .unwrap();
+        let segments = split_with_preamble(&item);
+        assert_eq!(segments.len(), 1);
+        assert_eq!(segments[0].segment_index, 0);
+        assert_eq!(segments[0].content, item.content);
     }
 }
