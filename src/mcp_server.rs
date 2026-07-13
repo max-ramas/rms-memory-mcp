@@ -162,6 +162,7 @@ fn spawn_code_watcher(
 ) {
     tokio::spawn(async move {
         let (tx, mut rx) = tokio::sync::mpsc::channel::<std::time::SystemTime>(100);
+        let watched_languages = workspace.code_languages.clone();
         let mut watcher = match notify::RecommendedWatcher::new(
             move |result: notify::Result<notify::Event>| {
                 if let Ok(event) = result
@@ -171,7 +172,10 @@ fn spawn_code_watcher(
                             | notify::EventKind::Create(_)
                             | notify::EventKind::Remove(_)
                     )
-                    && event.paths.iter().any(|path| is_watched_code_path(path))
+                    && event
+                        .paths
+                        .iter()
+                        .any(|path| is_watched_code_path(path, &watched_languages))
                 {
                     let _ = tx.try_send(std::time::SystemTime::now());
                 }
@@ -234,8 +238,8 @@ fn spawn_code_watcher(
     });
 }
 
-fn is_watched_code_path(path: &std::path::Path) -> bool {
-    crate::code_indexer::is_supported_code_path(path)
+fn is_watched_code_path(path: &std::path::Path, configured_languages: &[String]) -> bool {
+    crate::code_indexer::is_indexable_code_path(path, configured_languages)
         && !path.components().any(|component| {
             matches!(
                 component.as_os_str().to_str(),
@@ -430,6 +434,7 @@ impl McpServer {
                                 include: vec!["**/*.md".to_string()],
                                 exclude: vec!["node_modules/**".to_string(), ".git/**".to_string()],
                                 code_index_mode: crate::workspace::CodeIndexMode::Off,
+                                code_languages: vec!["auto".to_string()],
                             };
                             if let Ok(store) = workspace.get_store().await {
                                 spawn_sync_watcher(
@@ -539,20 +544,30 @@ impl McpServer {
 mod tests {
     #[test]
     fn code_watcher_filters_non_source_and_generated_paths() {
-        assert!(super::is_watched_code_path(std::path::Path::new(
-            "src/lib.rs"
-        )));
-        assert!(super::is_watched_code_path(std::path::Path::new(
-            "src/main.go"
-        )));
-        assert!(!super::is_watched_code_path(std::path::Path::new(
-            "README.md"
-        )));
-        assert!(!super::is_watched_code_path(std::path::Path::new(
-            "target/debug/lib.rs"
-        )));
-        assert!(!super::is_watched_code_path(std::path::Path::new(
-            ".git/hooks/check.rs"
-        )));
+        let auto = ["auto".to_string()];
+        assert!(super::is_watched_code_path(
+            std::path::Path::new("src/lib.rs"),
+            &auto
+        ));
+        assert!(super::is_watched_code_path(
+            std::path::Path::new("src/main.go"),
+            &auto
+        ));
+        assert!(!super::is_watched_code_path(
+            std::path::Path::new("README.md"),
+            &auto
+        ));
+        assert!(!super::is_watched_code_path(
+            std::path::Path::new("target/debug/lib.rs"),
+            &auto
+        ));
+        assert!(!super::is_watched_code_path(
+            std::path::Path::new(".git/hooks/check.rs"),
+            &auto
+        ));
+        assert!(!super::is_watched_code_path(
+            std::path::Path::new("src/lib.rs"),
+            &["go".to_string()]
+        ));
     }
 }

@@ -44,7 +44,10 @@ jobs:
       run: cargo fmt --all -- --check
 
     - name: Run Clippy
-      run: cargo clippy -- -D warnings
+      run: cargo clippy --all-targets -- -D warnings
 
     - name: Run Tests
       run: cargo test --verbose
+
+    - name: Record grammar dependency graph
+      run: cargo tree -i tree-sitter

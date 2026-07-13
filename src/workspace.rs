@@ -53,6 +53,12 @@ pub struct ProjectConfig {
     pub exclude: Vec<String>,
     #[serde(default)]
     pub code_index_mode: CodeIndexMode,
+    #[serde(default = "default_code_languages")]
+    pub code_languages: Vec<String>,
+}
+
+fn default_code_languages() -> Vec<String> {
+    vec!["auto".to_string()]
 }
 
 #[derive(Deserialize, Serialize, Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -173,6 +179,7 @@ pub struct Workspace {
     pub include: Vec<String>,
     pub exclude: Vec<String>,
     pub code_index_mode: CodeIndexMode,
+    pub code_languages: Vec<String>,
 }
 
 impl Workspace {
@@ -206,6 +213,7 @@ impl Workspace {
             include: default_include(),
             exclude: default_exclude(),
             code_index_mode: CodeIndexMode::Off,
+            code_languages: default_code_languages(),
         })
     }
 
@@ -260,6 +268,7 @@ impl Workspace {
                 include: project.include.clone(),
                 exclude: project.exclude.clone(),
                 code_index_mode: project.code_index_mode,
+                code_languages: project.code_languages.clone(),
             });
         }
 
@@ -295,6 +304,7 @@ impl Workspace {
                 include: default_include(),
                 exclude: default_exclude(),
                 code_index_mode: CodeIndexMode::Off,
+                code_languages: default_code_languages(),
             };
 
             registry
@@ -348,6 +358,7 @@ impl Workspace {
                 include: project_config.include.clone(),
                 exclude: project_config.exclude.clone(),
                 code_index_mode: project_config.code_index_mode,
+                code_languages: project_config.code_languages.clone(),
             })
         } else {
             Err(anyhow!(

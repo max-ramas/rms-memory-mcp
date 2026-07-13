@@ -34,7 +34,7 @@ You're developing a single project but switching between different agents — Cu
 | 🔍 **Hybrid Retrieval (LanceDB)** | Embedded Vector Search + Tantivy Full-Text Search for zero-fail context hits. |
 | 🌐 **Multilingual Semantic Parsing** | `fastembed-rs` + `multilingual-e5-small` — native Russian & English understanding. |
 | 🌳 **AST Markdown Chunker** | `pulldown-cmark`-based chunking keeps code blocks and lists bound to their parent heading. |
-| 🧩 **Semantic Code Memory** | Optional Rust and Go indexing uses tree-sitter items, stable segment identities, and repeated preambles so large implementations remain intelligible when split. |
+| 🧩 **Semantic Code Memory** | Optional Tree-sitter indexing for Rust, Go, JS/JSX, TS/TSX, Python, C/C++, Java, Ruby, Swift, and Vue `<script>` blocks; stable segment identities and repeated preambles preserve context when large implementations split. |
 | 🕸️ **Knowledge Graph Foundation** | Derived Markdown/code relationships and durable user overrides are stored separately from retrieval chunks, ready for a future visual editor. |
 | 🔀 **Federated Corpus Search** | Search `vault`, `code`, or `all`; mixed results use Reciprocal Rank Fusion rather than incompatible raw vector distances. |
 | ⚙️ **Dynamic Auto-Installer** | `rms-memory install` scans your system and wires itself into every supported IDE. |
@@ -131,14 +131,23 @@ The next time you open a project in a connected IDE, the server reads the `rootU
 
 ### Optional semantic code memory
 
-Markdown memory remains the default corpus. Rust and Go source indexing are separate and never change source files:
+Markdown memory remains the default corpus. Semantic source indexing is separate, supports all bundled language adapters, and never changes source files:
 
 ```bash
 rms-memory reindex --code  # build/update only derived code memory
 rms-memory reindex --all   # refresh Markdown vault + code memory
 ```
 
-Registered projects support `code_index_mode = "off" | "manual" | "watch"`; the default is `off`. Set it from the project root with `rms-memory config --code-index-mode watch` (or add `--scope <project-path>`). `watch` is explicitly opt-in, coalesces Rust and Go saves for three seconds, and coordinates concurrent IDE processes so an unchanged workspace stays idle. Code search results include their source language.
+Registered projects support `code_index_mode = "off" | "manual" | "watch"`; the default is `off`. Set it from the project root with `rms-memory config --code-index-mode watch` (or add `--scope <project-path>`). `watch` is explicitly opt-in, coalesces supported source saves for three seconds, and coordinates concurrent IDE processes so an unchanged workspace stays idle. Code search results include their source language.
+
+Language selection is project-scoped and defaults to every bundled adapter:
+
+```bash
+rms-memory config --code-languages auto
+rms-memory config --code-languages go,typescript,tsx,vue
+```
+
+Supported names are `rust`, `go`, `javascript`, `jsx`, `typescript`, `tsx`, `python`, `c`, `cpp`, `java`, `ruby`, `swift`, and `vue`. Generated paths (`node_modules`, `.next`, `.nuxt`, `target`, `vendor`, and `coverage`) are always excluded. Ambiguous `.h` files are indexed as C exactly once; use `.hpp`, `.hh`, or `.hxx` for C++ headers. Vue indexes only inline JavaScript/TypeScript `<script>` contents and maps results back to the `.vue` host file; templates, styles, `script setup` macros, and external `src` scripts remain outside v1.0.5 semantic extraction.
 
 ## 🛠 CLI Commands
 
@@ -150,7 +159,7 @@ Registered projects support `code_index_mode = "off" | "manual" | "watch"`; the 
 | `rms-memory install` | Hooks the server into supported IDEs. `--dry-run` supported. |
 | `rms-memory uninstall` | Removes the server from all discovered IDE configurations. |
 | `rms-memory doctor` | Runs 5-point vault health diagnostics. `--repair-frontmatter` safely repairs duplicate, missing, and known attached frontmatter IDs with backups; arbitrary invalid YAML is reported but never rewritten automatically. |
-| `rms-memory config` | Interactive global setup; `--code-index-mode off\|manual\|watch` configures semantic code indexing for the current registered project. |
+| `rms-memory config` | Interactive global setup; `--code-index-mode off\|manual\|watch` and `--code-languages auto\|<comma-list>` configure semantic code indexing for the current registered project. |
 | `rms-memory reindex [--vault\|--code\|--all]` | Refreshes Markdown memory (default), derived semantic code memory, or both. |
 | `rms-memory sync` | Incremental LanceDB delete-then-insert sync (also runs automatically during `serve`). |
 | `rms-memory gc` | Prunes orphaned LanceDB indices belonging to deleted vaults. |
@@ -242,7 +251,7 @@ Graph nodes and edges are deliberately independent of retrieval chunk boundaries
 <details>
 <summary><b>Validated v1.0.5 Multi-IDE Behavior</b></summary>
 
-Live MCP requests have been verified for `rms_search(corpus=vault|code|all)` and `rms_code_search`. On this repository, `reindex --code` indexed 43 Rust files into 298 semantic items and 438 segments with all vectors reused on an unchanged run. An isolated five-server watcher run coalesced rapid saves into one shared completion-marker update; all five servers returned to 0.0% CPU after the debounce window.
+Live MCP requests have been verified for `rms_search(corpus=vault|code|all)` and `rms_code_search`. On this repository, `reindex --code` indexed 43 Rust files into 298 semantic items and 438 segments with all vectors reused on an unchanged run. An isolated five-server watcher run coalesced rapid saves into one shared completion-marker update; a later real-project stress gate completed concurrent GeoMail, License Server, RMS Monitoring, and GeoTax Site indexing, then seven MCP servers (after four IDE restarts) stayed at 0.0% CPU with no background reindex.
 </details>
 
 ## 🧩 Supported IDEs

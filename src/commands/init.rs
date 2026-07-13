@@ -55,6 +55,7 @@ impl InitArgs {
                         ".git/**".to_string(),
                     ],
                     code_index_mode: crate::workspace::CodeIndexMode::Off,
+                    code_languages: vec!["auto".to_string()],
                 },
             );
             if !self.dry_run {

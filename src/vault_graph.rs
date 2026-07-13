@@ -171,6 +171,7 @@ mod tests {
             include: vec!["**/*.md".to_string()],
             exclude: vec![],
             code_index_mode: crate::workspace::CodeIndexMode::Off,
+            code_languages: vec!["auto".to_string()],
         };
         let store =
             crate::store::Store::init(&directory.path().join("db").to_string_lossy(), "memory")

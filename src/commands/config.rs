@@ -15,6 +15,9 @@ pub struct ConfigArgs {
     /// Set semantic code indexing for the current project: off, manual, or watch
     #[arg(long, value_name = "MODE")]
     pub code_index_mode: Option<String>,
+    /// Comma-separated code languages to index, or `auto` for all bundled adapters
+    #[arg(long, value_name = "LANGUAGES")]
+    pub code_languages: Option<String>,
 }
 
 impl ConfigArgs {
@@ -27,25 +30,38 @@ impl ConfigArgs {
 
         // Project-level code indexing is deliberately non-interactive: it is commonly
         // toggled by scripts and must not prompt for unrelated global settings.
-        if let Some(mode) = &self.code_index_mode {
-            let mode = mode
-                .parse::<crate::workspace::CodeIndexMode>()
-                .map_err(anyhow::Error::msg)?;
+        if self.code_index_mode.is_some() || self.code_languages.is_some() {
             let project = registered_project_mut(&mut registry, scope.as_deref())?;
-            if project.code_index_mode != mode {
-                project.code_index_mode = mode;
-                updated = true;
+            if let Some(mode) = &self.code_index_mode {
+                let mode = mode
+                    .parse::<crate::workspace::CodeIndexMode>()
+                    .map_err(anyhow::Error::msg)?;
+                if project.code_index_mode != mode {
+                    project.code_index_mode = mode;
+                    updated = true;
+                }
             }
-
+            if let Some(languages) = &self.code_languages {
+                let languages = languages
+                    .split(',')
+                    .map(str::trim)
+                    .filter(|value| !value.is_empty())
+                    .map(ToOwned::to_owned)
+                    .collect::<Vec<_>>();
+                crate::code_parser::validate_language_config(&languages)?;
+                if project.code_languages != languages {
+                    project.code_languages = languages;
+                    updated = true;
+                }
+            }
             if updated {
                 let snapshot = manager.replace(expected_revision, registry)?;
                 println!(
-                    "Project code_index_mode set to {} (revision {}).",
-                    mode_name(mode),
+                    "Project code configuration updated (revision {}).",
                     snapshot.revision
                 );
             } else {
-                println!("Project code_index_mode is already {}.", mode_name(mode));
+                println!("Project code configuration is already current.");
             }
             return Ok(());
         }
@@ -235,14 +251,6 @@ fn registered_project_mut<'a>(
         .ok_or_else(|| anyhow!("Registered project disappeared while updating configuration"))
 }
 
-fn mode_name(mode: crate::workspace::CodeIndexMode) -> &'static str {
-    match mode {
-        crate::workspace::CodeIndexMode::Off => "off",
-        crate::workspace::CodeIndexMode::Manual => "manual",
-        crate::workspace::CodeIndexMode::Watch => "watch",
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -260,6 +268,7 @@ mod tests {
                         include: vec![],
                         exclude: vec![],
                         code_index_mode: crate::workspace::CodeIndexMode::Off,
+                        code_languages: vec!["auto".to_string()],
                     },
                 ),
                 (
@@ -270,6 +279,7 @@ mod tests {
                         include: vec![],
                         exclude: vec![],
                         code_index_mode: crate::workspace::CodeIndexMode::Off,
+                        code_languages: vec!["auto".to_string()],
                     },
                 ),
             ]),

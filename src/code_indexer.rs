@@ -61,9 +61,7 @@ pub async fn try_index_code(
 }
 
 pub fn code_index_is_fresh_since(storage_path: &str, observed_at: std::time::SystemTime) -> bool {
-    std::fs::metadata(std::path::Path::new(storage_path).join(CODE_INDEX_MARKER))
-        .and_then(|metadata| metadata.modified())
-        .is_ok_and(|modified| modified >= observed_at)
+    completed_marker_time(storage_path).is_ok_and(|completed_at| completed_at >= observed_at)
 }
 
 pub fn code_index_is_initialized(storage_path: &str) -> bool {
@@ -76,6 +74,21 @@ fn mark_code_index_completed(storage_path: &str) -> Result<()> {
     let marker = std::path::Path::new(storage_path).join(CODE_INDEX_MARKER);
     std::fs::write(marker, chrono::Utc::now().to_rfc3339())?;
     Ok(())
+}
+
+/// Prefer the timestamp written by the process that completed the generation.
+/// Filesystem mtimes may be rounded below an observed event timestamp on CI or
+/// networked filesystems, which would otherwise cause a duplicate reindex.
+/// Existing marker files without a parseable payload retain their historical
+/// mtime-based behavior.
+fn completed_marker_time(storage_path: &str) -> Result<std::time::SystemTime> {
+    let marker = std::path::Path::new(storage_path).join(CODE_INDEX_MARKER);
+    if let Ok(contents) = std::fs::read_to_string(&marker)
+        && let Ok(completed_at) = chrono::DateTime::parse_from_rfc3339(contents.trim())
+    {
+        return Ok(completed_at.with_timezone(&chrono::Utc).into());
+    }
+    Ok(std::fs::metadata(marker)?.modified()?)
 }
 
 async fn index_code_full_inner(
@@ -111,7 +124,7 @@ async fn index_code_full_inner(
             }
         };
         let path = entry.path();
-        if is_hard_excluded(path) || !is_supported_code_path(path) {
+        if is_hard_excluded(path) || !is_indexable_code_path(path, &workspace.code_languages) {
             continue;
         }
         stats.files_scanned += 1;
@@ -416,6 +429,12 @@ pub fn is_supported_code_path(path: &Path) -> bool {
     crate::code_parser::language_for_path(path).is_some()
 }
 
+pub fn is_indexable_code_path(path: &Path, configured_languages: &[String]) -> bool {
+    crate::code_parser::language_for_path(path).is_some_and(|language| {
+        crate::code_parser::language_is_enabled(language, configured_languages)
+    })
+}
+
 fn is_hard_excluded(path: &Path) -> bool {
     path.components().any(|component| {
         HARD_EXCLUDED_DIRS
@@ -441,6 +460,14 @@ mod tests {
         assert!(is_supported_code_path(&go_file));
         assert!(!is_supported_code_path(&markdown_file));
         assert!(!is_supported_code_path(Path::new("src/lib.rs.bak")));
+        assert!(is_indexable_code_path(
+            Path::new("src/main.go"),
+            &["go".to_string()]
+        ));
+        assert!(!is_indexable_code_path(
+            Path::new("src/main.rs"),
+            &["go".to_string()]
+        ));
         assert!(is_hard_excluded(Path::new("target/debug/build.rs")));
         assert!(is_hard_excluded(Path::new("vendor/crate/lib.rs")));
         assert!(is_hard_excluded(Path::new("frontend/.next/server/page.js")));
@@ -575,6 +602,16 @@ mod tests {
         assert!(code_index_is_fresh_since(
             &directory.path().to_string_lossy(),
             observed
+        ));
+    }
+
+    #[test]
+    fn legacy_unparseable_marker_falls_back_to_filesystem_mtime() {
+        let directory = tempfile::tempdir().unwrap();
+        std::fs::write(directory.path().join(CODE_INDEX_MARKER), "legacy marker").unwrap();
+        assert!(code_index_is_fresh_since(
+            &directory.path().to_string_lossy(),
+            std::time::UNIX_EPOCH
         ));
     }
 }

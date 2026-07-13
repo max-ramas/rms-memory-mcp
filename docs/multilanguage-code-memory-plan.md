@@ -1,6 +1,6 @@
 # Multilanguage Semantic Code Memory — Production Implementation Plan
 
-Status: in implementation for the unreleased 1.0.5 line. The initial Rust/Go registry and Go vertical slice are implemented and covered by fixtures; Go real-project dogfood, language policy/configuration, diagnostics, and subsequent adapters remain pending.
+Status: implemented for the unreleased 1.0.5 line, with release validation in progress. The bundled registry, project language policy, adapters, conservative graph hints, generated-code exclusions, real-project Go/Next/Vue dogfood, and multi-IDE idle gate are implemented. The outstanding environmental gate is a larger Rust workspace, which is not available locally.
 
 ## Outcome
 
@@ -450,7 +450,7 @@ A language is “supported” only when it has:
 - dogfood measurements on a real project;
 - public documentation.
 
-Until all conditions pass, the language is `experimental`, not silently included in `auto`.
+In v1.0.5, `auto` selects all bundled adapters. Their graph output is deliberately syntax-level and unresolved; language-specific framework semantics remain experimental until a future resolver can prove them. The remaining large-Rust-workspace gate applies to release evidence, not to the correctness contract of the existing adapters.
 
 ## Primary references
 

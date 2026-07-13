@@ -54,15 +54,17 @@ This document outlines the strategic direction and upcoming milestones for RMS M
 - [x] Codex IDE: auto-install into `~/.codex/mcp.json`.
 - [x] Runtime verified: load avg 648 → 8.31 (-98.7%), CPU 380% → 0%, 3 IDE processes.
 - [x] PID-aware per-project writer lock, fail-closed frontmatter parsing, and read-only background sync.
-- [x] Rust and Go tree-sitter semantic chunks with preamble-preserving segmentation, stable IDs, vector reuse for unchanged segments, and language-aware search metadata.
+- [x] Tree-sitter semantic chunks for Rust, Go, JS/JSX, TS/TSX, Python, C/C++, Java, Ruby, Swift, and inline Vue scripts, with stable IDs, vector reuse, language metadata, and preamble-preserving segmentation.
 - [x] Explicit `reindex --vault|--code|--all`; code indexing remains opt-in through `code_index_mode = off|manual|watch` (default `off`).
 - [x] Derived graph nodes/edges plus durable manual edges and suppress/restore overrides, separated from retrieval chunks.
 - [x] Federated `rms_search(corpus=vault|code|all)` and `rms_code_search`; mixed results use Reciprocal Rank Fusion.
-- [x] Opt-in Rust/Go watcher: three-second coalescing and shared completion markers prevent duplicate reindexing across IDE processes.
+- [x] Opt-in multilingual watcher: three-second coalescing, project language allow-lists, and shared completion markers prevent duplicate reindexing across IDE processes.
 - [x] Live MCP JSON-RPC probe: `rms_search(corpus=vault|code|all)` and `rms_code_search` returned expected corpus provenance and RRF output.
 - [x] Five-server watch soak: rapid Rust saves advanced one shared completion marker; all test servers returned to 0.0% idle CPU.
 - [x] Legacy memory integrity repair: explicit doctor repair assigned UUIDs to 14 valid ID-less records with backups.
-- [ ] Release gate: dogfood and performance record on a larger Rust workspace. One unrelated invalid-YAML vault record remains intentionally manual-only.
+- [x] Real-project stress gate: concurrent GeoMail, License Server, RMS Monitoring, and GeoTax Site indexing completed; four restarted IDEs remained at 0.0% idle CPU.
+- [x] Independent Rust and mixed Rust/Tauri dogfood: `rms-threads-assistant` (19 files / 101 items / 133 reused segments) and `rms-monitoring` (114 / 846 / 976 reused) completed on the final binary.
+- [ ] Optional scale-up: a separate larger Rust workspace remains unavailable locally. One unrelated invalid-YAML vault record remains intentionally manual-only.
 
 ## v1.1 — GUI Client, Workspace Split & Ecosystem (Next)
 
@@ -80,13 +82,11 @@ The already implemented graph, revisioned configuration manager, and transport-n
 
 ## Multilanguage Code Memory — 1.0.5 extension in progress
 
-- [x] Initial language-neutral registry/dispatcher for Rust and Go, preserving Rust item IDs and extractor identity.
-- [x] Go adapter: package docs, declarations, receiver-aware method identities, syntax-level import/call hints, code-table persistence, and watcher detection.
-- [ ] Dogfood Go indexing on the user's largest available repository and record resource measurements.
-- [ ] TypeScript/TSX, JavaScript/JSX, Python, and C production adapters.
-- [ ] C++, Java, Ruby, and active Swift grammar qualification plus production adapters.
-- [ ] Vue 3 SFC shell parsing with explicit nested JS/TS parsing and original-source mapping.
-- [ ] Mixed-language watcher, migration, packaging, and resource release gate.
+- [x] Language-neutral registry/dispatcher with project-scoped `code_languages`, preserving Rust item IDs and extractor identity.
+- [x] Go adapter and real-project dogfood on the user's heavy Go/Next projects.
+- [x] TypeScript/TSX, JavaScript/JSX, Python, C, C++, Java, Ruby, and Swift adapters with parser regression coverage and conservative syntax-level graph hints.
+- [x] Vue 3 SFC shell parsing with inline nested JS/TS parsing and original-source mapping.
+- [x] Mixed-language resource gate and four-IDE idle verification; packaging remains covered by the existing release matrix.
 
 The production contract and delivery slices are defined in `docs/multilanguage-code-memory-plan.md`.
 

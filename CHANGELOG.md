@@ -7,8 +7,10 @@ All notable changes to this project will be documented in this file.
 ### Added
 - **Semantic code parser spike:** Tree-sitter Rust extraction now produces stable semantic items for functions, structs, enums, traits, impl blocks, and module docs, with preamble-aware fixtures covering nested modules, attributes, generics, and multiple inherent impls.
 - **Go semantic code adapter:** the 1.0.5 code corpus now dispatches Rust and Go through a language registry. Go indexing covers package docs, functions and receiver methods, structs, interfaces, aliases, constants, variables, import/call graph hints, stable IDs, preamble-aware chunks, and code-search language metadata.
+- **Multilanguage code adapters:** the registry now dispatches JavaScript/JSX, TypeScript/TSX, Python, C, C++, Java, Ruby, Swift, and Vue SFC inline scripts in addition to Rust and Go. C/C++/Java/Ruby/Swift emit conservative unresolved import/include and call hints; Vue maps embedded JS/TS symbols back to the `.vue` host file.
+- **Per-project language policy:** `code_languages = ["auto"]` is the backwards-compatible default. `rms-memory config --code-languages <comma-list>` validates and persists an allow-list used consistently by manual reindex and the watcher.
 - **Preamble-aware code segmentation:** oversized semantic items receive stable segment indexes; each segment repeats its documentation, attributes, and declaration signature while retaining bounded body overlap.
-- **Manual semantic code indexing:** `rms-memory reindex --code` now builds an isolated LanceDB `code_chunks` table from Rust source while respecting nested `.gitignore`, hard exclusions, a 512 KiB file limit, and embedding batches of eight.
+- **Manual semantic code indexing:** `rms-memory reindex --code` now builds an isolated LanceDB `code_chunks` table from supported source files while respecting nested `.gitignore`, hard exclusions, a 512 KiB file limit, and embedding batches of eight.
 - **GUI-ready graph foundation:** canonical Vault/code/external node keys, versioned derived-edge identities, provenance and resolution contracts, plus separate graph node, edge, and user-override schemas prepare the core for editable visual relationships without tying it to MCP or HTTP.
 - **Revisioned configuration core:** CLI and MCP configuration access now go through `ConfigManager`, which uses a cross-process lock, compare-and-swap revisions, atomic persistence, subscriptions, and a file watcher while preserving the last valid snapshot after malformed external edits.
 - **Transport-neutral jobs and events:** `JobManager` provides structured progress, cooperative cancellation, terminal-state protection, and bounded typed event subscriptions for future CLI, MCP, and GUI adapters.
@@ -18,7 +20,8 @@ All notable changes to this project will be documented in this file.
 - **Markdown relationship graph:** vault full indexing and changed-file sync now materialize `links_to` edges. Known document paths resolve to stable Vault nodes; missing targets are retained as unresolved external nodes.
 - **Federated retrieval:** `rms_search` now accepts `corpus=vault|code|all`, and `rms_code_search` exposes a code-only path with file/symbol/line metadata. Mixed-corpus retrieval uses deterministic Reciprocal Rank Fusion rather than incompatible raw vector distances.
 - **Multi-process verification:** regression tests now exercise three independent writer processes, concurrent reader availability, and lock-owner crash recovery for the per-project index lock.
-- **Opt-in code watcher:** project configuration now supports `code_index_mode = "off" | "manual" | "watch"` (default `off`). Watch mode debounces supported Rust and Go source paths for three seconds and shares a completed-generation marker to prevent duplicate cross-IDE reindexes.
+- **Opt-in code watcher:** project configuration now supports `code_index_mode = "off" | "manual" | "watch"` (default `off`). Watch mode debounces enabled supported source paths for three seconds and shares a completed-generation marker to prevent duplicate cross-IDE reindexes.
+- **Codex IDE support:** `rms-memory install` now auto-injects into `~/.codex/mcp.json` alongside existing IDEs.
 
 ### Fixed
 - **Memory frontmatter integrity:** `rms_write` now places the closing YAML delimiter on its own line and assigns an ID to newly created or legacy ID-less records. `doctor --repair-frontmatter` recovers the known attached-delimiter form and adds UUIDs to valid legacy records without IDs, always after creating backups.
@@ -28,20 +31,16 @@ All notable changes to this project will be documented in this file.
 - **Lock diagnostics:** `.index.lock` records owner PID and acquisition time. `doctor` reports active owners and clears stale metadata only after acquiring the OS lock; it never unlinks based only on PID state.
 - **Frontmatter recovery:** `rms-memory doctor --repair-frontmatter` removes duplicate top-level `id:` keys after creating a timestamped backup. `--repair-path` can target one file inside a registered vault. Other YAML errors are never rewritten automatically.
 - **Watcher noise:** automatic sync now reacts only to Markdown files and continues to ignore backups.
+- **Generated code exclusions:** semantic code indexing excludes `.next`, `.nuxt`, `node_modules`, `target`, `vendor`, `coverage`, `.git`, and `.rms-memory`; generic `build` and `dist` remain available unless ignored by the project itself.
+- **C/C++ header ambiguity:** `.h` is deterministically indexed as C once; `.hpp`, `.hh`, and `.hxx` select C++.
+- **Watcher generation marker flake:** duplicate-generation suppression now compares the precise completion timestamp stored in `.code-index.updated`, with filesystem `mtime` retained only for legacy markers. This avoids timestamp-resolution failures on GitHub Actions and networked filesystems.
 
 ### Performance
 - **Thread Pool Reduction:** ONNX `with_intra_threads(1)` (was 2) and tokio `worker_threads=2` (was 12). Per-process thread count cut from ~45 to ~6. Runtime verified: load avg 648 → 8.31 (-98.7%), CPU 380% → 0% idle across 3 IDE processes.
 - **Fast-path skip fix:** `get_file_timestamps()` now returns `(doc_id, timestamp)` tuple, preventing `sync_vault` from deleting unchanged documents via the `current_doc_ids` check. Resolved chicken-and-egg: path-based mtime check skips parsing for unchanged files without losing document identity.
 - **Single Indexer instance:** One `Arc<Mutex<Indexer>>` created in `McpServer::run()`, shared between search handler and background sync. Eliminates N model reloads per process.
 - **Watcher `.bak` filter + logging:** Write-Guard snapshots ignored; `tracing::info!` with triggering file path on each event.
-
-### Added
-- **Codex IDE support:** `rms-memory install` now auto-injects into `~/.codex/mcp.json` alongside existing 11 IDEs.
-
-### Fixed
-- **sync_vault timestamps:** `unwrap_or_default()` → explicit error log — no more mass-reindex on transient DB errors.
-- **Sync/logging errors:** `let _ =` and `Err(_e) => {}` replaced with `tracing::error!` throughout.
-- **JSON-RPC compliance:** Malformed requests return `-32700`, 1MB size limit on stdin, search limit capped at 100.
+- **Real-project stress gate:** concurrent GeoMail, License Server, RMS Monitoring, and GeoTax Site reindexes completed; after restarting four IDEs, seven `serve` processes remained at `0.0%` CPU with no background reindex.
 
 ## [1.0.3] - 2026-07-12
 

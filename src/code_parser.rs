@@ -76,6 +76,51 @@ impl LanguageId {
             Self::Vue => "vue-sfc-tree-sitter-v1",
         }
     }
+
+    pub fn from_config_name(value: &str) -> Option<Self> {
+        match value.trim().to_ascii_lowercase().as_str() {
+            "rust" => Some(Self::Rust),
+            "go" => Some(Self::Go),
+            "javascript" | "js" => Some(Self::JavaScript),
+            "jsx" => Some(Self::Jsx),
+            "typescript" | "ts" => Some(Self::TypeScript),
+            "tsx" => Some(Self::Tsx),
+            "python" | "py" => Some(Self::Python),
+            "c" => Some(Self::C),
+            "cpp" | "c++" => Some(Self::Cpp),
+            "java" => Some(Self::Java),
+            "ruby" | "rb" => Some(Self::Ruby),
+            "swift" => Some(Self::Swift),
+            "vue" => Some(Self::Vue),
+            _ => None,
+        }
+    }
+}
+
+/// `auto` means every bundled adapter. An empty legacy setting is treated as
+/// `auto` so upgrading an existing registry never disables a code corpus.
+pub fn language_is_enabled(language: LanguageId, configured: &[String]) -> bool {
+    configured.is_empty()
+        || configured.iter().any(|value| {
+            value.eq_ignore_ascii_case("auto")
+                || LanguageId::from_config_name(value) == Some(language)
+        })
+}
+
+pub fn validate_language_config(configured: &[String]) -> Result<()> {
+    for value in configured {
+        if !value.eq_ignore_ascii_case("auto") && LanguageId::from_config_name(value).is_none() {
+            return Err(anyhow!(
+                "Unknown code language {value:?}; use auto or one of: {}",
+                LanguageId::ALL
+                    .iter()
+                    .map(|language| language.as_str())
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            ));
+        }
+    }
+    Ok(())
 }
 
 /// The language registry used by the indexer and source watcher.  It accepts a
@@ -90,8 +135,10 @@ pub fn language_for_path(path: &Path) -> Option<LanguageId> {
         Some("ts" | "mts" | "cts") => Some(LanguageId::TypeScript),
         Some("tsx") => Some(LanguageId::Tsx),
         Some("py" | "pyi") => Some(LanguageId::Python),
-        Some("c") => Some(LanguageId::C),
-        Some("cc" | "cpp" | "cxx" | "c++") => Some(LanguageId::Cpp),
+        // Headers are classified once, never parsed by both grammars. `.h`
+        // defaults to C; C++ headers use `.hpp`, `.hh`, or `.hxx`.
+        Some("c" | "h") => Some(LanguageId::C),
+        Some("cc" | "cpp" | "cxx" | "c++" | "hpp" | "hh" | "hxx") => Some(LanguageId::Cpp),
         Some("java") => Some(LanguageId::Java),
         Some("rb") => Some(LanguageId::Ruby),
         Some("swift") => Some(LanguageId::Swift),
@@ -146,9 +193,11 @@ pub fn parse_code_file(file_path: &str, source: &str) -> Result<ParsedCodeFile> 
             extract_web_relation_hints(file_path, source, &items, language)?
         }
         LanguageId::Python => extract_python_relation_hints(file_path, source, &items)?,
-        LanguageId::C | LanguageId::Cpp => Vec::new(),
-        LanguageId::Java | LanguageId::Ruby => Vec::new(),
-        LanguageId::Swift => Vec::new(),
+        LanguageId::C
+        | LanguageId::Cpp
+        | LanguageId::Java
+        | LanguageId::Ruby
+        | LanguageId::Swift => extract_native_relation_hints(file_path, source, &items, language)?,
         LanguageId::Vue => Vec::new(),
     };
     Ok(ParsedCodeFile {
@@ -1045,9 +1094,11 @@ fn parse_native_file(
         items: &mut Vec<ParsedCodeItem>,
     ) {
         let kind = match node.kind() {
-            "function_definition" | "method_declaration" | "method" | "singleton_method" => {
-                Some(CodeKind::Function)
-            }
+            "function_definition"
+            | "function_declaration"
+            | "method_declaration"
+            | "method"
+            | "singleton_method" => Some(CodeKind::Function),
             "struct_specifier" => Some(CodeKind::Struct),
             "enum_specifier" => Some(CodeKind::Enum),
             "class_specifier" | "class_declaration" | "class" | "module" => Some(CodeKind::Class),
@@ -1388,6 +1439,103 @@ fn first_web_identifier(node: Node<'_>, source: &str) -> Option<String> {
     node.named_children(&mut cursor)
         .find(|child| child.kind().contains("identifier"))
         .map(|child| node_text(child, source).to_string())
+}
+
+fn extract_native_relation_hints(
+    file_path: &str,
+    source: &str,
+    items: &[ParsedCodeItem],
+    language: LanguageId,
+) -> Result<Vec<CodeRelationHint>> {
+    let mut parser = Parser::new();
+    let grammar = match language {
+        LanguageId::C => tree_sitter_c::LANGUAGE.into(),
+        LanguageId::Cpp => tree_sitter_cpp::LANGUAGE.into(),
+        LanguageId::Java => tree_sitter_java::LANGUAGE.into(),
+        LanguageId::Ruby => tree_sitter_ruby::LANGUAGE.into(),
+        LanguageId::Swift => tree_sitter_swift::LANGUAGE.into(),
+        _ => unreachable!("native relation extractor called for non-native language"),
+    };
+    parser.set_language(&grammar)?;
+    let tree = parser
+        .parse(source, None)
+        .ok_or_else(|| anyhow!("Tree-sitter returned no native syntax tree"))?;
+    let mut hints = Vec::new();
+    fn walk(
+        node: Node<'_>,
+        file_path: &str,
+        source: &str,
+        items: &[ParsedCodeItem],
+        language: LanguageId,
+        hints: &mut Vec<CodeRelationHint>,
+    ) {
+        let owner = || {
+            items
+                .iter()
+                .filter(|item| {
+                    item.source_start_byte <= node.start_byte()
+                        && node.end_byte() <= item.source_end_byte
+                })
+                .min_by_key(|item| item.source_end_byte - item.source_start_byte)
+                .map(|item| item.item_key.clone())
+                .unwrap_or_else(|| {
+                    blake3::hash(format!("{}\0{file_path}\0module", language.as_str()).as_bytes())
+                        .to_string()
+                })
+        };
+        if matches!(node.kind(), "preproc_include" | "import_declaration") {
+            hints.push(CodeRelationHint {
+                source_item_key: owner(),
+                relation: "uses".to_string(),
+                target_identifier: format!(
+                    "{}-import:{}",
+                    language.as_str(),
+                    node_text(node, source).trim()
+                ),
+            });
+        }
+        if matches!(
+            node.kind(),
+            "call_expression" | "method_invocation" | "call" | "method_call"
+        ) {
+            let target = node
+                .child_by_field_name("function")
+                .or_else(|| node.child_by_field_name("name"))
+                .and_then(|value| {
+                    let value = node_text(value, source).trim();
+                    (!value.is_empty()).then(|| value.to_string())
+                })
+                .or_else(|| first_web_identifier(node, source));
+            if let Some(target) = target {
+                hints.push(CodeRelationHint {
+                    source_item_key: owner(),
+                    relation: "calls_symbol".to_string(),
+                    target_identifier: format!("{}-symbol:{target}", language.as_str()),
+                });
+            }
+        }
+        let mut cursor = node.walk();
+        for child in node.named_children(&mut cursor) {
+            walk(child, file_path, source, items, language, hints);
+        }
+    }
+    walk(
+        tree.root_node(),
+        file_path,
+        source,
+        items,
+        language,
+        &mut hints,
+    );
+    hints.sort_by(|a, b| {
+        (&a.source_item_key, &a.relation, &a.target_identifier).cmp(&(
+            &b.source_item_key,
+            &b.relation,
+            &b.target_identifier,
+        ))
+    });
+    hints.dedup();
+    Ok(hints)
 }
 
 fn extract_web_relation_hints(
@@ -2070,11 +2218,17 @@ fn helper() { let _ = Thing::default(); }
     fn native_adapters_dispatch_c_and_cpp_without_headers() {
         let c = parse_code_file(
             "native/api.c",
-            "typedef int Count; struct State { int value; }; int run(void) { return 0; }",
+            "#include <stdio.h>\ntypedef int Count; struct State { int value; }; int run(void) { return puts(\"ok\"); }",
         )
         .unwrap();
         assert_eq!(c.language, LanguageId::C);
         assert!(c.items.iter().any(|item| item.kind == CodeKind::Function));
+        assert!(c.relation_hints.iter().any(|hint| hint.relation == "uses"));
+        assert!(
+            c.relation_hints
+                .iter()
+                .any(|hint| hint.target_identifier == "c-symbol:puts")
+        );
         let cpp = parse_code_file(
             "native/widget.cpp",
             "class Widget {}; int run() { return 0; }",
@@ -2082,18 +2236,67 @@ fn helper() { let _ = Thing::default(); }
         .unwrap();
         assert_eq!(cpp.language, LanguageId::Cpp);
         assert!(cpp.items.iter().any(|item| item.kind == CodeKind::Class));
-        assert_eq!(language_for_path(Path::new("native/api.h")), None);
+        assert_eq!(
+            language_for_path(Path::new("native/api.h")),
+            Some(LanguageId::C)
+        );
+        assert_eq!(
+            language_for_path(Path::new("native/api.hpp")),
+            Some(LanguageId::Cpp)
+        );
+    }
+
+    #[test]
+    fn language_configuration_is_validated_and_filters_adapters() {
+        assert!(language_is_enabled(LanguageId::Go, &["auto".to_string()]));
+        assert!(language_is_enabled(LanguageId::Go, &["go".to_string()]));
+        assert!(!language_is_enabled(LanguageId::Rust, &["go".to_string()]));
+        assert!(validate_language_config(&["ts".to_string(), "vue".to_string()]).is_ok());
+        assert!(validate_language_config(&["fortran".to_string()]).is_err());
     }
 
     #[test]
     fn native_adapters_dispatch_java_and_ruby() {
-        let java = parse_code_file("src/Service.java", "class Service { void run() {} }").unwrap();
+        let java = parse_code_file(
+            "src/Service.java",
+            "import java.util.List; class Service { void run() { work(); } void work() {} }",
+        )
+        .unwrap();
         assert_eq!(java.language, LanguageId::Java);
         assert!(java.items.iter().any(|item| item.kind == CodeKind::Class));
+        assert!(
+            java.relation_hints
+                .iter()
+                .any(|hint| hint.relation == "uses")
+        );
+        assert!(
+            java.relation_hints
+                .iter()
+                .any(|hint| hint.relation == "calls_symbol")
+        );
         let ruby =
             parse_code_file("lib/service.rb", "class Service\n  def run\n  end\nend\n").unwrap();
         assert_eq!(ruby.language, LanguageId::Ruby);
         assert!(ruby.items.iter().any(|item| item.kind == CodeKind::Class));
+
+        let swift = parse_code_file(
+            "Sources/App.swift",
+            "import Foundation\nfunc run() { print(\"ok\") }",
+        )
+        .unwrap();
+        assert_eq!(swift.language, LanguageId::Swift);
+        assert!(
+            swift
+                .items
+                .iter()
+                .any(|item| item.kind == CodeKind::Function)
+        );
+        assert!(
+            swift
+                .relation_hints
+                .iter()
+                .any(|hint| hint.relation == "uses")
+        );
     }
 
     #[test]
