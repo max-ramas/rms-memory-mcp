@@ -455,9 +455,7 @@ mod tests {
             "scope=None must resolve to different identifiers for different cwd paths"
         );
 
-        // Verify: resolve_identifier(None, cwd) actually uses cwd, not process cwd
-        let proc_cwd = std::env::current_dir().unwrap();
-        let id_from_proc = Workspace::resolve_identifier(None, &proc_cwd).unwrap();
+        // Verify an explicit project scope is independent of the process cwd.
         assert_eq!(
             id_from_project,
             Workspace::resolve_identifier(Some(&id_from_project), &cwd_elsewhere,).unwrap(),

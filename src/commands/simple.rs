@@ -239,13 +239,35 @@ impl DoctorArgs {
         // 4. Check LanceDB store
         println!("\n[4/5] LanceDB store...");
         match workspace.get_store().await {
-            Ok(store) => match store.open_table().await {
-                Ok(_table) => println!("  ✅ LanceDB table accessible"),
-                Err(e) => {
-                    println!("  ⚠️  LanceDB table not accessible: {}", e);
-                    issues += 1;
+            Ok(store) => {
+                match crate::index_lock::inspect(&store.storage_path) {
+                    Ok(crate::index_lock::LockInspection::Active(Some(owner))) => println!(
+                        "  ℹ️  Index writer active: PID {} (since {})",
+                        owner.pid, owner.acquired_at
+                    ),
+                    Ok(crate::index_lock::LockInspection::Active(None)) => {
+                        println!("  ℹ️  Index writer active (owner metadata unavailable)")
+                    }
+                    Ok(crate::index_lock::LockInspection::StaleMetadataCleared(owner)) => println!(
+                        "  🔧 Cleared stale lock metadata for PID {} (recorded {})",
+                        owner.pid, owner.acquired_at
+                    ),
+                    Ok(crate::index_lock::LockInspection::Unlocked) => {
+                        println!("  ✅ Index writer lock is free")
+                    }
+                    Err(e) => {
+                        println!("  ⚠️  Cannot inspect index writer lock: {}", e);
+                        issues += 1;
+                    }
                 }
-            },
+                match store.open_table().await {
+                    Ok(_table) => println!("  ✅ LanceDB table accessible"),
+                    Err(e) => {
+                        println!("  ⚠️  LanceDB table not accessible: {}", e);
+                        issues += 1;
+                    }
+                }
+            }
             Err(e) => {
                 println!("  ⚠️  Cannot connect to LanceDB: {}", e);
                 issues += 1;

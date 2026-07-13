@@ -9,6 +9,18 @@ RMS Memory will expose two complementary corpora through one MCP server:
 
 Markdown remains the source of truth for intent and history. Code chunks describe the implementation that exists now. Code indexing must never write to source files or silently create metadata in them.
 
+The complete knowledge lifecycle is:
+
+```text
+Architecture and decisions (Vault) → Current implementation (Code) → Results and evidence (Artifacts)
+```
+
+## Implementation status (2026-07-13)
+
+- Slice 0 is implemented: fail-closed frontmatter parsing, read-only background sync, cross-process writer lock, watcher retry, repair tooling, and PID-aware lock diagnostics.
+- Slice 1 parser spike is implemented for Rust with fixture coverage for outer and inner docs, attributes, nested and documented modules, multiple impl blocks, generics, traits, enums, and undocumented items.
+- Slices 2–8 remain planned and must pass their acceptance gates in order; source watching stays disabled until Slice 7.
+
 ## Preconditions
 
 The following stabilization work is required before source watching is enabled:
@@ -95,11 +107,13 @@ Deleted, renamed, newly ignored, unsupported, or oversized files remove their ol
 All IDE processes may read. Only one process may mutate project index tables at a time.
 
 - Use `dbs/<project-hash>/.index.lock` for vault and code writers.
+- Write owner PID and acquisition timestamp into the lock file for diagnostics.
 - Watcher-triggered work uses `try_lock`; on contention it retains a dirty generation and retries with bounded jitter.
 - Manual reindex waits asynchronously and reports how long it waited.
 - The lock covers scan decisions, parsing, embedding, and commit so two processes cannot embed the same generation concurrently.
 - Reads never acquire the writer lock.
 - OS lock release after crash is verified with a killed subprocess test.
+- The OS lock is authoritative; PID existence alone never authorizes unlinking the file. `doctor` may clear stale owner metadata only after successfully acquiring the lock itself, avoiding PID-reuse and split-inode races.
 
 A standalone daemon is not required for v1. A leader/lease process can be considered later only if measurements show that loading one embedding model per IDE remains too expensive at idle.
 
@@ -127,7 +141,7 @@ Also expose `rms_code_search(query, limit, include_content)` for tool discoverab
 
 Every result includes `source: vault | code`. Code results expose file path, qualified symbol, kind, line range, and segment index. `min_confidence` applies only to vault rows; code rows have no confidence field and are not filtered out.
 
-Current `_distance` values use lower-is-better semantics. Before `corpus=all` ships, verify that both tables use the same metric and retrieval mode. Convert distances to a documented normalized relevance value or merge by reciprocal-rank fusion if hybrid FTS/vector scores are not directly comparable. Apply `limit` after merging.
+Current `_distance` values use lower-is-better semantics, but `corpus=all` never merges raw distances. It uses **Reciprocal Rank Fusion (RRF)** over independently ranked vault and code results. RRF is robust to different score distributions and future retrieval changes. Apply `limit` only after fusion; document the rank constant and deterministic tie-breaker.
 
 ## Delivery slices
 
