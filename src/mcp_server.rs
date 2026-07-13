@@ -249,6 +249,25 @@ fn is_watched_code_path(path: &std::path::Path, configured_languages: &[String])
 }
 
 impl McpServer {
+    async fn wiki_service(&self) -> Result<crate::wiki::WikiService> {
+        let store = Arc::new(
+            self.ctx
+                .store
+                .clone()
+                .ok_or_else(|| anyhow::anyhow!("Store not initialized"))?,
+        );
+        let retrieval = crate::retrieval::RetrievalService::new(
+            store,
+            self.ctx
+                .indexer
+                .clone()
+                .ok_or_else(|| anyhow::anyhow!("Indexer not initialized"))?,
+        );
+        let root = self.ctx.workspace_root.clone().unwrap_or_default();
+        let scope = self.ctx.scope.clone().unwrap_or_default();
+        Ok(crate::wiki::WikiService::new(retrieval, root, scope))
+    }
+
     pub async fn run(
         store: Option<crate::store::Store>,
         indexer: Option<Arc<Mutex<Indexer>>>,
@@ -271,6 +290,7 @@ impl McpServer {
                 max_backups,
                 scope,
                 caller_id: "unknown".to_string(),
+                project_key: None,
             },
             shutdown_tx: shutdown_tx_for_server,
         };
@@ -393,6 +413,7 @@ impl McpServer {
                     None,
                 ) {
                     self.ctx.workspace_root = Some(workspace.root.clone());
+                    self.ctx.project_key = workspace.project_key();
 
                     match workspace.get_store().await {
                         Ok(store) => {
@@ -417,37 +438,16 @@ impl McpServer {
                         }
                     }
                 } else {
-                    // Fallback: use global vault when no project is registered for this path
                     tracing::warn!(
-                        "No project registered for path: {:?}. Trying global vault fallback.",
+                        "No project registered for path: {:?}. Cannot initialize workspace. \
+                         Register the project with 'rms-memory init' or pass an explicit --scope.",
                         path
                     );
-                    if let Ok(registry) = crate::config_manager::load_registry()
-                        && let Some(global_vault) = &registry.global.global_vault_path
-                    {
-                        let vault_path = std::path::PathBuf::from(global_vault);
-                        if vault_path.exists() {
-                            self.ctx.workspace_root = Some(vault_path.clone());
-                            let workspace = crate::workspace::Workspace {
-                                root: vault_path,
-                                code_path: path.clone(),
-                                include: vec!["**/*.md".to_string()],
-                                exclude: vec!["node_modules/**".to_string(), ".git/**".to_string()],
-                                code_index_mode: crate::workspace::CodeIndexMode::Off,
-                                code_languages: vec!["auto".to_string()],
-                            };
-                            if let Ok(store) = workspace.get_store().await {
-                                spawn_sync_watcher(
-                                    workspace.clone(),
-                                    store.clone(),
-                                    self.ctx.indexer.as_ref().unwrap().clone(),
-                                    self.shutdown_tx.subscribe(),
-                                );
-                                self.ctx.store = Some(store);
-                                tracing::info!("Initialized with global vault fallback.");
-                            }
-                        }
-                    }
+                    tracing::info!(
+                        "Initialize rejected: client={} rootUri={:?} project_key=none vault_root=none",
+                        self.ctx.caller_id,
+                        path,
+                    );
                 }
 
                 Ok(json!({
@@ -519,6 +519,17 @@ impl McpServer {
                             },
                             "required": ["path", "mode", "content"]
                         }
+                    },
+                    {
+                        "name": "rms_wiki_pack",
+                        "description": "Generate a wiki context pack from the vault and code index. Returns material for an agent to create human-readable wiki documentation from verified sources.",
+                        "inputSchema": {
+                            "type": "object",
+                            "properties": {
+                                "manifest": { "type": "string", "description": "Optional YAML manifest path for custom sections." },
+                                "refresh_code": { "type": "boolean", "description": "Force code reindex before generating." }
+                            }
+                        }
                     }
                 ]
             })),
@@ -532,6 +543,31 @@ impl McpServer {
                     "rms_code_search" => crate::tools::search::execute_code(&self.ctx, &args).await,
                     "rms_read" => crate::tools::read::execute(&self.ctx, &args).await,
                     "rms_write" => crate::tools::write::execute(&self.ctx, &args).await,
+                    "rms_wiki_pack" => {
+                        let refresh = args
+                            .get("refresh_code")
+                            .and_then(|v| v.as_bool())
+                            .unwrap_or(false);
+                        let manifest =
+                            if let Some(path) = args.get("manifest").and_then(|v| v.as_str()) {
+                                crate::wiki::WikiManifest::from_file(std::path::Path::new(path))?
+                            } else {
+                                crate::wiki::WikiManifest::default_manifest()
+                            };
+                        let req = crate::wiki::WikiGenerateRequest {
+                            manifest,
+                            refresh_code: refresh,
+                        };
+                        let service = self.wiki_service().await?;
+                        let result = service.generate(req).await?;
+                        Ok(serde_json::json!({
+                            "content": [{
+                                "type": "text",
+                                "text": format!("Wiki pack generated. Pack ID: {}. Context pack: {}. Sections: {}.",
+                                    result.pack_id, result.context_pack_path.display(), result.sections_generated)
+                            }]
+                        }))
+                    }
                     _ => anyhow::bail!("Unknown tool"),
                 }
             }

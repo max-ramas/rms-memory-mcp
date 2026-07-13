@@ -38,6 +38,16 @@ pub enum Commands {
     Log(crate::commands::simple::LogArgs),
     /// Export the current vault to llms.txt
     ExportLlms(crate::commands::simple::ExportLlmsArgs),
+    /// Generate wiki context packs from vault and code index
+    Wiki {
+        #[command(subcommand)]
+        command: crate::commands::wiki::WikiCommands,
+    },
+    /// List and locate registered projects
+    Projects {
+        #[command(subcommand)]
+        command: crate::commands::projects::ProjectsCommands,
+    },
 }
 
 impl Cli {
@@ -57,6 +67,8 @@ impl Cli {
             Commands::Sync(args) => args.run(scope).await,
             Commands::Log(args) => args.run(scope).await,
             Commands::ExportLlms(args) => args.run(scope).await,
+            Commands::Wiki { command } => command.run(scope).await,
+            Commands::Projects { command } => Ok(command.run()?),
         }
     }
 }

@@ -88,6 +88,18 @@ pub struct DoctorArgs {
     /// Repair one explicit file inside a registered project or global vault
     #[arg(long, requires = "repair_frontmatter")]
     pub repair_path: Option<std::path::PathBuf>,
+    /// Stamp project label on documents (dry-run by default)
+    #[arg(long)]
+    pub stamp_project: bool,
+    /// Apply stamp-project changes (requires --stamp-project)
+    #[arg(long, requires = "stamp_project")]
+    pub apply: bool,
+    /// Explicit file for stamp-project
+    #[arg(long, requires = "stamp_project")]
+    pub file: Option<String>,
+    /// Explicit project key for stamp-project
+    #[arg(long, requires = "stamp_project")]
+    pub project: Option<String>,
 }
 
 impl DoctorArgs {

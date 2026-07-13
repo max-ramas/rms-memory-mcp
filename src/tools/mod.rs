@@ -15,4 +15,5 @@ pub struct AppContext {
     pub max_backups: usize,
     pub scope: Option<String>,
     pub caller_id: String,
+    pub project_key: Option<String>,
 }

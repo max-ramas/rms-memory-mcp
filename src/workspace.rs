@@ -452,6 +452,36 @@ impl Workspace {
         let db_path = base_dir().join("dbs").join(hash);
         crate::store::Store::init(&db_path.to_string_lossy(), "memory").await
     }
+
+    /// Returns the project key (registry name) for this workspace, if found.
+    pub fn project_key(&self) -> Option<String> {
+        if let Ok(registry) = Registry::load() {
+            for (name, proj) in &registry.projects {
+                if proj.vault_path == self.root.to_string_lossy()
+                    || proj.code_path == self.code_path.to_string_lossy()
+                {
+                    return Some(name.clone());
+                }
+            }
+        }
+        None
+    }
+}
+
+impl Registry {
+    pub fn list_projects(&self) -> Vec<(&String, &ProjectConfig)> {
+        self.projects.iter().collect()
+    }
+
+    pub fn locate_by_vault(&self, vault_path: &str) -> Option<(&String, &ProjectConfig)> {
+        self.projects
+            .iter()
+            .find(|(_, p)| p.vault_path == vault_path)
+    }
+
+    pub fn locate_by_project(&self, key: &str) -> Option<&ProjectConfig> {
+        self.projects.get(key)
+    }
 }
 
 #[cfg(test)]

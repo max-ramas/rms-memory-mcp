@@ -14,9 +14,11 @@ pub mod graph_store;
 pub mod index_lock;
 pub mod indexer;
 pub mod jobs;
+pub mod retrieval;
 pub mod store;
 pub mod tools;
 pub mod vault_graph;
+pub mod wiki;
 pub mod workspace;
 
 // Internal modules (hidden from docs.rs but available to the binary)

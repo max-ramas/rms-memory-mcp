@@ -27,6 +27,7 @@ pub struct Frontmatter {
     pub created_at: Option<String>,
     pub confidence: Option<f64>,
     pub source: Option<String>,
+    pub project: Option<String>,
 }
 
 impl Document {
