@@ -36,6 +36,7 @@ RMS Memory is a specialized Model Context Protocol (MCP) server that acts as loc
 - **Graph contract:** Nodes and edges never point to retrieval chunks, whose boundaries may change. Markdown links and Rust `use`, trait-implementation, and lexical call relationships are stored as versioned derived edges; user edges and suppress/restore overrides survive reconciliation. Rust call edges are intentionally syntax-level hints, not a compiler-accurate call graph.
 - **GUI-ready core:** A revisioned `ConfigManager` owns validated, atomic configuration updates and change subscriptions. A transport-neutral job manager publishes bounded typed progress events, so a future GUI can use a human-oriented API without repurposing MCP.
 - **Safe activation:** `code_index_mode = off|manual|watch` defaults to `off`; set it with `rms-memory config --code-index-mode watch` from the registered project root. Watch mode is opt-in, coalesces Rust file events for three seconds, and uses a shared completion marker so concurrent IDE servers do not repeat the same completed generation.
+- **Live validation:** An unchanged reindex on this repository processed 43 Rust files, 298 items, and 438 segments with all vectors reused. Five independently initialized MCP servers coalesced rapid save events into one marker update and returned to 0.0% CPU after the debounce window.
 
 ### 6. Dynamic MCP Auto-Installer (`rms-memory install`)
 - Eradicates manual configuration. Run `rms-memory install` and a strict bounding crawler scans `~/.config/` and `~/Library/Application Support/` across your OS.
@@ -79,6 +80,7 @@ To transition from a "toy server" to an instrumental platform, 10 resilience pro
   3. Broken cross-document markdown links (checks file existence)
   4. LanceDB store connectivity
   5. Registry coherence (project-to-vault path mapping)
+- **Explicit frontmatter recovery:** `doctor --repair-frontmatter` creates a backup and can remove duplicate IDs, add UUIDs to valid legacy records missing IDs, and recover the known attached-closing-delimiter form. It intentionally refuses arbitrary invalid YAML.
 - **Uninstall (`rms-memory uninstall`):** Removes `rms-memory` entries from all discovered IDE configuration files. Uses the same JSONC-aware patcher as the installer with automatic `.bak` backups, making uninstallation as safe and transparent as installation.
 - **Hybrid Retrieval Activation:** The `VectorStore::search()` implementation now truly combines vector similarity AND Tantivy full-text search (FTS). Previously, the FTS index was built on table creation but never queried — searches were vector-only. The fix adds a two-tier approach: hybrid search with graceful fallback to vector-only if the FTS index is unavailable.
 

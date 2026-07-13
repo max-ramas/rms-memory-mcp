@@ -59,7 +59,10 @@ This document outlines the strategic direction and upcoming milestones for RMS M
 - [x] Derived graph nodes/edges plus durable manual edges and suppress/restore overrides, separated from retrieval chunks.
 - [x] Federated `rms_search(corpus=vault|code|all)` and `rms_code_search`; mixed results use Reciprocal Rank Fusion.
 - [x] Opt-in Rust watcher: three-second coalescing and shared completion markers prevent duplicate reindexing across IDE processes.
-- [ ] Release gate: live MCP JSON-RPC probe, larger Rust-workspace performance record, and five-IDE watch soak test.
+- [x] Live MCP JSON-RPC probe: `rms_search(corpus=vault|code|all)` and `rms_code_search` returned expected corpus provenance and RRF output.
+- [x] Five-server watch soak: rapid Rust saves advanced one shared completion marker; all test servers returned to 0.0% idle CPU.
+- [x] Legacy memory integrity repair: explicit doctor repair assigned UUIDs to 14 valid ID-less records with backups.
+- [ ] Release gate: dogfood and performance record on a larger Rust workspace. One unrelated invalid-YAML vault record remains intentionally manual-only.
 
 ## v1.1 — GUI Client, Workspace Split & Ecosystem (Next)
 

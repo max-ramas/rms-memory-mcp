@@ -149,7 +149,7 @@ Registered projects support `code_index_mode = "off" | "manual" | "watch"`; the 
 | `rms-memory import` | Scans for existing docs (`README.md`, `docs/`, `ADR/`) and imports them — interactively or via `--auto-import`. |
 | `rms-memory install` | Hooks the server into supported IDEs. `--dry-run` supported. |
 | `rms-memory uninstall` | Removes the server from all discovered IDE configurations. |
-| `rms-memory doctor` | Runs 5-point vault health diagnostics. `--repair-frontmatter` safely repairs duplicate IDs with backups; `--repair-path` targets one registered-vault file. |
+| `rms-memory doctor` | Runs 5-point vault health diagnostics. `--repair-frontmatter` safely repairs duplicate, missing, and known attached frontmatter IDs with backups; arbitrary invalid YAML is reported but never rewritten automatically. |
 | `rms-memory config` | Interactive global setup; `--code-index-mode off\|manual\|watch` configures semantic code indexing for the current registered project. |
 | `rms-memory reindex [--vault\|--code\|--all]` | Refreshes Markdown memory (default), derived semantic code memory, or both. |
 | `rms-memory sync` | Incremental LanceDB delete-then-insert sync (also runs automatically during `serve`). |
@@ -237,6 +237,12 @@ Graph nodes and edges are deliberately independent of retrieval chunk boundaries
 8. Write-guard snapshotting with rolling `.bak` backups (default: 5)
 9. Isolated telemetry logging (`~/.rms-memory/rms.log`)
 10. `llms.txt` export for flat, decoupled LLM ingestion
+</details>
+
+<details>
+<summary><b>Validated v1.0.5 Multi-IDE Behavior</b></summary>
+
+Live MCP requests have been verified for `rms_search(corpus=vault|code|all)` and `rms_code_search`. On this repository, `reindex --code` indexed 43 Rust files into 298 semantic items and 438 segments with all vectors reused on an unchanged run. An isolated five-server watcher run coalesced rapid saves into one shared completion-marker update; all five servers returned to 0.0% CPU after the debounce window.
 </details>
 
 ## 🧩 Supported IDEs
