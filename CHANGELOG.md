@@ -20,6 +20,7 @@ All notable changes to this project will be documented in this file.
 - **Opt-in code watcher:** project configuration now supports `code_index_mode = "off" | "manual" | "watch"` (default `off`). Watch mode debounces Rust source paths for three seconds and shares a completed-generation marker to prevent duplicate cross-IDE reindexes.
 
 ### Fixed
+- **Memory frontmatter integrity:** `rms_write` now places the closing YAML delimiter on its own line and assigns an ID to newly created or legacy ID-less records. `doctor --repair-frontmatter` also recovers the previously observed attached-delimiter form with no duplicate ID.
 - **Self-sustaining CPU storm:** malformed YAML frontmatter is now reported as an error instead of being treated as missing metadata. Background indexing no longer calls `ensure_id()` or writes to Markdown files.
 - **Cross-IDE indexing amplification:** vault sync and full reindex use a per-project filesystem lock. Watcher sync retries after lock contention while manual commands wait asynchronously.
 - **Lock diagnostics:** `.index.lock` records owner PID and acquisition time. `doctor` reports active owners and clears stale metadata only after acquiring the OS lock; it never unlinks based only on PID state.

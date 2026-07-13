@@ -34,6 +34,9 @@ You're developing a single project but switching between different agents — Cu
 | 🔍 **Hybrid Retrieval (LanceDB)** | Embedded Vector Search + Tantivy Full-Text Search for zero-fail context hits. |
 | 🌐 **Multilingual Semantic Parsing** | `fastembed-rs` + `multilingual-e5-small` — native Russian & English understanding. |
 | 🌳 **AST Markdown Chunker** | `pulldown-cmark`-based chunking keeps code blocks and lists bound to their parent heading. |
+| 🧩 **Semantic Code Memory** | Optional Rust indexing uses tree-sitter items, stable segment identities, and repeated preambles so large implementations remain intelligible when split. |
+| 🕸️ **Knowledge Graph Foundation** | Derived Markdown/code relationships and durable user overrides are stored separately from retrieval chunks, ready for a future visual editor. |
+| 🔀 **Federated Corpus Search** | Search `vault`, `code`, or `all`; mixed results use Reciprocal Rank Fusion rather than incompatible raw vector distances. |
 | ⚙️ **Dynamic Auto-Installer** | `rms-memory install` scans your system and wires itself into every supported IDE. |
 | 📜 **Rules-as-Code Patching** | Non-destructive AST patching of `.cursorrules`, `.zed/assistant.md`, etc. Opt-in by default. |
 | 🧪 **Dry-Run & Auditing** | `--dry-run` everywhere. Every write gets a rolling `.bak` backup. |
@@ -126,6 +129,17 @@ The next time you open a project in a connected IDE, the server reads the `rootU
       └── api/
 ```
 
+### Optional semantic code memory
+
+Markdown memory remains the default corpus. Rust source indexing is separate and never changes source files:
+
+```bash
+rms-memory reindex --code  # build/update only derived code memory
+rms-memory reindex --all   # refresh Markdown vault + code memory
+```
+
+Registered projects support `code_index_mode = "off" | "manual" | "watch"`; the default is `off`. Set it from the project root with `rms-memory config --code-index-mode watch` (or add `--scope <project-path>`). `watch` is explicitly opt-in, coalesces Rust saves for three seconds, and coordinates concurrent IDE processes so an unchanged workspace stays idle.
+
 ## 🛠 CLI Commands
 
 | Command | Description |
@@ -136,8 +150,8 @@ The next time you open a project in a connected IDE, the server reads the `rootU
 | `rms-memory install` | Hooks the server into supported IDEs. `--dry-run` supported. |
 | `rms-memory uninstall` | Removes the server from all discovered IDE configurations. |
 | `rms-memory doctor` | Runs 5-point vault health diagnostics. `--repair-frontmatter` safely repairs duplicate IDs with backups; `--repair-path` targets one registered-vault file. |
-| `rms-memory config` | Interactive setup wizard for global settings (`vault-path`, `auto-add`, `inject-rules`, etc). |
-| `rms-memory reindex` | Forces a full re-index of the current project vault. |
+| `rms-memory config` | Interactive global setup; `--code-index-mode off\|manual\|watch` configures semantic code indexing for the current registered project. |
+| `rms-memory reindex [--vault\|--code\|--all]` | Refreshes Markdown memory (default), derived semantic code memory, or both. |
 | `rms-memory sync` | Incremental LanceDB delete-then-insert sync (also runs automatically during `serve`). |
 | `rms-memory gc` | Prunes orphaned LanceDB indices belonging to deleted vaults. |
 | `rms-memory log` | Tails the telemetry log (`~/.rms-memory/rms.log`). |
@@ -152,8 +166,13 @@ Tool descriptions are written to be **action-oriented**, so agents use the vault
 <tr><th>Tool</th><th>Purpose</th><th>Input</th></tr>
 <tr>
 <td><code>rms-memory_rms_search</code></td>
-<td>Semantic search across the vault. Agents are instructed to call this <em>first</em>, before making any changes. Supports <code>min_confidence</code> filtering.</td>
-<td><code>{ query, limit, include_content, min_confidence }</code></td>
+<td>Searches Markdown memory by default. Set <code>corpus</code> to <code>code</code> or <code>all</code>; <code>all</code> uses Reciprocal Rank Fusion. Agents are instructed to call this <em>first</em>.</td>
+<td><code>{ query, corpus: vault|code|all, limit, include_content, min_confidence }</code></td>
+</tr>
+<tr>
+<td><code>rms-memory_rms_code_search</code></td>
+<td>Convenience endpoint for the derived semantic code index. Results include file, symbol, kind, line range, and segment index.</td>
+<td><code>{ query, limit, include_content }</code></td>
 </tr>
 <tr>
 <td><code>rms-memory_rms_read</code></td>
@@ -188,6 +207,18 @@ Embedded LanceDB (`~/.rms-memory/dbs/`) combines vector similarity with full-tex
 </details>
 
 <details>
+<summary><b>Separate Markdown and Code Corpora</b></summary>
+
+Human-authored Markdown and derived Rust code live in separate tables. Code chunks carry stable symbol identities, line ranges, and preambles; unchanged chunks reuse their vectors. `corpus=all` fuses independently ranked result sets with Reciprocal Rank Fusion, avoiding any assumption that distances from the two corpora are comparable.
+</details>
+
+<details>
+<summary><b>Graph-ready Knowledge Core</b></summary>
+
+Graph nodes and edges are deliberately independent of retrieval chunk boundaries. Markdown links, Rust imports, trait implementations, and lexical call hints can be reconciled as derived relationships; user-created edges and suppress/restore overrides persist across reindexing. Current Rust call edges are syntax-level hints, not a compiler-accurate call graph.
+</details>
+
+<details>
 <summary><b>AST-Aware Chunking</b></summary>
 
 `pulldown-cmark` parses the Markdown AST directly. Chunks are built by walking up to the parent heading, with a strict 1500-character boundary and ~200-character overlapping window for oversized code blocks — no mid-sentence truncation.
@@ -201,8 +232,8 @@ Embedded LanceDB (`~/.rms-memory/dbs/`) combines vector similarity with full-tex
 3. Graceful shutdown (`SIGINT`/`Ctrl+C` handler)
 4. macOS sandbox bypass for `fastembed` model downloads
 5. `rms-memory gc` — orphaned vector store pruning
-6. Background incremental sync (`Delete-then-Insert` on `mtime`)
-7. Real-time file watcher with 3s debounced re-sync
+6. PID-aware per-project writer lock and read-only background synchronization across IDE processes
+7. Markdown watcher plus an explicitly opt-in, 3s-debounced Rust code watcher with shared-generation suppression
 8. Write-guard snapshotting with rolling `.bak` backups (default: 5)
 9. Isolated telemetry logging (`~/.rms-memory/rms.log`)
 10. `llms.txt` export for flat, decoupled LLM ingestion

@@ -93,6 +93,7 @@ impl Document {
         };
         let closing_marker = format!("{newline}---{newline}");
         let body = &text[opening_len..];
+        let mut recovered_attached_delimiter = false;
         let (frontmatter, remainder) = if let Some(relative_end) = body.find(&closing_marker) {
             (&body[..relative_end], body[relative_end..].to_string())
         } else {
@@ -107,6 +108,7 @@ impl Document {
                 .strip_suffix("---")
                 .with_context(|| format!("Unclosed YAML frontmatter in {}", path.display()))?;
             let document_body = &body[separator + paragraph_break.len()..];
+            recovered_attached_delimiter = true;
             (
                 repaired_frontmatter,
                 format!("{newline}---{newline}{newline}{document_body}"),
@@ -124,7 +126,7 @@ impl Document {
             }
             repaired_lines.push(line);
         }
-        if id_count <= 1 {
+        if id_count <= 1 && !recovered_attached_delimiter {
             return Ok(false);
         }
 
@@ -299,6 +301,18 @@ mod tests {
         let doc = Document::parse(&file_path).unwrap();
 
         assert_eq!(doc.frontmatter.unwrap().id.as_deref(), Some("first"));
+        assert_eq!(doc.content.trim_start(), "# Content");
+    }
+
+    #[test]
+    fn repair_frontmatter_recovers_attached_delimiter_without_duplicate_id() {
+        let dir = tempdir().unwrap();
+        let file_path = dir.path().join("attached.md");
+        fs::write(&file_path, "---\nid: first\nsource: test---\n\n# Content").unwrap();
+
+        assert!(Document::repair_duplicate_ids(&file_path).unwrap());
+        let doc = Document::parse(&file_path).unwrap();
+        assert_eq!(doc.frontmatter.unwrap().source.as_deref(), Some("test"));
         assert_eq!(doc.content.trim_start(), "# Content");
     }
 }

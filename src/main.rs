@@ -15,17 +15,22 @@ async fn main() {
     let shutdown = tokio::signal::ctrl_c();
     tokio::pin!(shutdown);
 
-    tokio::select! {
+    let exit_code = tokio::select! {
         result = cli::Cli::execute() => {
-            if let Err(e) = result {
+            let code = if let Err(e) = result {
                 tracing::error!("Server error: {:#}", e);
-            }
+                1
+            } else {
+                0
+            };
             tracing::info!("Server shutting down normally.");
+            code
         }
         _ = &mut shutdown => {
             tracing::info!("Received Ctrl+C, shutting down gracefully.");
+            0
         }
-    }
+    };
 
-    std::process::exit(0);
+    std::process::exit(exit_code);
 }

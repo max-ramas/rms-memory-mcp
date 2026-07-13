@@ -251,6 +251,32 @@ async fn index_code_full_inner(
         }
     }
 
+    // Tree-sitter extraction can surface the same semantic item through more than
+    // one syntactic path. Lance merge-insert rejects duplicate source keys, so
+    // make the stable chunk-ID contract explicit before batching writes.
+    pending.sort_by(|left, right| left.id.cmp(&right.id));
+    let mut unique_pending: Vec<PendingCodeChunk> = Vec::with_capacity(pending.len());
+    let mut first_content_by_id = HashMap::new();
+    for mut chunk in pending {
+        if let Some(existing_hash) = first_content_by_id.get(&chunk.id) {
+            if existing_hash == &chunk.content_hash {
+                continue;
+            }
+
+            // Preserve normal stable IDs, but keep both records when a parser
+            // identity collision represents different content. The suffix is
+            // deterministic for that content and prevents one malformed item
+            // from aborting the entire project index.
+            let colliding_id = chunk.id.clone();
+            chunk.id = blake3::hash(format!("{colliding_id}\0{}", chunk.content_hash).as_bytes())
+                .to_string();
+        } else {
+            first_content_by_id.insert(chunk.id.clone(), chunk.content_hash.clone());
+        }
+        unique_pending.push(chunk);
+    }
+    let pending = unique_pending;
+
     let timestamp = chrono::Utc::now().to_rfc3339();
     for batch in pending.chunks(EMBEDDING_BATCH_SIZE) {
         let changed = batch

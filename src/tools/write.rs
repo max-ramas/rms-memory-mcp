@@ -20,6 +20,9 @@ fn inject_audit_metadata(
             let fm_text = &content[4..end_idx];
             if let Ok(mut fm) = serde_yaml::from_str::<crate::document::Frontmatter>(fm_text) {
                 let existing_created = fm.created_at.clone();
+                if fm.id.is_none() {
+                    fm.id = Some(uuid::Uuid::new_v4().to_string());
+                }
                 fm.last_modified_by = Some(caller_id.to_string());
                 fm.timestamp = Some(now.clone());
                 if existing_created.is_none() {
@@ -46,7 +49,7 @@ fn inject_audit_metadata(
     // No existing frontmatter — create new
     let fm = crate::document::Frontmatter {
         memory_version: None,
-        id: None,
+        id: Some(uuid::Uuid::new_v4().to_string()),
         alias: None,
         doc_type: None,
         status: None,
@@ -61,11 +64,14 @@ fn inject_audit_metadata(
             .map(String::from),
     };
     // Only serialize non-None optional fields
-    let fm_yaml = serde_yaml::to_string(&fm).unwrap_or_default();
+    let fm_yaml = serde_yaml::to_string(&fm)
+        .unwrap_or_default()
+        .trim_end()
+        .to_string();
     if content.is_empty() {
-        format!("---\n{}---\n", fm_yaml)
+        format!("---\n{}\n---\n", fm_yaml)
     } else {
-        format!("---\n{}---\n\n{}", fm_yaml.trim_end(), content)
+        format!("---\n{}\n---\n\n{}", fm_yaml, content)
     }
 }
 
@@ -171,4 +177,34 @@ pub async fn execute(
         "Successfully wrote to {}",
         path_str
     )))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn new_frontmatter_keeps_source_and_closing_delimiter_on_separate_lines() {
+        let args = serde_json::json!({
+            "source": "release gate",
+            "confidence": 0.9,
+        });
+        let content = inject_audit_metadata(
+            "# Release gate",
+            "test-client",
+            args.as_object().expect("JSON object"),
+        );
+
+        assert!(content.contains("source: release gate\n---\n\n# Release gate"));
+        let directory = tempfile::tempdir().expect("temporary directory");
+        let path = directory.path().join("memory.md");
+        std::fs::write(&path, content).expect("write test document");
+        let document = crate::document::Document::parse(&path).expect("valid frontmatter");
+        assert!(
+            document
+                .frontmatter
+                .and_then(|frontmatter| frontmatter.id)
+                .is_some()
+        );
+    }
 }

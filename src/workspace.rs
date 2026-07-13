@@ -3,6 +3,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::str::FromStr;
 
 pub const REGISTRY_SCHEMA_VERSION: u32 = 1;
 
@@ -61,6 +62,21 @@ pub enum CodeIndexMode {
     Off,
     Manual,
     Watch,
+}
+
+impl FromStr for CodeIndexMode {
+    type Err = String;
+
+    fn from_str(value: &str) -> std::result::Result<Self, Self::Err> {
+        match value {
+            "off" => Ok(Self::Off),
+            "manual" => Ok(Self::Manual),
+            "watch" => Ok(Self::Watch),
+            _ => Err(format!(
+                "code index mode must be one of: off, manual, watch (got {value})"
+            )),
+        }
+    }
 }
 
 fn default_include() -> Vec<String> {

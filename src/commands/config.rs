@@ -1,5 +1,6 @@
-use anyhow::Result;
+use anyhow::{Result, anyhow};
 use clap::Args;
+use std::path::{Path, PathBuf};
 
 #[derive(Args, Debug)]
 pub struct ConfigArgs {
@@ -11,15 +12,43 @@ pub struct ConfigArgs {
     pub inject_rules: Option<bool>,
     #[arg(long)]
     pub auto_import: Option<String>,
+    /// Set semantic code indexing for the current project: off, manual, or watch
+    #[arg(long, value_name = "MODE")]
+    pub code_index_mode: Option<String>,
 }
 
 impl ConfigArgs {
-    pub async fn run(&self, _scope: Option<String>) -> Result<()> {
+    pub async fn run(&self, scope: Option<String>) -> Result<()> {
         let manager = crate::config_manager::ConfigManager::open()?;
         let snapshot = manager.snapshot();
         let expected_revision = snapshot.revision;
         let mut registry = snapshot.registry;
         let mut updated = false;
+
+        // Project-level code indexing is deliberately non-interactive: it is commonly
+        // toggled by scripts and must not prompt for unrelated global settings.
+        if let Some(mode) = &self.code_index_mode {
+            let mode = mode
+                .parse::<crate::workspace::CodeIndexMode>()
+                .map_err(anyhow::Error::msg)?;
+            let project = registered_project_mut(&mut registry, scope.as_deref())?;
+            if project.code_index_mode != mode {
+                project.code_index_mode = mode;
+                updated = true;
+            }
+
+            if updated {
+                let snapshot = manager.replace(expected_revision, registry)?;
+                println!(
+                    "Project code_index_mode set to {} (revision {}).",
+                    mode_name(mode),
+                    snapshot.revision
+                );
+            } else {
+                println!("Project code_index_mode is already {}.", mode_name(mode));
+            }
+            return Ok(());
+        }
 
         if self.vault_path.is_none()
             && self.auto_add.is_none()
@@ -176,5 +205,79 @@ impl ConfigArgs {
         }
 
         Ok(())
+    }
+}
+
+fn registered_project_mut<'a>(
+    registry: &'a mut crate::workspace::Registry,
+    scope: Option<&str>,
+) -> Result<&'a mut crate::workspace::ProjectConfig> {
+    let requested = match scope {
+        Some(scope) => PathBuf::from(scope),
+        None => std::env::current_dir()?,
+    };
+    let requested = std::fs::canonicalize(&requested).unwrap_or(requested);
+    let key = registry
+        .projects
+        .iter()
+        .filter(|(_, project)| requested.starts_with(Path::new(&project.code_path)))
+        .max_by_key(|(_, project)| project.code_path.len())
+        .map(|(key, _)| key.clone())
+        .ok_or_else(|| {
+            anyhow!(
+                "No registered project matches {}. Run `rms-memory init` first or pass --scope <project-path>.",
+                requested.display()
+            )
+        })?;
+    registry
+        .projects
+        .get_mut(&key)
+        .ok_or_else(|| anyhow!("Registered project disappeared while updating configuration"))
+}
+
+fn mode_name(mode: crate::workspace::CodeIndexMode) -> &'static str {
+    match mode {
+        crate::workspace::CodeIndexMode::Off => "off",
+        crate::workspace::CodeIndexMode::Manual => "manual",
+        crate::workspace::CodeIndexMode::Watch => "watch",
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::collections::HashMap;
+
+    #[test]
+    fn selects_the_most_specific_registered_project() {
+        let mut registry = crate::workspace::Registry {
+            projects: HashMap::from([
+                (
+                    "parent".to_string(),
+                    crate::workspace::ProjectConfig {
+                        code_path: "/projects".to_string(),
+                        vault_path: "/vaults/parent".to_string(),
+                        include: vec![],
+                        exclude: vec![],
+                        code_index_mode: crate::workspace::CodeIndexMode::Off,
+                    },
+                ),
+                (
+                    "child".to_string(),
+                    crate::workspace::ProjectConfig {
+                        code_path: "/projects/rms-memory".to_string(),
+                        vault_path: "/vaults/child".to_string(),
+                        include: vec![],
+                        exclude: vec![],
+                        code_index_mode: crate::workspace::CodeIndexMode::Off,
+                    },
+                ),
+            ]),
+            ..Default::default()
+        };
+
+        let project = registered_project_mut(&mut registry, Some("/projects/rms-memory/src"))
+            .expect("child project must match");
+        assert_eq!(project.vault_path, "/vaults/child");
     }
 }

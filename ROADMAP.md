@@ -43,9 +43,9 @@ This document outlines the strategic direction and upcoming milestones for RMS M
 - [x] Request size limit (1MB) + search limit cap (`min(100)`).
 - [x] Code deduplication: `VectorStore` trait removed, `CommandRunner` trait removed, shared `response.rs`/`validation.rs`/`create_vault_dirs()`.
 
-## v1.0.5 — Thread Reduction + Codex (Released 2026-07-13)
+## v1.0.5 — Stabilization + Semantic Code Memory (In validation, 2026-07-13)
 
-**Goal:** Resolve CPU storms and add Codex IDE support.
+**Goal:** Keep multi-IDE operation idle when nothing changes, then add a safe, optional semantic code corpus without weakening Markdown memory.
 
 - [x] Thread pool reduction: ONNX `with_intra_threads(1)` + tokio `worker_threads=2` — per-process thread count from ~45 to ~6.
 - [x] Fast-path skip fix: `get_file_timestamps()` returns `(doc_id, timestamp)` — no more silent vector deletion on unchanged files.
@@ -53,8 +53,15 @@ This document outlines the strategic direction and upcoming milestones for RMS M
 - [x] Watcher `.bak` filter + trigger logging.
 - [x] Codex IDE: auto-install into `~/.codex/mcp.json`.
 - [x] Runtime verified: load avg 648 → 8.31 (-98.7%), CPU 380% → 0%, 3 IDE processes.
+- [x] PID-aware per-project writer lock, fail-closed frontmatter parsing, and read-only background sync.
+- [x] Rust tree-sitter semantic chunks with preamble-preserving segmentation, stable IDs, and vector reuse for unchanged segments.
+- [x] Explicit `reindex --vault|--code|--all`; code indexing remains opt-in through `code_index_mode = off|manual|watch` (default `off`).
+- [x] Derived graph nodes/edges plus durable manual edges and suppress/restore overrides, separated from retrieval chunks.
+- [x] Federated `rms_search(corpus=vault|code|all)` and `rms_code_search`; mixed results use Reciprocal Rank Fusion.
+- [x] Opt-in Rust watcher: three-second coalescing and shared completion markers prevent duplicate reindexing across IDE processes.
+- [ ] Release gate: live MCP JSON-RPC probe, larger Rust-workspace performance record, and five-IDE watch soak test.
 
-## v1.1 — The Workspace Split & Ecosystem (Next)
+## v1.1 — GUI Client, Workspace Split & Ecosystem (Next)
 
 **Goal:** Transition from a monolithic architecture into a modular ecosystem of crates.
 
@@ -65,6 +72,8 @@ This document outlines the strategic direction and upcoming milestones for RMS M
 - `rms-memory-cli` — The end-user CLI application.
 
 This enables downstream consumers to use just `rms-memory-index` without the MCP layer.
+
+The already implemented graph, revisioned configuration manager, and transport-neutral jobs/events layer form the core contract for a future GUI. The GUI will use its own human-oriented API rather than MCP, which remains the IDE/agent protocol.
 
 ## v2.0 — Multi-Vault & Advanced Context (Future)
 
