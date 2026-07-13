@@ -4,7 +4,7 @@
 
 **Persistent, local-first memory for your AI coding agents.**
 
-Stop re-explaining your architecture to Cursor, Zed, and Claude Code every single session.
+Stop re-explaining your architecture to Cursor, Zed, and Claude Code and other IDEs every single session.
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Rust](https://img.shields.io/badge/Rust-1.75%2B-orange?logo=rust)](https://www.rust-lang.org/)
@@ -30,7 +30,7 @@ Stop re-explaining your architecture to Cursor, Zed, and Claude Code every singl
 
 ## The Problem
 
-You're developing a single project but switching between different agents — Cursor, Zed, Claude Code, OpenCode. Every one of them loses context of architectural decisions, system requirements, and user preferences the moment you close the tab. You end up re-explaining the same things over and over, or copy-pasting a stale `CLAUDE.md` between tools.
+You're developing a single project but switching between different agents — Cursor, Zed, Claude Code, OpenCode, etc. Every one of them loses context of architectural decisions, system requirements, and user preferences the moment you close the tab. You end up re-explaining the same things over and over, or copy-pasting a stale `CLAUDE.md` between tools.
 
 **RMS Memory MCP** bridges this gap: a single, isolated, centralized Markdown vault — perfectly structured for LLM consumption — that any MCP-compatible IDE can read from and write to.
 
@@ -112,7 +112,20 @@ For virtual projects without a filesystem path (threads, leads, etc.), use `--sc
 rms-memory --scope "thread:abc-123" serve
 ```
 
-[See multi-scope documentation →](docs/multi-scope-usage.md)
+### Use multiple isolated scopes
+
+A scope is an isolation boundary for a vault and its index. Without `--scope`, RMS Memory uses the canonical current working directory; an explicit filesystem path addresses that same kind of project vault. Any other non-empty identifier creates an isolated virtual vault:
+
+```bash
+rms-memory serve                                      # current project scope
+rms-memory --scope "/home/user/my-project" serve     # explicit project scope
+rms-memory --scope "thread:abc-123" serve             # virtual thread scope
+rms-memory --scope "product:acme" serve                # virtual product scope
+```
+
+For project knowledge plus per-thread history, query each scope explicitly and merge the results in the caller. RMS Memory intentionally does not mix scopes implicitly. Scope IDs may not be empty or exceed 512 characters; absolute and `./`/`../` values are resolved as paths, while all other values are opaque identifiers.
+
+When using `min_confidence`, start with an unfiltered search. Use `0.3–0.5` for broad refinement and reserve `0.7+` for verified canonical facts; records without a confidence value remain visible.
 
 ### Configure your vault
 
@@ -173,7 +186,7 @@ Supported names are `rust`, `go`, `javascript`, `jsx`, `typescript`, `tsx`, `pyt
 | `rms-memory gc` | Prunes orphaned LanceDB indices belonging to deleted vaults. |
 | `rms-memory log` | Tails the telemetry log (`~/.rms-memory/rms.log`). |
 | `rms-memory export-llms` | Compiles the current vault into a single `llms.txt` payload. |
-| **All commands** | Accept `--scope <id>` to target arbitrary vaults (threads, leads, etc). See `docs/multi-scope-usage.md`. |
+| **All commands** | Accept `--scope <id>` to target arbitrary isolated vaults (threads, leads, etc.). |
 
 ## 🔌 MCP Tools Exposed
 

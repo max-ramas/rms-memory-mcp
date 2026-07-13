@@ -36,7 +36,7 @@ This document outlines the strategic direction and upcoming milestones for RMS M
 - [x] Audit Metadata: `timestamp`, `created_at`, `confidence`, `source` in YAML frontmatter.
 - [x] Confidence-Aware Search: `min_confidence` with NULL-aware filter.
 - [x] Zero-Downtime Schema Migration: LanceDB `add_columns(AllNulls)` auto-migration.
-- [x] Multi-Scope Documentation: `docs/multi-scope-usage.md`.
+- [x] Multi-Scope Documentation: public usage guidance is maintained in `README.md`.
 - [x] Symlink traversal hardening (canonicalize + containment check).
 - [x] Panic-free database layer (12 `unwrap()`/`panic!()` → proper `Result`).
 - [x] JSON-RPC error responses (malformed requests return `-32700`).
@@ -88,7 +88,7 @@ The already implemented graph, revisioned configuration manager, and transport-n
 - [x] Vue 3 SFC shell parsing with inline nested JS/TS parsing and original-source mapping.
 - [x] Mixed-language resource gate and four-IDE idle verification; packaging remains covered by the existing release matrix.
 
-The production contract and delivery slices are defined in `docs/multilanguage-code-memory-plan.md`.
+The detailed production contract and delivery slices are maintained privately in RMS Memory.
 
 ## v2.0 — Multi-Vault & Advanced Context (Future)
 
