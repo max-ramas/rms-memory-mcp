@@ -125,8 +125,11 @@ pub async fn run_installer(auto_yes: bool, dry_run: bool) -> Result<()> {
     for (candidate, _json, ide, original_content) in selected_targets {
         let config_payload = (ide.build_payload)(&my_exe_str);
 
-        let patched_content =
-            patcher::inject_jsonc(&original_content, ide.key, "rms-memory", &config_payload);
+        let patched_content = if candidate.to_string_lossy().ends_with(".toml") {
+            patcher::inject_toml(&original_content, "rms-memory", &config_payload)
+        } else {
+            patcher::inject_jsonc(&original_content, ide.key, "rms-memory", &config_payload)
+        };
 
         if let Some(out) = patched_content {
             if out == original_content {

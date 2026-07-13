@@ -192,3 +192,40 @@ pub fn remove_key(original: &str, key: &str, tool_name: &str) -> Option<String> 
 
     None
 }
+
+pub fn inject_toml(
+    original: &str,
+    tool_name: &str,
+    tool_config: &serde_json::Value,
+) -> Option<String> {
+    let section_header = format!("[mcp_servers.{}]", tool_name);
+
+    if original.contains(&section_header) {
+        return Some(original.to_string());
+    }
+
+    let command = tool_config.get("command")?.as_str()?;
+    let args = tool_config
+        .get("args")
+        .and_then(|a| a.as_array())
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|v| v.as_str())
+                .map(|s| format!("\"{}\"", s))
+                .collect::<Vec<_>>()
+                .join(", ")
+        })
+        .unwrap_or_default();
+
+    let entry = format!(
+        "\n[mcp_servers.{}]\ncommand = \"{}\"\nargs = [{}]\n",
+        tool_name, command, args
+    );
+
+    let mut result = original.to_string();
+    if !result.ends_with('\n') {
+        result.push('\n');
+    }
+    result.push_str(&entry);
+    Some(result)
+}

@@ -16,6 +16,13 @@ pub fn opencode_payload(exe: &str) -> serde_json::Value {
     })
 }
 
+pub fn codex_toml_payload(exe: &str) -> serde_json::Value {
+    serde_json::json!({
+        "command": exe,
+        "args": ["serve"]
+    })
+}
+
 #[derive(Debug, Clone)]
 pub struct IdeConfig {
     pub name: &'static str,
@@ -126,9 +133,9 @@ pub fn get_ide_registry() -> Vec<IdeConfig> {
             opencode_payload,
         ),
         IdeConfig::new(
-            "Codex",
-            vec![".codex/mcp.json"],
-            "mcpServers",
+            "Codex / ChatGPT",
+            vec![".codex/config.toml"],
+            "mcp_servers",
             standard_payload,
         ),
         IdeConfig::new(
