@@ -158,3 +158,25 @@ Multi-IDE scenarios exposed a CPU storm: 4 processes consuming ~380% CPU, load a
 - **`.bak` Filter:** Write-Guard snapshot files are filtered from the Markdown watcher; Rust source watching remains opt-in.
 - **Codex IDE:** Auto-installer supports `~/.codex/mcp.json` alongside 11 existing IDEs.
 - **Runtime Verified:** load avg 648 → 8.31 (-98.7%), CPU 380% → 0%, memory 2.5GB → ~1.3GB across 3 IDE processes.
+
+### 14. Wiki Context Pack Generator (v1.0.6)
+
+The Wiki Generator assembles deterministic context packs from multiple sources for LLM agents to create human-readable documentation.
+
+- **YAML Manifest:** Defines sections, source types (`vault_search`, `code_search`, `files`, `self_cli_help`), and budget controls (max_chars, max_section_chars, max_item_chars).
+- **Retrieval Pipeline:** `RetrievalService` queries vault documents and code chunks through a shared facade — used by both MCP tools and WikiService.
+- **RRF Dedup + Semantic Truncation:** Reciprocal Rank Fusion merges multiple queries per section. Stable ID-based dedup removes duplicates. UTF-8 boundary-safe semantic truncation prevents mid-word cuts.
+- **Atomic Output:** Context pack, agent task, sources JSON, diagnostics JSON, and manifest YAML written to `wiki/.generation/` via temp-file + rename.
+- **Reproducible:** `pack_id` computed from schema version, scope, Git revision, and ordered source hashes.
+- **MCP Tool:** `rms_wiki_pack` — agents trigger generation directly from any IDE.
+- **CLI:** `rms-memory wiki generate/init/clean` + `rms-memory wiki generate --stdout`.
+
+### 15. Project Label Provenance (v1.0.6)
+
+Every document now carries its originating project identity.
+
+- **`project: <key>` in frontmatter:** Set automatically on first write from registry key. Preserved on updates. Rejected on conflict.
+- **Custom YAML Preservation:** `inject_audit_metadata` uses `serde_yaml::Mapping` — user-defined keys survive `replace` operations.
+- **Registry Diagnostics:** `rms-memory projects list` and `rms-memory projects locate --vault/--project`.
+- **Global Vault Fallback Removed:** Bad `rootUri` returns error with client/project/vault logging — no more orphaned files in global vault root.
+- **ChatGPT / Codex TOML:** `inject_toml()` patcher for `~/.codex/config.toml` `[mcp_servers]` section.

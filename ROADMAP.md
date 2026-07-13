@@ -43,7 +43,7 @@ This document outlines the strategic direction and upcoming milestones for RMS M
 - [x] Request size limit (1MB) + search limit cap (`min(100)`).
 - [x] Code deduplication: `VectorStore` trait removed, `CommandRunner` trait removed, shared `response.rs`/`validation.rs`/`create_vault_dirs()`.
 
-## v1.0.5 — Stabilization + Semantic Code Memory (In validation, 2026-07-13)
+## v1.0.5 — Stabilization + Semantic Code Memory (Released 2026-07-13)
 
 **Goal:** Keep multi-IDE operation idle when nothing changes, then add a safe, optional semantic code corpus without weakening Markdown memory.
 
@@ -65,6 +65,21 @@ This document outlines the strategic direction and upcoming milestones for RMS M
 - [x] Real-project stress gate: concurrent GeoMail, License Server, RMS Monitoring, and GeoTax Site indexing completed; four restarted IDEs remained at 0.0% idle CPU.
 - [x] Independent Rust and mixed Rust/Tauri dogfood: `rms-threads-assistant` (19 files / 101 items / 133 reused segments) and `rms-monitoring` (114 / 846 / 976 reused) completed on the final binary.
 - [ ] Optional scale-up: a separate larger Rust workspace remains unavailable locally. One unrelated invalid-YAML vault record remains intentionally manual-only.
+
+## v1.0.6 — Wiki Generator + Project Provenance (Released 2026-07-13)
+
+**Goal:** Deterministic context pack assembly, project identity tracking, and ChatGPT/Codex integration.
+
+- [x] Wiki Context Pack Generator: `rms-memory wiki generate` with YAML manifests, budget controls.
+- [x] `rms_wiki_pack` MCP tool — agents trigger wiki generation from any IDE.
+- [x] `RetrievalService` facade — decoupled retrieval shared by MCP tools and WikiService.
+- [x] Project label provenance: `project: <key>` auto-set, preserved, conflict-detected via `serde_yaml::Mapping`.
+- [x] `rms-memory projects list/locate` for registry diagnostics.
+- [x] ChatGPT / Codex TOML installer: `inject_toml()` for `~/.codex/config.toml` `[mcp_servers]`.
+- [x] Global vault fallback removed — bad rootUri → error + diagnostic log.
+- [x] `ignore::WalkBuilder` for wiki file walking (nested `.gitignore`).
+- [x] `pack_id` with Git revision for reproducible builds.
+- [x] Security: wiki path containment, symlink validation, secrets exclusion.
 
 ## v1.1 — GUI Client, Workspace Split & Ecosystem (Next)
 

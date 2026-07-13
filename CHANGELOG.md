@@ -2,6 +2,35 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.0.6] - 2026-07-13
+
+### Added
+- **Wiki Context Pack Generator (`rms-memory wiki`):** New core service that assembles verified context packs from vault documents, code index, project files, and CLI help output. Produces deterministic `context-pack.md` + `agent-task.md` for LLM agents to create human-readable wiki documentation. Supports custom YAML manifests with budget controls, RRF dedup, and semantic truncation.
+- **`rms_wiki_pack` MCP tool:** JSON-RPC wrapper over `WikiService::generate()`. Agents can trigger wiki generation directly from any MCP-compatible IDE.
+- **`RetrievalService`:** Public facade over `Store` — decouples wiki generation and future consumers from the database layer. Used by both MCP tools and `WikiService`.
+- **`rms-memory projects`:** CLI commands `list` and `locate --vault/--project` for diagnostic project registry inspection.
+- **Project Label Provenance:** `project: <key>` field in YAML frontmatter — set automatically on first write from registry key, preserved on updates, rejected on conflict. Custom user YAML keys preserved via `serde_yaml::Mapping` (no data loss on `replace`).
+- **Codex / ChatGPT IDE support:** TOML-aware installer patcher (`inject_toml`) for `~/.codex/config.toml` with `[mcp_servers]` section.
+
+### Security
+- **Path traversal hardening (wiki):** `resolve_files` now canonicalizes paths, validates workspace containment, and hard-excludes `.env*`, `*secret*`, `*.pem`, `*.key`.
+- **Global vault fallback removed:** Bad or missing `rootUri` no longer falls back to global vault path — returns error with diagnostic logging (client, rootUri, project key).
+- **Panic-free write tool:** `inject_audit_metadata` returns `Result` — project conflict is a recoverable error, not silent data corruption.
+
+### Fixed
+- **Thread pool reduction:** ONNX `with_intra_threads(1)` + tokio `worker_threads=2`. Runtime verified: load avg 648 → 8.31, CPU 380% → 0%.
+- **Fast-path skip fix:** `get_file_timestamps()` returns `(doc_id, timestamp)` — no more silent vector deletion for unchanged files.
+- **Single `Arc<Mutex<Indexer>>`:** Shared between search handler and background sync — eliminates N model reloads per process.
+- **`--refresh-code` works:** `WikiGenerateRequest.refresh_code` triggers `code_indexer::index_code_full()`.
+- **Per-command `self_cli_help`:** Uses `find_subcommand().render_help()` instead of identical root help for all.
+
+### Changed
+- **`inject_audit_metadata` rewritten:** Uses `serde_yaml::Mapping` instead of typed `Frontmatter` struct — preserves all custom user YAML keys.
+- **`WikiService` uses `RetrievalService`** instead of direct `Store` calls — clean separation for GUI.
+- **`ignore::WalkBuilder` in `resolve_files`:** Replaced `glob::glob` with `ignore::WalkBuilder(.git_ignore(true), .parents(true))` for proper nested `.gitignore` support.
+- **`pack_id` includes Git revision:** `git rev-parse HEAD` added to hash for reproducible builds.
+- **CLI commands unified:** `rms-memory projects`, `rms-memory wiki` added alongside existing commands.
+
 ## [1.0.5] - 2026-07-13
 
 ### Added
