@@ -1,0 +1,45 @@
+name: Publish crates.io
+
+on:
+  workflow_dispatch:
+    inputs:
+      expected_version:
+        description: Exact package version to publish (for example 1.0.5)
+        required: true
+        type: string
+
+concurrency:
+  group: crates-publish-${{ inputs.expected_version }}
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    name: Publish package
+    runs-on: ubuntu-latest
+    environment: crates.io
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install Protoc
+        uses: arduino/setup-protoc@v3
+        with:
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Verify requested version
+        env:
+          EXPECTED_VERSION: ${{ inputs.expected_version }}
+        run: |
+          package_version="$(cargo metadata --no-deps --format-version 1 | jq -r '.packages[] | select(.name == "rms-memory-mcp") | .version')"
+          test -n "$EXPECTED_VERSION"
+          test "$package_version" = "$EXPECTED_VERSION"
+
+      - name: Publish package
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+        run: cargo publish --locked
