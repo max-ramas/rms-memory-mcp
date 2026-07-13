@@ -1357,17 +1357,14 @@ fn extract_python_relation_hints(
                 target_identifier: format!("python-import:{}", node_text(node, source).trim()),
             });
         }
-        if node.kind() == "call" {
-            if let Some(function) = node.child_by_field_name("function") {
-                hints.push(CodeRelationHint {
-                    source_item_key: owner(),
-                    relation: "calls_symbol".to_string(),
-                    target_identifier: format!(
-                        "python-symbol:{}",
-                        node_text(function, source).trim()
-                    ),
-                });
-            }
+        if node.kind() == "call"
+            && let Some(function) = node.child_by_field_name("function")
+        {
+            hints.push(CodeRelationHint {
+                source_item_key: owner(),
+                relation: "calls_symbol".to_string(),
+                target_identifier: format!("python-symbol:{}", node_text(function, source).trim()),
+            });
         }
         let mut c = node.walk();
         for child in node.named_children(&mut c) {
@@ -1465,18 +1462,18 @@ fn walk_web_relations(
             ),
         });
     }
-    if node.kind() == "call_expression" {
-        if let Some(function) = node.child_by_field_name("function") {
-            hints.push(CodeRelationHint {
-                source_item_key: owner(),
-                relation: "calls_symbol".to_string(),
-                target_identifier: format!(
-                    "{}-symbol:{}",
-                    language.as_str(),
-                    node_text(function, source).trim()
-                ),
-            });
-        }
+    if node.kind() == "call_expression"
+        && let Some(function) = node.child_by_field_name("function")
+    {
+        hints.push(CodeRelationHint {
+            source_item_key: owner(),
+            relation: "calls_symbol".to_string(),
+            target_identifier: format!(
+                "{}-symbol:{}",
+                language.as_str(),
+                node_text(function, source).trim()
+            ),
+        });
     }
     let mut cursor = node.walk();
     for child in node.named_children(&mut cursor) {
