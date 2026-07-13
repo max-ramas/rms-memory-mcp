@@ -5,7 +5,16 @@ use std::path::Path;
 
 const MAX_CODE_FILE_BYTES: u64 = 512 * 1024;
 const EMBEDDING_BATCH_SIZE: usize = 8;
-const HARD_EXCLUDED_DIRS: &[&str] = &[".git", ".rms-memory", "node_modules", "target", "vendor"];
+const HARD_EXCLUDED_DIRS: &[&str] = &[
+    ".git",
+    ".rms-memory",
+    ".next",
+    ".nuxt",
+    "node_modules",
+    "target",
+    "vendor",
+    "coverage",
+];
 
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub struct CodeIndexStats {
@@ -434,6 +443,8 @@ mod tests {
         assert!(!is_supported_code_path(Path::new("src/lib.rs.bak")));
         assert!(is_hard_excluded(Path::new("target/debug/build.rs")));
         assert!(is_hard_excluded(Path::new("vendor/crate/lib.rs")));
+        assert!(is_hard_excluded(Path::new("frontend/.next/server/page.js")));
+        assert!(!is_hard_excluded(Path::new("internal/build/steps.go")));
         assert!(is_hard_excluded(Path::new(".git/hooks/pre-commit.rs")));
         assert!(!is_hard_excluded(Path::new("src/lib.rs")));
     }
