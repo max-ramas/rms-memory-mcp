@@ -189,14 +189,14 @@ impl Workspace {
     pub fn discover_with_scope(
         scope_override: Option<&str>,
         cwd: &Path,
-        options: Option<crate::rules_injector::InjectOptions>,
+        _options: Option<crate::rules_injector::InjectOptions>,
     ) -> Result<Self> {
         let identifier = Self::resolve_identifier(scope_override, cwd)?;
         let cwd_path = std::path::Path::new(&identifier);
 
         // If the identifier is a valid existing path, use path-based discover
         if cwd_path.exists() {
-            return Self::discover(cwd_path, options);
+            return Self::discover(cwd_path, _options);
         }
 
         // Opaque scope — create hash-based vault
@@ -219,12 +219,11 @@ impl Workspace {
 
     pub fn discover(
         start_dir: &Path,
-        options: Option<crate::rules_injector::InjectOptions>,
+        _options: Option<crate::rules_injector::InjectOptions>,
     ) -> Result<Self> {
         let config_manager = crate::config_manager::ConfigManager::open()?;
         let config_snapshot = config_manager.snapshot();
-        let config_revision = config_snapshot.revision;
-        let mut registry = config_snapshot.registry;
+        let registry = config_snapshot.registry;
         let start_canon = fs::canonicalize(start_dir).unwrap_or_else(|_| start_dir.to_path_buf());
         let start_str = start_canon.to_string_lossy().to_string();
 
@@ -253,15 +252,9 @@ impl Workspace {
         }
 
         if let Some((_, project)) = best_match {
-            // For existing projects, check if we need to re-inject rules
-            if registry.global.inject_rules.unwrap_or(false) {
-                let inject_opts = options.unwrap_or_default();
-                let proj_path = PathBuf::from(&project.code_path);
-                if proj_path.exists() {
-                    let _ = crate::rules_injector::inject_rules(&proj_path, inject_opts);
-                }
-            }
-
+            // Workspace discovery is intentionally read-only with respect to a
+            // source repository. Rules are provisioned only by an explicit init
+            // or rules-sync operation, never by routine CLI/MCP/GUI resolution.
             return Ok(Workspace {
                 root: PathBuf::from(&project.vault_path),
                 code_path: PathBuf::from(&project.code_path),
@@ -272,99 +265,10 @@ impl Workspace {
             });
         }
 
-        // Auto-add logic
-        if registry.global.auto_add_projects == Some(true) {
-            let global_vault =
-                registry.global.global_vault_path.as_ref().ok_or_else(|| {
-                    anyhow!("global_vault_path is not configured in registry.toml")
-                })?;
-
-            let folder_name = start_canon
-                .file_name()
-                .and_then(|n| n.to_str())
-                .unwrap_or("UnknownProject")
-                .to_string();
-
-            let vault_path = Path::new(global_vault)
-                .join(&folder_name)
-                .to_string_lossy()
-                .to_string();
-
-            // Create the vault folders
-            fs::create_dir_all(Path::new(&vault_path).join("rules"))?;
-            fs::create_dir_all(Path::new(&vault_path).join("decisions"))?;
-            fs::create_dir_all(Path::new(&vault_path).join("architecture"))?;
-            fs::create_dir_all(Path::new(&vault_path).join("artifacts"))?;
-            fs::create_dir_all(Path::new(&vault_path).join("docs"))?;
-            fs::create_dir_all(Path::new(&vault_path).join("api"))?;
-
-            let project_config = ProjectConfig {
-                code_path: start_str.clone(),
-                vault_path: vault_path.clone(),
-                include: default_include(),
-                exclude: default_exclude(),
-                code_index_mode: CodeIndexMode::Off,
-                code_languages: default_code_languages(),
-            };
-
-            registry
-                .projects
-                .insert(folder_name, project_config.clone());
-            config_manager.replace(config_revision, registry.clone())?;
-
-            if registry.global.inject_rules.unwrap_or(false) {
-                let inject_opts = options.unwrap_or_default();
-                if let Err(e) = crate::rules_injector::inject_rules(&start_canon, inject_opts) {
-                    tracing::warn!("Failed to inject rules into repository: {}", e);
-                } else {
-                    tracing::info!("Successfully injected RMS Memory rules into IDE configs.");
-                }
-            } else {
-                tracing::info!(
-                    "Rules injection disabled by default, skipping auto-configuration of repository rules. Run `rms-memory init` to explicitly enable."
-                );
-            }
-
-            if let Some(strategy) = &registry.global.auto_import_strategy {
-                if strategy != "skip" {
-                    let import_service = crate::import::ImportService::new(
-                        start_canon.clone(),
-                        PathBuf::from(&vault_path),
-                    );
-                    let docs = import_service.detect_existing_docs();
-                    if !docs.is_empty() {
-                        let action = match strategy.as_str() {
-                            "link" => crate::import::ImportAction::LinkOnly,
-                            "import_organize" => crate::import::ImportAction::ImportAndOrganize,
-                            "import" => crate::import::ImportAction::Import,
-                            _ => crate::import::ImportAction::Skip,
-                        };
-                        if let Err(e) = import_service.execute(action, docs) {
-                            tracing::warn!("Auto-import failed: {}", e);
-                        } else {
-                            tracing::info!("Auto-import completed using strategy: {}", strategy);
-                        }
-                    }
-                }
-            } else {
-                tracing::info!(
-                    "Auto-initialized vault. Run 'rms-memory import' to import existing docs."
-                );
-            }
-
-            Ok(Workspace {
-                root: PathBuf::from(&project_config.vault_path),
-                code_path: PathBuf::from(&project_config.code_path),
-                include: project_config.include.clone(),
-                exclude: project_config.exclude.clone(),
-                code_index_mode: project_config.code_index_mode,
-                code_languages: project_config.code_languages.clone(),
-            })
-        } else {
-            Err(anyhow!(
-                "Project not found in registry and auto_add_projects is false or unset"
-            ))
-        }
+        Err(anyhow!(
+            "Project not found in registry. Use `rms-memory init` to register '{}' as a project.",
+            start_canon.display()
+        ))
     }
 
     pub fn canonical_path(&self) -> Result<String> {

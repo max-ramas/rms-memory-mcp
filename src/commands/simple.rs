@@ -380,15 +380,16 @@ impl DoctorArgs {
 
         // ─── Stamp Project ───
         if self.stamp_project {
-            let project_key = self
-                .project
-                .clone()
-                .or_else(|| workspace.project_key());
+            let project_key = self.project.clone().or_else(|| workspace.project_key());
 
             if let Some(key) = &project_key {
                 println!(
                     "\n[🔖] Stamp-project mode: project = '{key}'{}",
-                    if self.apply { " (applying)" } else { " (dry-run)" }
+                    if self.apply {
+                        " (applying)"
+                    } else {
+                        " (dry-run)"
+                    }
                 );
 
                 let files = workspace.find_markdown_files().unwrap_or_default();

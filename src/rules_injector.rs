@@ -1,4 +1,4 @@
-use anyhow::Result;
+use anyhow::{Result, bail};
 use std::fs;
 use std::path::Path;
 
@@ -57,13 +57,6 @@ pub fn inject_rules(project_root: &Path, options: InjectOptions) -> Result<()> {
 
     for (file_path_str, template, exists) in files_to_inject {
         let file_path = project_root.join(file_path_str);
-
-        // Ensure parent directories exist
-        if let Some(parent) = file_path.parent()
-            && !parent.exists()
-        {
-            let _ = std::fs::create_dir_all(parent);
-        }
 
         if exists {
             if append_or_replace_block(&file_path, template, options)? {
@@ -145,6 +138,9 @@ fn create_and_write(file_path: &Path, template: &str, options: InjectOptions) ->
         }
     }
 
+    if let Some(parent) = file_path.parent() {
+        fs::create_dir_all(parent)?;
+    }
     fs::write(file_path, template)?;
     Ok(true)
 }
@@ -157,26 +153,7 @@ fn append_or_replace_block(
     let content = fs::read_to_string(file_path)?;
     let display_path = file_path.file_name().unwrap_or_default().to_string_lossy();
 
-    let mut action = "Append new block to EOF";
-    let new_content = if let (Some(start_idx), Some(end_idx)) =
-        (content.find(START_MARKER), content.find(END_MARKER))
-    {
-        if start_idx < end_idx {
-            action = "Replace existing RMS-MEMORY block";
-            let before = &content[..start_idx];
-            let after = &content[end_idx + END_MARKER.len()..];
-            format!("{}{}{}", before, template, after)
-        } else {
-            format!("{}\n\n{}", content, template)
-        }
-    } else {
-        let prefix = if content.ends_with('\n') {
-            "\n"
-        } else {
-            "\n\n"
-        };
-        format!("{}{}{}", content, prefix, template)
-    };
+    let (new_content, action) = replace_managed_block(&content, template)?;
 
     if new_content == content {
         return Ok(false);
@@ -225,4 +202,248 @@ fn append_or_replace_block(
 
     fs::write(file_path, new_content)?;
     Ok(true)
+}
+
+/// Replaces the RMS-managed block without changing bytes outside that block.
+///
+/// The inclusive range includes exactly one newline after the end marker.  The
+/// templates own that newline, which makes a second replacement byte-identical
+/// instead of appending an extra blank line on every invocation.
+fn replace_managed_block(content: &str, template: &str) -> Result<(String, &'static str)> {
+    let starts = marker_positions(content, START_MARKER);
+    let ends = marker_positions(content, END_MARKER);
+
+    match (starts.as_slice(), ends.as_slice()) {
+        ([], []) => {
+            let line_ending = preferred_line_ending(content);
+            let normalized_template = normalize_line_endings(template, line_ending);
+            let separator = if content.is_empty() {
+                String::new()
+            } else if ends_with_line_ending(content) {
+                line_ending.to_string()
+            } else {
+                // Keep the previous behaviour of a blank separator before a new
+                // managed block, while respecting CRLF files.
+                format!("{line_ending}{line_ending}")
+            };
+            Ok((
+                format!("{content}{separator}{normalized_template}"),
+                "Append new block to EOF",
+            ))
+        }
+        ([start], [end]) if start < end => {
+            let line_ending = line_ending_after_marker(content, *end + END_MARKER.len())
+                .unwrap_or_else(|| preferred_line_ending(content));
+            let normalized_template = normalize_line_endings(template, line_ending);
+            let end_of_block =
+                *end + END_MARKER.len() + line_ending_len_at(content, *end + END_MARKER.len());
+            Ok((
+                format!(
+                    "{}{}{}",
+                    &content[..*start],
+                    normalized_template,
+                    &content[end_of_block..]
+                ),
+                "Replace existing RMS-MEMORY block",
+            ))
+        }
+        ([start], [end]) if end < start => bail!(
+            "Malformed RMS-MEMORY markers: end marker appears before start marker; refusing to modify file"
+        ),
+        _ => bail!(
+            "Malformed RMS-MEMORY markers: expected zero markers or one ordered start/end pair (found {} start, {} end); refusing to modify file",
+            starts.len(),
+            ends.len()
+        ),
+    }
+}
+
+fn marker_positions(content: &str, marker: &str) -> Vec<usize> {
+    content
+        .match_indices(marker)
+        .map(|(index, _)| index)
+        .collect()
+}
+
+fn preferred_line_ending(content: &str) -> &'static str {
+    if content.contains("\r\n") {
+        "\r\n"
+    } else {
+        "\n"
+    }
+}
+
+fn line_ending_after_marker(content: &str, marker_end: usize) -> Option<&'static str> {
+    match content.get(marker_end..) {
+        Some(rest) if rest.starts_with("\r\n") => Some("\r\n"),
+        Some(rest) if rest.starts_with('\n') => Some("\n"),
+        _ => None,
+    }
+}
+
+fn line_ending_len_at(content: &str, index: usize) -> usize {
+    line_ending_after_marker(content, index).map_or(0, str::len)
+}
+
+fn ends_with_line_ending(content: &str) -> bool {
+    content.ends_with('\n') || content.ends_with('\r')
+}
+
+fn normalize_line_endings(template: &str, line_ending: &str) -> String {
+    template
+        .replace("\r\n", "\n")
+        .replace('\r', "\n")
+        .replace('\n', line_ending)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tempfile::tempdir;
+
+    const TEMPLATE: &str = "<!-- RMS-MEMORY-START -->\nmanaged\n<!-- RMS-MEMORY-END -->\n";
+
+    fn options(dry_run: bool) -> InjectOptions {
+        InjectOptions {
+            dry_run,
+            force: true,
+            full: false,
+            interactive: false,
+        }
+    }
+
+    #[test]
+    fn replacement_is_byte_idempotent_for_one_hundred_runs() {
+        let directory = tempdir().unwrap();
+        let path = directory.path().join("AGENTS.md");
+        fs::write(&path, "user heading\n\nuser footer\n").unwrap();
+
+        assert!(append_or_replace_block(&path, TEMPLATE, options(false)).unwrap());
+        let expected = fs::read(&path).unwrap();
+        for _ in 0..99 {
+            assert!(!append_or_replace_block(&path, TEMPLATE, options(false)).unwrap());
+            assert_eq!(fs::read(&path).unwrap(), expected);
+        }
+    }
+
+    #[test]
+    fn all_supported_rule_files_are_stable_after_the_first_injection() {
+        let directory = tempdir().unwrap();
+        let files = [
+            ".cursorrules",
+            ".windsurfrules",
+            ".clinerules",
+            ".rules",
+            ".github/copilot-instructions.md",
+            "AGENT.md",
+            "AGENTS.md",
+            "CLAUDE.md",
+            "GEMINI.md",
+            ".zed/assistant.md",
+        ];
+        for file in files {
+            let path = directory.path().join(file);
+            fs::create_dir_all(path.parent().unwrap()).unwrap();
+            fs::write(path, "user content\n").unwrap();
+        }
+
+        inject_rules(directory.path(), options(false)).unwrap();
+        let snapshots: Vec<_> = files
+            .iter()
+            .map(|file| fs::read(directory.path().join(file)).unwrap())
+            .collect();
+        let gitignore = fs::read(directory.path().join(".gitignore")).unwrap();
+
+        for _ in 0..99 {
+            inject_rules(directory.path(), options(false)).unwrap();
+            for (file, expected) in files.iter().zip(&snapshots) {
+                assert_eq!(fs::read(directory.path().join(file)).unwrap(), *expected);
+            }
+            assert_eq!(
+                fs::read(directory.path().join(".gitignore")).unwrap(),
+                gitignore
+            );
+        }
+    }
+
+    #[test]
+    fn replacement_preserves_crlf_and_bytes_outside_managed_block() {
+        let directory = tempdir().unwrap();
+        let path = directory.path().join("AGENTS.md");
+        fs::write(
+            &path,
+            b"before\r\n<!-- RMS-MEMORY-START -->\r\nold\r\n<!-- RMS-MEMORY-END -->\r\nafter\r\n",
+        )
+        .unwrap();
+
+        assert!(append_or_replace_block(&path, TEMPLATE, options(false)).unwrap());
+        assert_eq!(
+            fs::read(&path).unwrap(),
+            b"before\r\n<!-- RMS-MEMORY-START -->\r\nmanaged\r\n<!-- RMS-MEMORY-END -->\r\nafter\r\n"
+        );
+        assert!(!append_or_replace_block(&path, TEMPLATE, options(false)).unwrap());
+    }
+
+    #[test]
+    fn replacement_keeps_user_owned_extra_blank_lines_after_block() {
+        let directory = tempdir().unwrap();
+        let path = directory.path().join("AGENTS.md");
+        fs::write(
+            &path,
+            "<!-- RMS-MEMORY-START -->\nold\n<!-- RMS-MEMORY-END -->\n\n\nuser content\n",
+        )
+        .unwrap();
+
+        assert!(append_or_replace_block(&path, TEMPLATE, options(false)).unwrap());
+        assert_eq!(
+            fs::read_to_string(&path).unwrap(),
+            "<!-- RMS-MEMORY-START -->\nmanaged\n<!-- RMS-MEMORY-END -->\n\n\nuser content\n"
+        );
+    }
+
+    #[test]
+    fn replacement_handles_a_block_without_a_final_newline() {
+        let directory = tempdir().unwrap();
+        let path = directory.path().join("AGENTS.md");
+        fs::write(
+            &path,
+            "before\n<!-- RMS-MEMORY-START -->\nold\n<!-- RMS-MEMORY-END -->",
+        )
+        .unwrap();
+
+        assert!(append_or_replace_block(&path, TEMPLATE, options(false)).unwrap());
+        assert_eq!(
+            fs::read_to_string(&path).unwrap(),
+            "before\n<!-- RMS-MEMORY-START -->\nmanaged\n<!-- RMS-MEMORY-END -->\n"
+        );
+        assert!(!append_or_replace_block(&path, TEMPLATE, options(false)).unwrap());
+    }
+
+    #[test]
+    fn malformed_or_duplicate_markers_are_non_destructive() {
+        for content in [
+            "<!-- RMS-MEMORY-END -->\n<!-- RMS-MEMORY-START -->\n",
+            "<!-- RMS-MEMORY-START -->\n<!-- RMS-MEMORY-START -->\n<!-- RMS-MEMORY-END -->\n",
+            "<!-- RMS-MEMORY-START -->\nno end\n",
+        ] {
+            let original = content.to_string();
+            assert!(replace_managed_block(&original, TEMPLATE).is_err());
+            assert_eq!(original, content);
+        }
+    }
+
+    #[test]
+    fn dry_run_does_not_write_files_or_create_parent_directories() {
+        let directory = tempdir().unwrap();
+        let path = directory.path().join("nested").join("AGENTS.md");
+        assert!(!create_and_write(&path, TEMPLATE, options(true)).unwrap());
+        assert!(!path.exists());
+        assert!(!path.parent().unwrap().exists());
+
+        fs::write(directory.path().join("existing.md"), "user\n").unwrap();
+        let existing = directory.path().join("existing.md");
+        let before = fs::read(&existing).unwrap();
+        assert!(!append_or_replace_block(&existing, TEMPLATE, options(true)).unwrap());
+        assert_eq!(fs::read(&existing).unwrap(), before);
+    }
 }

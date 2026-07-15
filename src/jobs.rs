@@ -55,6 +55,8 @@ pub struct JobSnapshot {
     pub error: Option<String>,
     pub created_at: String,
     pub updated_at: String,
+    /// Optional structured metadata about changed entities (files, paths, etc.).
+    pub metadata: Option<serde_json::Value>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -81,6 +83,7 @@ pub enum CoreEvent {
 pub trait JobService: Send + Sync {
     fn start_job(&self, kind: JobKind) -> JobHandle;
     fn snapshot(&self, id: &JobId) -> Option<JobSnapshot>;
+    fn snapshots(&self) -> Vec<JobSnapshot>;
     fn subscribe_events(&self) -> tokio::sync::broadcast::Receiver<CoreEvent>;
 }
 
@@ -148,6 +151,7 @@ impl JobService for JobManager {
             error: None,
             created_at: now(),
             updated_at: now(),
+            metadata: None,
         };
         let cancelled = Arc::new(AtomicBool::new(false));
         self.jobs.lock().expect("job manager lock poisoned").insert(
@@ -174,6 +178,19 @@ impl JobService for JobManager {
 
     fn subscribe_events(&self) -> tokio::sync::broadcast::Receiver<CoreEvent> {
         self.events.subscribe()
+    }
+
+    /// Return all current job snapshots (most recent first).
+    fn snapshots(&self) -> Vec<JobSnapshot> {
+        let mut snapshots: Vec<_> = self
+            .jobs
+            .lock()
+            .expect("job manager lock poisoned")
+            .values()
+            .map(|entry| entry.snapshot.clone())
+            .collect();
+        snapshots.sort_by(|a, b| b.created_at.cmp(&a.created_at));
+        snapshots
     }
 }
 
@@ -209,6 +226,19 @@ impl JobHandle {
                 ensure_active(job)?;
                 job.state = JobState::Running;
                 job.progress = Some(progress);
+                Ok(())
+            },
+        )
+    }
+
+    /// Attach structured metadata to this job (e.g. list of changed files).
+    pub fn set_metadata(&self, metadata: serde_json::Value) -> Result<()> {
+        self.manager.update(
+            &self.id,
+            |job| CoreEvent::JobProgressed { job },
+            |job| {
+                ensure_active(job)?;
+                job.metadata = Some(metadata);
                 Ok(())
             },
         )

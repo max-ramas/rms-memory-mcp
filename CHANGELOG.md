@@ -30,6 +30,7 @@ All notable changes to this project will be documented in this file.
 - **`ignore::WalkBuilder` in `resolve_files`:** Replaced `glob::glob` with `ignore::WalkBuilder(.git_ignore(true), .parents(true))` for proper nested `.gitignore` support.
 - **`pack_id` includes Git revision:** `git rev-parse HEAD` added to hash for reproducible builds.
 - **CLI commands unified:** `rms-memory projects`, `rms-memory wiki` added alongside existing commands.
+- **Graph Store Query API:** Added `Store::query_graph_nodes()`, `Store::query_graph_edges()` public methods. Added `from_string()`/`into_string()` on `GraphNodeKey`, `into_string()` on `EdgeRelation`.
 
 ## [1.0.5] - 2026-07-13
 

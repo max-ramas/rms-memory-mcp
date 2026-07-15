@@ -1,7 +1,7 @@
 use super::AppContext;
 use anyhow::Result;
 
-fn inject_audit_metadata(
+pub(crate) fn inject_audit_metadata(
     content: &str,
     caller_id: &str,
     project_key: Option<&str>,

@@ -26,8 +26,20 @@ impl GraphNodeKey {
         Ok(Self(format!("{corpus}:{source_id}")))
     }
 
+    /// Create a GraphNodeKey from an already-formatted string (e.g. "vault:doc-123").
+    /// This does NOT validate that the format matches a known corpus — it's for
+    /// reconstructing keys read from storage.
+    pub fn from_string(key: String) -> Self {
+        Self(key)
+    }
+
     pub fn as_str(&self) -> &str {
         &self.0
+    }
+
+    /// Consume and return the inner string.
+    pub fn into_string(self) -> String {
+        self.0
     }
 }
 
@@ -52,6 +64,11 @@ impl EdgeRelation {
 
     pub fn as_str(&self) -> &str {
         &self.0
+    }
+
+    /// Consume and return the inner string.
+    pub fn into_string(self) -> String {
+        self.0
     }
 }
 
@@ -132,6 +149,35 @@ pub struct GraphEdgeRecord {
     pub metadata_json: String,
     pub created_at: String,
     pub updated_at: String,
+}
+
+impl GraphEdgeRecord {
+    /// Builds a user-owned edge with a non-deterministic identity. Callers that
+    /// create a new edge must use this constructor rather than deriving an ID
+    /// from its endpoints, because a user may create several distinct links
+    /// between the same nodes.
+    pub fn new_user(
+        source_key: GraphNodeKey,
+        target_key: GraphNodeKey,
+        relation: EdgeRelation,
+        metadata_json: String,
+        now: String,
+    ) -> Self {
+        Self {
+            edge_key: new_user_edge_key(),
+            source_key,
+            target_key,
+            relation,
+            origin: EdgeOrigin::User,
+            extractor: None,
+            resolution: EdgeResolution::Resolved,
+            confidence: None,
+            generation: None,
+            metadata_json,
+            created_at: now.clone(),
+            updated_at: now,
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

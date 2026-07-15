@@ -325,7 +325,9 @@ async fn sync_vault_inner(
     // 1. Delete old vectors
     for doc_id in &to_delete {
         tracing::info!("Sync: Deleting outdated/orphaned document_id: {}", doc_id);
-        let _ = store.delete_document(&table, doc_id).await;
+        if let Err(e) = store.delete_document(&table, doc_id).await {
+            tracing::warn!("Failed to delete document {doc_id}: {e}");
+        }
     }
 
     // 2. Insert new vectors
@@ -442,7 +444,9 @@ async fn index_vault_full_inner(
     store: &crate::store::Store,
     indexer: &mut Indexer,
 ) -> Result<()> {
-    let _ = store.db.drop_table(&store.table_name, &[]).await;
+    if let Err(e) = store.db.drop_table(&store.table_name, &[]).await {
+        tracing::warn!("Failed to drop memory table: {e}");
+    }
     let table = store.create_table().await?;
     store.create_fts_index(&table).await?;
 

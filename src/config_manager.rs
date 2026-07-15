@@ -1,5 +1,6 @@
 use anyhow::{Context, Result, anyhow};
 use fs2::FileExt;
+use serde::Serialize;
 use std::fs::{File, OpenOptions};
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -7,7 +8,12 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, RwLock};
 use std::time::Duration;
 
-#[derive(Debug, Clone)]
+/// The complete, revisioned configuration state exposed to management clients.
+///
+/// `Registry` remains the on-disk schema.  Clients must send the revision back
+/// to [`ConfigManager::replace`] rather than writing `registry.toml` directly;
+/// that preserves cross-process conflict detection and atomic persistence.
+#[derive(Debug, Clone, Serialize)]
 pub struct ConfigSnapshot {
     pub registry: crate::workspace::Registry,
     pub revision: u64,
@@ -135,6 +141,21 @@ impl ConfigManager {
         let _ = self.events.send(snapshot.clone());
         Ok(snapshot)
     }
+
+    /// Deserialize a GUI/MCP payload and atomically replace the configuration.
+    ///
+    /// This is intentionally kept here (rather than in a UI adapter) so every
+    /// management client receives the same validation, file lock, revision
+    /// check, and atomic-rename semantics.
+    pub fn replace_json(
+        &self,
+        expected_revision: u64,
+        registry: serde_json::Value,
+    ) -> Result<ConfigSnapshot> {
+        let registry =
+            serde_json::from_value(registry).context("Invalid registry configuration payload")?;
+        self.replace(expected_revision, registry)
+    }
 }
 
 impl Drop for ConfigWatcher {
@@ -259,5 +280,27 @@ mod tests {
         std::fs::write(&path, "not valid = [").unwrap();
         assert!(manager.reload().is_err());
         assert_eq!(manager.snapshot().revision, 1);
+    }
+
+    #[test]
+    fn snapshot_is_serializable_and_json_replace_is_revisioned() {
+        let directory = tempfile::tempdir().unwrap();
+        let manager = ConfigManager::at(directory.path().join("registry.toml")).unwrap();
+        let snapshot = manager.snapshot();
+
+        let mut registry = serde_json::to_value(&snapshot.registry).unwrap();
+        registry["global"]["max_backups"] = serde_json::json!(9);
+        let updated = manager.replace_json(snapshot.revision, registry).unwrap();
+
+        let client_payload = serde_json::to_value(&updated).unwrap();
+        assert_eq!(client_payload["revision"], 1);
+        assert_eq!(client_payload["registry"]["global"]["max_backups"], 9);
+        assert!(
+            manager
+                .replace_json(0, client_payload["registry"].clone())
+                .unwrap_err()
+                .to_string()
+                .starts_with("CONFIG_CONFLICT:")
+        );
     }
 }

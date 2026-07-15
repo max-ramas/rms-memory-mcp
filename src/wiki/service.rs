@@ -428,6 +428,7 @@ pub struct WikiGenerateRequest {
     pub refresh_code: bool,
 }
 
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct WikiGenerateResult {
     pub context_pack_path: PathBuf,
     pub agent_task_path: PathBuf,

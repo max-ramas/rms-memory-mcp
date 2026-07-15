@@ -6,8 +6,29 @@ use anyhow::{Context, Result};
 use dialoguer::{Confirm, MultiSelect, Select, theme::ColorfulTheme};
 use similar::{ChangeTag, TextDiff};
 use std::fs::{self};
+use std::path::{Path, PathBuf};
 
+/// Install the currently running standalone CLI into supported IDEs.
+///
+/// This compatibility entrypoint is for `rms-memory install` only.  Library
+/// consumers embedded in another executable (notably the Tauri GUI) must call
+/// [`run_installer_with_executable`] with the packaged standalone binary.
 pub async fn run_installer(auto_yes: bool, dry_run: bool) -> Result<()> {
+    let executable = current_cli_executable()?;
+    run_installer_with_executable(auto_yes, dry_run, executable).await
+}
+
+/// Install an explicitly supplied standalone `rms-memory` executable.
+///
+/// Accepting the executable as an argument prevents a host application from
+/// accidentally registering itself as the MCP server command.  The path is
+/// validated before any IDE configuration is inspected or written.
+pub async fn run_installer_with_executable(
+    auto_yes: bool,
+    dry_run: bool,
+    executable: impl AsRef<Path>,
+) -> Result<()> {
+    let executable = validate_standalone_executable(executable.as_ref())?;
     println!("[🔍] Scanning known configuration directories...");
 
     let base_dirs = directories::BaseDirs::new().context("Cannot find base directories")?;
@@ -119,11 +140,10 @@ pub async fn run_installer(auto_yes: bool, dry_run: bool) -> Result<()> {
         }
     }
 
-    let my_exe = std::env::current_exe()?;
-    let my_exe_str = my_exe.to_string_lossy().to_string();
+    let executable_str = executable.to_string_lossy().to_string();
 
     for (candidate, _json, ide, original_content) in selected_targets {
-        let config_payload = (ide.build_payload)(&my_exe_str);
+        let config_payload = (ide.build_payload)(&executable_str);
 
         let patched_content = if candidate.to_string_lossy().ends_with(".toml") {
             patcher::inject_toml(&original_content, "rms-memory", &config_payload)
@@ -208,13 +228,52 @@ pub async fn run_installer(auto_yes: bool, dry_run: bool) -> Result<()> {
         }
     }
 
-    macos::apply_entitlements(&my_exe_str);
-
     println!("[✅] Installation sweep completed.");
     Ok(())
 }
 
-pub async fn run_uninstaller(_auto_yes: bool, _dry_run: bool) -> Result<()> {
+/// Validate the binary that will be persisted in an IDE MCP configuration.
+///
+/// We deliberately require the product binary name instead of accepting the
+/// caller's `current_exe`: doing otherwise records a GUI process followed by
+/// `serve`, which is not an independent stdio MCP server.
+pub fn validate_standalone_executable(path: &Path) -> Result<PathBuf> {
+    let canonical = std::fs::canonicalize(path).with_context(|| {
+        format!(
+            "Standalone rms-memory executable not found: {}",
+            path.display()
+        )
+    })?;
+    if !canonical.is_file() {
+        anyhow::bail!(
+            "Standalone rms-memory executable is not a file: {}",
+            canonical.display()
+        );
+    }
+
+    let file_name = canonical
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or_default()
+        .trim_end_matches(".exe");
+    if file_name != "rms-memory" {
+        anyhow::bail!(
+            "Expected standalone executable named rms-memory, got {}. \
+             Use run_installer_with_executable with the packaged rms-memory binary.",
+            canonical.display()
+        );
+    }
+    Ok(canonical)
+}
+
+fn current_cli_executable() -> Result<PathBuf> {
+    let current = std::env::current_exe().context("Cannot resolve current executable")?;
+    validate_standalone_executable(&current).with_context(|| {
+        "This installer was invoked from a host application. Pass the standalone rms-memory binary explicitly instead"
+    })
+}
+
+pub async fn run_uninstaller(auto_yes: bool, dry_run: bool) -> Result<()> {
     println!("[🗑️] Scanning for rms-memory installations...");
 
     let base_dirs = directories::BaseDirs::new().context("Cannot find base directories")?;
@@ -234,6 +293,29 @@ pub async fn run_uninstaller(_auto_yes: bool, _dry_run: bool) -> Result<()> {
                 if let Some(removed) = patcher::remove_key(&content, ide.key, "rms-memory")
                     && removed != content
                 {
+                    if dry_run {
+                        println!(
+                            "[DRY-RUN] Planning to remove rms-memory from {} ({})",
+                            ide.name,
+                            candidate.display()
+                        );
+                        uninstalled += 1;
+                        continue;
+                    }
+                    if !auto_yes {
+                        let should_remove = Confirm::with_theme(&ColorfulTheme::default())
+                            .with_prompt(format!(
+                                "Remove rms-memory from {} ({})?",
+                                ide.name,
+                                candidate.display()
+                            ))
+                            .default(true)
+                            .interact()?;
+                        if !should_remove {
+                            println!("Skipping {}", candidate.display());
+                            continue;
+                        }
+                    }
                     if candidate.exists() {
                         let bak = format!("{}.bak", candidate.to_string_lossy());
                         let _ = fs::copy(&candidate, &bak);
@@ -255,4 +337,35 @@ pub async fn run_uninstaller(_auto_yes: bool, _dry_run: bool) -> Result<()> {
         );
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn accepts_only_the_standalone_product_binary() {
+        let directory = tempfile::tempdir().unwrap();
+        let binary = directory.path().join("rms-memory");
+        std::fs::write(&binary, b"fixture").unwrap();
+
+        assert_eq!(
+            validate_standalone_executable(&binary).unwrap(),
+            binary.canonicalize().unwrap()
+        );
+
+        let gui = directory.path().join("RMS Memory");
+        std::fs::write(&gui, b"fixture").unwrap();
+        let error = validate_standalone_executable(&gui)
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("Expected standalone executable named rms-memory"));
+    }
+
+    #[test]
+    fn rejects_missing_or_directory_executables() {
+        let directory = tempfile::tempdir().unwrap();
+        assert!(validate_standalone_executable(&directory.path().join("rms-memory")).is_err());
+        assert!(validate_standalone_executable(directory.path()).is_err());
+    }
 }

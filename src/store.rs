@@ -246,7 +246,9 @@ impl Store {
 
     pub async fn recreate_code_table(&self) -> Result<Table> {
         let name = self.code_table_name();
-        let _ = self.db.drop_table(&name, &[]).await;
+        if let Err(e) = self.db.drop_table(&name, &[]).await {
+            tracing::warn!("Failed to drop table {name}: {e}");
+        }
         Ok(self
             .db
             .create_empty_table(&name, Self::code_schema())

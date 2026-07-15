@@ -215,7 +215,10 @@ fn spawn_code_watcher(
                     debounce.as_mut().reset(tokio::time::Instant::now() + tokio::time::Duration::from_secs(3));
                 }
                 _ = &mut debounce, if dirty_since.is_some() => {
-                    let observed = dirty_since.expect("guarded by select condition");
+                    let Some(observed) = dirty_since else {
+                        tracing::warn!("code watcher debounce fired without dirty_since");
+                        continue;
+                    };
                     if crate::code_indexer::code_index_is_fresh_since(&store.storage_path, observed) {
                         dirty_since = None;
                         continue;
@@ -277,11 +280,13 @@ impl McpServer {
     ) -> Result<()> {
         let (shutdown_tx, _shutdown_rx) = tokio::sync::watch::channel(false);
         let shutdown_tx_for_server = shutdown_tx.clone();
-        let shared_indexer = indexer.unwrap_or_else(|| {
-            Arc::new(Mutex::new(
-                crate::indexer::Indexer::new().expect("Failed to initialize embedding model"),
-            ))
-        });
+        let shared_indexer = if let Some(idx) = indexer {
+            idx
+        } else {
+            Arc::new(Mutex::new(crate::indexer::Indexer::new().map_err(|e| {
+                anyhow::anyhow!("Failed to initialize embedding model: {e}")
+            })?))
+        };
         let mut server = Self {
             ctx: AppContext {
                 store,
@@ -420,14 +425,19 @@ impl McpServer {
                             spawn_sync_watcher(
                                 workspace.clone(),
                                 store.clone(),
-                                self.ctx.indexer.as_ref().unwrap().clone(),
+                                self.ctx
+                                    .indexer
+                                    .clone()
+                                    .ok_or_else(|| anyhow::anyhow!("Indexer not initialized"))?,
                                 self.shutdown_tx.subscribe(),
                             );
                             if workspace.code_index_mode == crate::workspace::CodeIndexMode::Watch {
                                 spawn_code_watcher(
                                     workspace.clone(),
                                     store.clone(),
-                                    self.ctx.indexer.as_ref().unwrap().clone(),
+                                    self.ctx.indexer.clone().ok_or_else(|| {
+                                        anyhow::anyhow!("Indexer not initialized")
+                                    })?,
                                     self.shutdown_tx.subscribe(),
                                 );
                             }

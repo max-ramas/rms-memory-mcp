@@ -6,10 +6,12 @@ use lancedb::arrow::arrow_array::{
 };
 use lancedb::query::{ExecutableQuery, QueryBase};
 use lancedb::table::Table;
+use std::collections::HashMap;
 use std::sync::Arc;
 
 use crate::graph::{
-    EdgeOrigin, EdgeOverrideAction, GraphEdgeOverride, GraphEdgeRecord, GraphNodeRecord,
+    EdgeOrigin, EdgeOverrideAction, EdgeRelation, EdgeResolution, GraphEdgeOverride,
+    GraphEdgeRecord, GraphNodeRecord,
 };
 use crate::store::Store;
 
@@ -121,6 +123,11 @@ impl Store {
                 "user graph edges must not have an extractor or generation"
             ));
         }
+        let Some(id) = edge.edge_key.strip_prefix("user:") else {
+            return Err(anyhow!("user graph edges must use a user:<uuid> edge key"));
+        };
+        uuid::Uuid::parse_str(id)
+            .map_err(|_| anyhow!("user graph edges must use a user:<uuid> edge key"))?;
         let tables = self.open_or_create_graph_tables().await?;
         self.upsert_graph_edges(&tables.edges, vec![edge]).await
     }
@@ -145,6 +152,22 @@ impl Store {
             return Err(anyhow!("graph edge override requires a non-empty edge key"));
         }
         let tables = self.open_or_create_graph_tables().await?;
+        let current = self
+            .graph_edge_override_from_tables(&tables, edge_key)
+            .await?;
+        match current {
+            Some(current) if current.revision != expected_revision => {
+                return Err(anyhow!(
+                    "GRAPH_OVERRIDE_CONFLICT: edge {edge_key} changed before revision {expected_revision}"
+                ));
+            }
+            None if expected_revision != 0 => {
+                return Err(anyhow!(
+                    "GRAPH_OVERRIDE_CONFLICT: edge {edge_key} does not have revision {expected_revision}"
+                ));
+            }
+            _ => {}
+        }
         let now = chrono::Utc::now().to_rfc3339();
         let override_row = GraphEdgeOverride {
             edge_key: edge_key.to_string(),
@@ -174,6 +197,15 @@ impl Store {
 
     pub async fn graph_edge_override(&self, edge_key: &str) -> Result<Option<GraphEdgeOverride>> {
         let tables = self.open_or_create_graph_tables().await?;
+        self.graph_edge_override_from_tables(&tables, edge_key)
+            .await
+    }
+
+    async fn graph_edge_override_from_tables(
+        &self,
+        tables: &GraphTables,
+        edge_key: &str,
+    ) -> Result<Option<GraphEdgeOverride>> {
         let mut stream = tables
             .overrides
             .query()
@@ -196,20 +228,200 @@ impl Store {
             .column_by_name("revision")
             .and_then(|column| column.as_any().downcast_ref::<UInt64Array>())
             .context("graph override revision is not UInt64")?;
-        let action = match text("action")?.value(0) {
-            "suppress" => EdgeOverrideAction::Suppress,
-            "restore" => EdgeOverrideAction::Restore,
-            other => return Err(anyhow!("unknown graph override action {other}")),
-        };
+        let actions = text("action")?;
         let authors = text("author")?;
         Ok(Some(GraphEdgeOverride {
             edge_key: text("edge_key")?.value(0).to_string(),
-            action,
+            action: edge_override_action(actions.value(0))?,
             revision: revisions.value(0),
             author: (!authors.is_null(0)).then(|| authors.value(0).to_string()),
             created_at: text("created_at")?.value(0).to_string(),
             updated_at: text("updated_at")?.value(0).to_string(),
         }))
+    }
+
+    async fn graph_edge_overrides(
+        &self,
+        tables: &GraphTables,
+    ) -> Result<HashMap<String, GraphEdgeOverride>> {
+        // Overrides may be written through another table handle. Refresh this
+        // snapshot before applying suppress/restore so a long-lived graph view
+        // never renders stale override state.
+        tables.overrides.checkout_latest().await?;
+        let mut stream = tables.overrides.query().execute().await?;
+        let mut overrides = HashMap::new();
+        while let Some(batch) = stream.next().await.transpose()? {
+            let text = |name: &str| -> Result<&StringArray> {
+                batch
+                    .column_by_name(name)
+                    .and_then(|column| column.as_any().downcast_ref::<StringArray>())
+                    .with_context(|| format!("graph override column {name} is not a string"))
+            };
+            let revisions = batch
+                .column_by_name("revision")
+                .and_then(|column| column.as_any().downcast_ref::<UInt64Array>())
+                .context("graph override revision is not UInt64")?;
+            let edge_keys = text("edge_key")?;
+            let actions = text("action")?;
+            let authors = text("author")?;
+            let created_at = text("created_at")?;
+            let updated_at = text("updated_at")?;
+            for index in 0..batch.num_rows() {
+                let override_row = GraphEdgeOverride {
+                    edge_key: edge_keys.value(index).to_string(),
+                    action: edge_override_action(actions.value(index))?,
+                    revision: revisions.value(index),
+                    author: (!authors.is_null(index)).then(|| authors.value(index).to_string()),
+                    created_at: created_at.value(index).to_string(),
+                    updated_at: updated_at.value(index).to_string(),
+                };
+                overrides.insert(override_row.edge_key.clone(), override_row);
+            }
+        }
+        Ok(overrides)
+    }
+
+    /// Query all graph nodes, returning records along with their row data.
+    pub async fn query_graph_nodes(
+        &self,
+        tables: &GraphTables,
+        _generation: u64,
+    ) -> Result<Vec<GraphNodeRecord>> {
+        use lancedb::query::Select;
+        let mut stream = tables
+            .nodes
+            .query()
+            .select(Select::Columns(vec![
+                "node_key".into(),
+                "corpus".into(),
+                "source_id".into(),
+                "kind".into(),
+                "label".into(),
+                "path".into(),
+                "metadata_json".into(),
+                "generation".into(),
+                "updated_at".into(),
+            ]))
+            .execute()
+            .await?;
+        let mut records = Vec::new();
+        while let Some(batch) = stream.next().await.transpose()? {
+            let text = |name: &str| -> Result<&StringArray> {
+                batch
+                    .column_by_name(name)
+                    .and_then(|c| c.as_any().downcast_ref::<StringArray>())
+                    .with_context(|| format!("graph nodes column {name} is not a string"))
+            };
+            let gens = batch
+                .column_by_name("generation")
+                .and_then(|c| c.as_any().downcast_ref::<UInt64Array>())
+                .context("graph nodes generation is not UInt64")?;
+            let paths = text("path")?;
+            for i in 0..batch.num_rows() {
+                records.push(GraphNodeRecord {
+                    node_key: crate::graph::GraphNodeKey::from_string(
+                        text("node_key")?.value(i).to_string(),
+                    ),
+                    corpus: text("corpus")?.value(i).to_string(),
+                    source_id: text("source_id")?.value(i).to_string(),
+                    kind: text("kind")?.value(i).to_string(),
+                    label: text("label")?.value(i).to_string(),
+                    path: (!paths.is_null(i)).then(|| paths.value(i).to_string()),
+                    metadata_json: text("metadata_json")?.value(i).to_string(),
+                    generation: (!gens.is_null(i)).then(|| gens.value(i)),
+                    updated_at: text("updated_at")?.value(i).to_string(),
+                });
+            }
+        }
+        Ok(records)
+    }
+
+    /// Query all graph edges, returning records along with their row data.
+    pub async fn query_graph_edges(
+        &self,
+        tables: &GraphTables,
+        _generation: u64,
+    ) -> Result<Vec<GraphEdgeRecord>> {
+        use lancedb::query::Select;
+        let mut stream = tables
+            .edges
+            .query()
+            .select(Select::Columns(vec![
+                "edge_key".into(),
+                "source_key".into(),
+                "target_key".into(),
+                "relation".into(),
+                "origin".into(),
+                "extractor".into(),
+                "resolution".into(),
+                "confidence".into(),
+                "generation".into(),
+                "metadata_json".into(),
+                "created_at".into(),
+                "updated_at".into(),
+            ]))
+            .execute()
+            .await?;
+        let mut records = Vec::new();
+        while let Some(batch) = stream.next().await.transpose()? {
+            let text = |name: &str| -> Result<&StringArray> {
+                batch
+                    .column_by_name(name)
+                    .and_then(|c| c.as_any().downcast_ref::<StringArray>())
+                    .with_context(|| format!("graph edges column {name} is not a string"))
+            };
+            let confidence_col = batch.column_by_name("confidence").and_then(|c| {
+                c.as_any()
+                    .downcast_ref::<lancedb::arrow::arrow_array::Float32Array>()
+            });
+            let gens = batch
+                .column_by_name("generation")
+                .and_then(|c| c.as_any().downcast_ref::<UInt64Array>())
+                .context("graph edges generation is not UInt64")?;
+            let extractors = text("extractor")?;
+            for i in 0..batch.num_rows() {
+                let origin_str = text("origin")?.value(i);
+                let res_str = text("resolution")?.value(i);
+                records.push(GraphEdgeRecord {
+                    edge_key: text("edge_key")?.value(i).to_string(),
+                    source_key: crate::graph::GraphNodeKey::from_string(
+                        text("source_key")?.value(i).to_string(),
+                    ),
+                    target_key: crate::graph::GraphNodeKey::from_string(
+                        text("target_key")?.value(i).to_string(),
+                    ),
+                    relation: EdgeRelation::new(text("relation")?.value(i))
+                        .unwrap_or(EdgeRelation::new("unknown").unwrap()),
+                    origin: match origin_str {
+                        "derived" => EdgeOrigin::Derived,
+                        "user" => EdgeOrigin::User,
+                        other => return Err(anyhow!("unknown graph edge origin {other}")),
+                    },
+                    extractor: (!extractors.is_null(i)).then(|| extractors.value(i).to_string()),
+                    resolution: match res_str {
+                        "resolved" => EdgeResolution::Resolved,
+                        "unresolved" => EdgeResolution::Unresolved,
+                        "ambiguous" => EdgeResolution::Ambiguous,
+                        other => return Err(anyhow!("unknown graph edge resolution {other}")),
+                    },
+                    confidence: confidence_col.and_then(|c| (!c.is_null(i)).then(|| c.value(i))),
+                    generation: (!gens.is_null(i)).then(|| gens.value(i)),
+                    metadata_json: text("metadata_json")?.value(i).to_string(),
+                    created_at: text("created_at")?.value(i).to_string(),
+                    updated_at: text("updated_at")?.value(i).to_string(),
+                });
+            }
+        }
+        let overrides = self.graph_edge_overrides(tables).await?;
+        records.retain(|edge| {
+            !matches!(
+                overrides
+                    .get(&edge.edge_key)
+                    .map(|override_row| override_row.action),
+                Some(EdgeOverrideAction::Suppress)
+            )
+        });
+        Ok(records)
     }
 
     async fn upsert_graph_nodes(&self, table: &Table, nodes: Vec<GraphNodeRecord>) -> Result<()> {
@@ -385,6 +597,15 @@ fn append_optional_u64(builder: &mut UInt64Builder, value: Option<u64>) {
         None => builder.append_null(),
     }
 }
+
+fn edge_override_action(value: &str) -> Result<EdgeOverrideAction> {
+    match value {
+        "suppress" => Ok(EdgeOverrideAction::Suppress),
+        "restore" => Ok(EdgeOverrideAction::Restore),
+        other => Err(anyhow!("unknown graph override action {other}")),
+    }
+}
+
 fn validate_json(value: &str) -> Result<()> {
     serde_json::from_str::<serde_json::Value>(value)
         .context("graph metadata must be valid JSON")?;
@@ -542,6 +763,18 @@ mod tests {
             .unwrap();
         assert_eq!(override_row.action, EdgeOverrideAction::Suppress);
         assert_eq!(override_row.revision, 1);
+        let visible = store.query_graph_edges(&tables, 0).await.unwrap();
+        assert_eq!(visible.len(), 1, "suppressed derived edge must be hidden");
+        assert_eq!(visible[0].origin, EdgeOrigin::User);
+        assert_eq!(visible[0].generation, None);
+        assert_eq!(visible[0].confidence, None);
+        let nodes = store.query_graph_nodes(&tables, 0).await.unwrap();
+        let manual = nodes
+            .iter()
+            .find(|node| node.label == "Manual note")
+            .unwrap();
+        assert_eq!(manual.path, None);
+        assert_eq!(manual.generation, None);
         assert!(
             store
                 .set_graph_edge_override(&first.edge_key, EdgeOverrideAction::Restore, 0, None)
@@ -550,5 +783,32 @@ mod tests {
                 .to_string()
                 .contains("GRAPH_OVERRIDE_CONFLICT")
         );
+        let restored = store
+            .set_graph_edge_override(&first.edge_key, EdgeOverrideAction::Restore, 1, None)
+            .await
+            .unwrap();
+        assert_eq!(restored.revision, 2);
+        let visible = store.query_graph_edges(&tables, 0).await.unwrap();
+        assert_eq!(visible.len(), 2);
+        let derived = visible
+            .iter()
+            .find(|edge| edge.origin == EdgeOrigin::Derived)
+            .unwrap();
+        assert_eq!(derived.resolution, EdgeResolution::Unresolved);
+    }
+
+    #[test]
+    fn user_edge_constructor_uses_a_uuid_identity() {
+        let edge = GraphEdgeRecord::new_user(
+            GraphNodeKey::code("source").unwrap(),
+            GraphNodeKey::external("target").unwrap(),
+            EdgeRelation::new("related_to").unwrap(),
+            "{}".to_string(),
+            "2026-07-15T00:00:00Z".to_string(),
+        );
+        let id = edge.edge_key.strip_prefix("user:").unwrap();
+        assert!(uuid::Uuid::parse_str(id).is_ok());
+        assert_eq!(edge.origin, EdgeOrigin::User);
+        assert_eq!(edge.generation, None);
     }
 }

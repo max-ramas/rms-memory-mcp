@@ -9,12 +9,14 @@ pub mod config_manager;
 /// In future versions (v1.1+), these will be split into a proper Cargo Workspace.
 // Public API
 pub mod document;
+pub mod document_service;
 pub mod graph;
 pub mod graph_store;
 pub mod index_lock;
 pub mod indexer;
 pub mod jobs;
 pub mod retrieval;
+pub mod semantic_graph;
 pub mod store;
 pub mod tools;
 pub mod vault_graph;
