@@ -2,6 +2,9 @@ use crate::indexer::Indexer;
 use crate::workspace::Workspace;
 use anyhow::Result;
 use clap::Args;
+use std::io::Write;
+use std::path::Path;
+use tokio::io::{AsyncReadExt, AsyncSeekExt};
 
 #[derive(Args, Debug)]
 pub struct ImportArgs;
@@ -500,12 +503,68 @@ impl LogArgs {
             println!("Log file does not exist yet.");
             return Ok(());
         }
-        let mut child = std::process::Command::new("tail")
-            .arg("-f")
-            .arg(&log_file)
-            .spawn()?;
-        let _ = child.wait()?;
+
+        // Do not invoke `tail -f`: it is not available on Windows and would
+        // make the CLI's logging command depend on a shell utility. Start by
+        // showing the conventional final ten lines, then follow appended data
+        // until the user presses Ctrl+C. A smaller file after rotation resets
+        // the offset safely.
+        let initial = std::fs::read_to_string(&log_file)?;
+        let initial_tail = tail_lines(&initial, 10);
+        if !initial_tail.is_empty() {
+            println!("{initial_tail}");
+        }
+        let mut offset = std::fs::metadata(&log_file)?.len();
+        loop {
+            tokio::select! {
+                signal = tokio::signal::ctrl_c() => {
+                    signal?;
+                    break;
+                }
+                _ = tokio::time::sleep(tokio::time::Duration::from_millis(350)) => {
+                    let appended = read_appended_log(&log_file, &mut offset).await?;
+                    if !appended.is_empty() {
+                        print!("{appended}");
+                        std::io::stdout().flush()?;
+                    }
+                }
+            }
+        }
         Ok(())
+    }
+}
+
+fn tail_lines(content: &str, max_lines: usize) -> String {
+    let mut lines = content.lines().rev().take(max_lines).collect::<Vec<_>>();
+    lines.reverse();
+    lines.join("\n")
+}
+
+async fn read_appended_log(path: &Path, offset: &mut u64) -> Result<String> {
+    let length = tokio::fs::metadata(path).await?.len();
+    if length < *offset {
+        *offset = 0;
+    }
+    if length == *offset {
+        return Ok(String::new());
+    }
+
+    let mut file = tokio::fs::File::open(path).await?;
+    file.seek(std::io::SeekFrom::Start(*offset)).await?;
+    let mut bytes = Vec::with_capacity((length - *offset) as usize);
+    file.read_to_end(&mut bytes).await?;
+    *offset = length;
+    Ok(String::from_utf8_lossy(&bytes).into_owned())
+}
+
+#[cfg(test)]
+mod log_tests {
+    use super::tail_lines;
+
+    #[test]
+    fn tail_lines_keeps_the_last_lines_in_original_order() {
+        assert_eq!(tail_lines("one\ntwo\nthree\nfour", 2), "three\nfour");
+        assert_eq!(tail_lines("one", 10), "one");
     }
 }
 
