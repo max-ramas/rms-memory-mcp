@@ -5,6 +5,10 @@ use std::path::Path;
 
 const MAX_CODE_FILE_BYTES: u64 = 512 * 1024;
 const EMBEDDING_BATCH_SIZE: usize = 8;
+/// A deterministic projection that makes the code graph navigable at every
+/// scale: project -> folder -> file -> parsed symbol.  This stays independent
+/// from language extractors, which own only syntactic relation hints.
+const STRUCTURE_EXTRACTOR: &str = "code-structure-v1";
 const HARD_EXCLUDED_DIRS: &[&str] = &[
     ".git",
     ".rms-memory",
@@ -104,9 +108,36 @@ async fn index_code_full_inner(
     let graph_generation = store.next_graph_generation().await?;
     let mut graph_nodes = HashMap::new();
     let mut graph_edges = HashMap::new();
+    let mut structure_nodes = HashMap::new();
+    let mut structure_edges = HashMap::new();
     for language in crate::code_parser::LanguageId::ALL {
         graph_edges.insert(language.extractor_version().to_string(), HashMap::new());
     }
+
+    let project_source_id = format!(
+        "structure:project:{}",
+        blake3::hash(root.to_string_lossy().as_bytes()).to_hex()
+    );
+    let project_key = crate::graph::GraphNodeKey::code(&project_source_id)?;
+    let project_label = root
+        .file_name()
+        .unwrap_or(root.as_os_str())
+        .to_string_lossy()
+        .to_string();
+    insert_graph_node(
+        &mut structure_nodes,
+        crate::graph::GraphNodeRecord {
+            node_key: project_key.clone(),
+            corpus: "code".to_string(),
+            source_id: project_source_id,
+            kind: "project".to_string(),
+            label: project_label,
+            path: Some(String::new()),
+            metadata_json: serde_json::json!({ "role": "project" }).to_string(),
+            generation: Some(graph_generation),
+            updated_at: chrono::Utc::now().to_rfc3339(),
+        },
+    );
 
     let mut walker = WalkBuilder::new(root);
     walker
@@ -168,6 +199,60 @@ async fn index_code_full_inner(
         let items = parsed.items;
         stats.files_indexed += 1;
         stats.items_indexed += items.len();
+        let file_source_id = format!("structure:file:{file_path}");
+        let file_key = crate::graph::GraphNodeKey::code(&file_source_id)?;
+        insert_graph_node(
+            &mut structure_nodes,
+            crate::graph::GraphNodeRecord {
+                node_key: file_key.clone(),
+                corpus: "code".to_string(),
+                source_id: file_source_id,
+                kind: "file".to_string(),
+                label: file_path.clone(),
+                path: Some(file_path.clone()),
+                metadata_json: serde_json::json!({
+                    "language": language.as_str(),
+                    "role": "file",
+                })
+                .to_string(),
+                generation: Some(graph_generation),
+                updated_at: chrono::Utc::now().to_rfc3339(),
+            },
+        );
+        let mut parent_key = project_key.clone();
+        let folder_parts = file_path.split('/').collect::<Vec<_>>();
+        for depth in 1..folder_parts.len() {
+            let folder_path = folder_parts[..depth].join("/");
+            let folder_source_id = format!("structure:folder:{folder_path}");
+            let folder_key = crate::graph::GraphNodeKey::code(&folder_source_id)?;
+            insert_graph_node(
+                &mut structure_nodes,
+                crate::graph::GraphNodeRecord {
+                    node_key: folder_key.clone(),
+                    corpus: "code".to_string(),
+                    source_id: folder_source_id,
+                    kind: "folder".to_string(),
+                    label: folder_path.clone(),
+                    path: Some(folder_path),
+                    metadata_json: serde_json::json!({ "role": "folder" }).to_string(),
+                    generation: Some(graph_generation),
+                    updated_at: chrono::Utc::now().to_rfc3339(),
+                },
+            );
+            insert_structure_edge(
+                &mut structure_edges,
+                &parent_key,
+                &folder_key,
+                graph_generation,
+            )?;
+            parent_key = folder_key;
+        }
+        insert_structure_edge(
+            &mut structure_edges,
+            &parent_key,
+            &file_key,
+            graph_generation,
+        )?;
         let item_keys = items
             .iter()
             .map(|item| item.item_key.as_str())
@@ -177,7 +262,7 @@ async fn index_code_full_inner(
             insert_graph_node(
                 &mut graph_nodes,
                 crate::graph::GraphNodeRecord {
-                    node_key,
+                    node_key: node_key.clone(),
                     corpus: "code".to_string(),
                     source_id: item.item_key.clone(),
                     kind: item.kind.as_str().to_string(),
@@ -192,6 +277,7 @@ async fn index_code_full_inner(
                     updated_at: chrono::Utc::now().to_rfc3339(),
                 },
             );
+            insert_structure_edge(&mut structure_edges, &file_key, &node_key, graph_generation)?;
             pending.extend(
                 crate::code_parser::split_with_preamble(item)
                     .into_iter()
@@ -397,7 +483,44 @@ async fn index_code_full_inner(
             )
             .await?;
     }
+    store
+        .reconcile_derived_graph(
+            STRUCTURE_EXTRACTOR,
+            graph_generation,
+            structure_nodes.into_values().collect(),
+            structure_edges.into_values().collect(),
+        )
+        .await?;
     Ok(stats)
+}
+
+fn insert_structure_edge(
+    edges: &mut HashMap<String, crate::graph::GraphEdgeRecord>,
+    source_key: &crate::graph::GraphNodeKey,
+    target_key: &crate::graph::GraphNodeKey,
+    generation: u64,
+) -> Result<()> {
+    let relation = crate::graph::EdgeRelation::new("contains")?;
+    let edge_key =
+        crate::graph::derived_edge_key(STRUCTURE_EXTRACTOR, source_key, target_key, &relation)?;
+    edges.insert(
+        edge_key.clone(),
+        crate::graph::GraphEdgeRecord {
+            edge_key,
+            source_key: source_key.clone(),
+            target_key: target_key.clone(),
+            relation,
+            origin: crate::graph::EdgeOrigin::Derived,
+            extractor: Some(STRUCTURE_EXTRACTOR.to_string()),
+            resolution: crate::graph::EdgeResolution::Resolved,
+            confidence: Some(1.0),
+            generation: Some(generation),
+            metadata_json: serde_json::json!({ "source": "code_structure" }).to_string(),
+            created_at: chrono::Utc::now().to_rfc3339(),
+            updated_at: chrono::Utc::now().to_rfc3339(),
+        },
+    );
+    Ok(())
 }
 
 fn insert_graph_node(

@@ -186,6 +186,9 @@ Supported names are `rust`, `go`, `javascript`, `jsx`, `typescript`, `tsx`, `pyt
 | `rms-memory gc` | Prunes orphaned LanceDB indices belonging to deleted vaults. |
 | `rms-memory log` | Tails the telemetry log (`~/.rms-memory/rms.log`). |
 | `rms-memory export-llms` | Compiles the current vault into a single `llms.txt` payload. |
+| `rms-memory projects list` | Lists registered project keys and their code/vault paths. |
+| `rms-memory projects locate --project <key>` | Resolves one registered project key. |
+| `rms-memory projects remove <key>` | Removes an erroneous project registration while preserving its vault files. |
 | **All commands** | Accept `--scope <id>` to target arbitrary isolated vaults (threads, leads, etc.). |
 
 ## 🔌 MCP Tools Exposed
@@ -197,24 +200,31 @@ Tool descriptions are written to be **action-oriented**, so agents use the vault
 <tr>
 <td><code>rms-memory_rms_search</code></td>
 <td>Searches Markdown memory by default. Set <code>corpus</code> to <code>code</code> or <code>all</code>; <code>all</code> uses Reciprocal Rank Fusion. Agents are instructed to call this <em>first</em>.</td>
-<td><code>{ query, corpus: vault|code|all, limit, include_content, min_confidence }</code></td>
+<td><code>{ query, project?, corpus: vault|code|all, limit, include_content, min_confidence }</code></td>
 </tr>
 <tr>
 <td><code>rms-memory_rms_code_search</code></td>
 <td>Convenience endpoint for the derived semantic code index. Results include file, symbol, kind, line range, and segment index.</td>
-<td><code>{ query, limit, include_content }</code></td>
+<td><code>{ query, project?, limit, include_content }</code></td>
 </tr>
 <tr>
 <td><code>rms-memory_rms_read</code></td>
 <td>Reads the full contents of a document found via <code>rms_search</code>.</td>
-<td><code>{ path }</code></td>
+<td><code>{ path, project? }</code></td>
 </tr>
 <tr>
 <td><code>rms-memory_rms_write</code></td>
 <td>Persists new decisions, constraints, or rules. Agents are prompted to call this <em>proactively</em> after solving a tricky bug or learning a preference. Auto-injects audit metadata.</td>
-<td><code>{ path, content, mode: replace|append|create, confidence, source }</code></td>
+<td><code>{ path, project?, content, mode: replace|append|create, confidence, source }</code></td>
+</tr>
+<tr>
+<td><code>rms-memory_rms_projects</code></td>
+<td>Lists registered project keys even when the MCP client did not supply workspace roots.</td>
+<td><code>{}</code></td>
 </tr>
 </table>
+
+The server first resolves the legacy `rootUri`, then negotiates MCP `roots/list`. If a client exposes neither (or opens several registered roots), pass the short registry key in `project`; injected agent rules contain the correct key for that repository.
 
 ## 🏗 Architecture Highlights
 

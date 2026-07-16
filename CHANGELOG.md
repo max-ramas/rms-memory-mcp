@@ -5,6 +5,8 @@ All notable changes to this project will be documented in this file.
 ## [1.0.6] - 2026-07-13
 
 ### Added
+- **Reliable MCP project routing:** clients that omit legacy `rootUri` are resolved through MCP `roots/list`; every vault/code tool also accepts an explicit short `project` key, and the unbound `rms_projects` tool lists valid keys.
+- **Safe registry removal:** `rms-memory projects remove <key>` removes an erroneous project mapping without implicitly deleting its vault files.
 - **Wiki Context Pack Generator (`rms-memory wiki`):** New core service that assembles verified context packs from vault documents, code index, project files, and CLI help output. Produces deterministic `context-pack.md` + `agent-task.md` for LLM agents to create human-readable wiki documentation. Supports custom YAML manifests with budget controls, RRF dedup, and semantic truncation.
 - **`rms_wiki_pack` MCP tool:** JSON-RPC wrapper over `WikiService::generate()`. Agents can trigger wiki generation directly from any MCP-compatible IDE.
 - **`RetrievalService`:** Public facade over `Store` — decouples wiki generation and future consumers from the database layer. Used by both MCP tools and `WikiService`.
@@ -18,6 +20,7 @@ All notable changes to this project will be documented in this file.
 - **Panic-free write tool:** `inject_audit_metadata` returns `Result` — project conflict is a recoverable error, not silent data corruption.
 
 ### Fixed
+- **Antigravity workspace initialization:** globally launched MCP processes no longer depend on process CWD (`/`). Injected agent rules carry the repository's concrete registry key as a fail-closed fallback.
 - **Thread pool reduction:** ONNX `with_intra_threads(1)` + tokio `worker_threads=2`. Runtime verified: load avg 648 → 8.31, CPU 380% → 0%.
 - **Fast-path skip fix:** `get_file_timestamps()` returns `(doc_id, timestamp)` — no more silent vector deletion for unchanged files.
 - **Single `Arc<Mutex<Indexer>>`:** Shared between search handler and background sync — eliminates N model reloads per process.

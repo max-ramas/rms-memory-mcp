@@ -28,6 +28,22 @@ struct RpcError {
     message: String,
 }
 
+fn write_json_line(writer: &mut impl Write, value: &impl Serialize) -> Result<()> {
+    serde_json::to_writer(&mut *writer, value)?;
+    writer.write_all(b"\n")?;
+    writer.flush()?;
+    Ok(())
+}
+
+fn file_uri_to_path(uri: &str) -> Result<std::path::PathBuf> {
+    if !uri.starts_with("file:") {
+        anyhow::bail!("only file:// roots are supported");
+    }
+    let url = url::Url::parse(uri)?;
+    url.to_file_path()
+        .map_err(|_| anyhow::anyhow!("invalid file URI"))
+}
+
 use crate::indexer::Indexer;
 use crate::tools::AppContext;
 use std::sync::Arc;
@@ -36,6 +52,8 @@ use tokio::sync::Mutex;
 pub struct McpServer {
     ctx: AppContext,
     shutdown_tx: tokio::sync::watch::Sender<bool>,
+    client_supports_roots: bool,
+    pending_roots_request_id: Option<Value>,
 }
 
 fn spawn_sync_watcher(
@@ -298,6 +316,8 @@ impl McpServer {
                 project_key: None,
             },
             shutdown_tx: shutdown_tx_for_server,
+            client_supports_roots: false,
+            pending_roots_request_id: None,
         };
         let stdin = io::stdin();
         let mut stdout = io::stdout();
@@ -328,9 +348,10 @@ impl McpServer {
                 continue;
             }
 
-            let req: Result<RpcRequest, _> = serde_json::from_str(&line);
-            match req {
-                Ok(request) => {
+            let message: Result<Value, _> = serde_json::from_str(&line);
+            match message {
+                Ok(message) if message.get("method").is_some() => {
+                    let request: RpcRequest = serde_json::from_value(message)?;
                     if let Some(id) = request.id {
                         let response = server.handle_request(&request.method, request.params).await;
                         let rpc_res = match response {
@@ -355,11 +376,19 @@ impl McpServer {
                         stdout.write_all(res_str.as_bytes())?;
                         stdout.flush()?;
                     } else {
-                        // Notification (no id)
-                        if request.method == "notifications/initialized" {
-                            // ignore
+                        if let Some(outbound) = server
+                            .handle_notification(&request.method, request.params)
+                            .await?
+                        {
+                            write_json_line(&mut stdout, &outbound)?;
                         }
                     }
+                }
+                Ok(message) if message.get("id").is_some() => {
+                    server.handle_client_response(&message).await?;
+                }
+                Ok(_) => {
+                    tracing::warn!("Ignoring JSON-RPC message without method or id");
                 }
                 Err(e) => {
                     tracing::error!("Failed to parse JSON-RPC: {}", e);
@@ -385,6 +414,159 @@ impl McpServer {
         Ok(())
     }
 
+    async fn bind_workspace(&mut self, workspace: crate::workspace::Workspace) -> Result<()> {
+        let project_key = workspace.project_key();
+        if let Some(current_root) = &self.ctx.workspace_root {
+            if current_root == &workspace.root {
+                return Ok(());
+            }
+            anyhow::bail!(
+                "MCP connection is already bound to project '{}'; refusing to switch to '{}'",
+                self.ctx.project_key.as_deref().unwrap_or("unknown"),
+                project_key.as_deref().unwrap_or("unknown")
+            );
+        }
+
+        let store = workspace.get_store().await?;
+        let indexer = self
+            .ctx
+            .indexer
+            .clone()
+            .ok_or_else(|| anyhow::anyhow!("Indexer not initialized"))?;
+        spawn_sync_watcher(
+            workspace.clone(),
+            store.clone(),
+            indexer.clone(),
+            self.shutdown_tx.subscribe(),
+        );
+        if workspace.code_index_mode == crate::workspace::CodeIndexMode::Watch {
+            spawn_code_watcher(
+                workspace.clone(),
+                store.clone(),
+                indexer,
+                self.shutdown_tx.subscribe(),
+            );
+        }
+        self.ctx.workspace_root = Some(workspace.root.clone());
+        self.ctx.project_key = project_key;
+        self.ctx.store = Some(store);
+        tracing::info!(
+            "MCP workspace bound: client={} project_key={} vault_root={}",
+            self.ctx.caller_id,
+            self.ctx.project_key.as_deref().unwrap_or("none"),
+            workspace.root.display()
+        );
+        Ok(())
+    }
+
+    async fn bind_project_argument(&mut self, args: &serde_json::Map<String, Value>) -> Result<()> {
+        let requested = args.get("project").and_then(Value::as_str);
+        if let Some(current_root) = &self.ctx.workspace_root {
+            if let Some(requested) = requested
+                && self.ctx.project_key.as_deref() != Some(requested)
+            {
+                anyhow::bail!(
+                    "MCP connection is already bound to project '{}', not '{}'",
+                    self.ctx.project_key.as_deref().unwrap_or("unknown"),
+                    requested
+                );
+            }
+            tracing::debug!(
+                "Using initialized MCP workspace at {}",
+                current_root.display()
+            );
+            return Ok(());
+        }
+
+        let requested = requested.ok_or_else(|| {
+            anyhow::anyhow!(
+                "Workspace root not initialized. Pass the registered project key in the `project` argument (for example `rms-threads-assistant`), or use `rms_projects` to list keys."
+            )
+        })?;
+        let registry = crate::workspace::Registry::load()?;
+        let config = registry
+            .locate_by_project(requested)
+            .ok_or_else(|| anyhow::anyhow!("Unknown RMS Memory project key: '{requested}'"))?;
+        let workspace =
+            crate::workspace::Workspace::discover(std::path::Path::new(&config.code_path), None)?;
+        self.bind_workspace(workspace).await
+    }
+
+    async fn handle_notification(
+        &mut self,
+        method: &str,
+        _params: Option<Value>,
+    ) -> Result<Option<Value>> {
+        match method {
+            "notifications/initialized" | "notifications/roots/list_changed"
+                if self.ctx.workspace_root.is_none()
+                    && self.client_supports_roots
+                    && self.pending_roots_request_id.is_none() =>
+            {
+                let id = Value::String("rms-memory-roots-1".to_string());
+                self.pending_roots_request_id = Some(id.clone());
+                Ok(Some(json!({
+                    "jsonrpc": "2.0",
+                    "id": id,
+                    "method": "roots/list",
+                    "params": {}
+                })))
+            }
+            _ => Ok(None),
+        }
+    }
+
+    async fn handle_client_response(&mut self, message: &Value) -> Result<()> {
+        let Some(pending_id) = self.pending_roots_request_id.as_ref() else {
+            tracing::debug!("Ignoring unsolicited JSON-RPC response");
+            return Ok(());
+        };
+        if message.get("id") != Some(pending_id) {
+            tracing::debug!("Ignoring JSON-RPC response with an unknown id");
+            return Ok(());
+        }
+        self.pending_roots_request_id = None;
+        if let Some(error) = message.get("error") {
+            tracing::warn!("MCP roots/list failed: {error}");
+            return Ok(());
+        }
+
+        let roots = message
+            .pointer("/result/roots")
+            .and_then(Value::as_array)
+            .cloned()
+            .unwrap_or_default();
+        let mut candidates = Vec::<crate::workspace::Workspace>::new();
+        for root in roots {
+            let Some(uri) = root.get("uri").and_then(Value::as_str) else {
+                continue;
+            };
+            let path = match file_uri_to_path(uri) {
+                Ok(path) => path,
+                Err(error) => {
+                    tracing::warn!("Ignoring unsupported MCP root URI '{uri}': {error}");
+                    continue;
+                }
+            };
+            if let Ok(workspace) = crate::workspace::Workspace::discover(&path, None)
+                && !candidates.iter().any(|item| item.root == workspace.root)
+            {
+                candidates.push(workspace);
+            }
+        }
+
+        match candidates.len() {
+            1 => self.bind_workspace(candidates.remove(0)).await?,
+            0 => tracing::warn!(
+                "MCP roots/list contained no registered RMS Memory project; tool calls must pass `project`"
+            ),
+            count => tracing::warn!(
+                "MCP roots/list resolved to {count} registered projects; tool calls must pass `project`"
+            ),
+        }
+        Ok(())
+    }
+
     async fn handle_request(&mut self, method: &str, params: Option<Value>) -> Result<Value> {
         match method {
             "initialize" => {
@@ -395,68 +577,48 @@ impl McpServer {
                     {
                         self.ctx.caller_id = client_name.to_string();
                     }
-                    if let Some(root_uri) = params_obj.get("rootUri").and_then(|v| v.as_str()) {
-                        let path_str = if let Some(stripped) = root_uri.strip_prefix("file://") {
-                            stripped
-                        } else {
-                            root_uri
-                        };
-                        if path_str != "/" && !path_str.is_empty() {
-                            path = Some(std::path::PathBuf::from(path_str));
-                        }
+                    if let Some(root_uri) = params_obj.get("rootUri").and_then(|v| v.as_str())
+                        && let Ok(root_path) = file_uri_to_path(root_uri)
+                        && root_path != std::path::Path::new("/")
+                    {
+                        path = Some(root_path);
                     }
+                    self.client_supports_roots = params_obj
+                        .get("capabilities")
+                        .and_then(Value::as_object)
+                        .is_some_and(|capabilities| capabilities.contains_key("roots"));
                 }
 
-                // Fallback to current working directory if rootUri is missing or "/"
-                let path = path.unwrap_or_else(|| {
-                    std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("/"))
-                });
+                if path.is_none() && self.ctx.scope.is_some() {
+                    path = Some(std::env::current_dir().unwrap_or_default());
+                }
+                if path.is_none()
+                    && !self.client_supports_roots
+                    && let Ok(cwd) = std::env::current_dir()
+                    && cwd != std::path::Path::new("/")
+                {
+                    path = Some(cwd);
+                }
 
-                if let Ok(workspace) = crate::workspace::Workspace::discover_with_scope(
-                    self.ctx.scope.as_deref(),
-                    &path,
-                    None,
-                ) {
-                    self.ctx.workspace_root = Some(workspace.root.clone());
-                    self.ctx.project_key = workspace.project_key();
-
-                    match workspace.get_store().await {
-                        Ok(store) => {
-                            spawn_sync_watcher(
-                                workspace.clone(),
-                                store.clone(),
-                                self.ctx
-                                    .indexer
-                                    .clone()
-                                    .ok_or_else(|| anyhow::anyhow!("Indexer not initialized"))?,
-                                self.shutdown_tx.subscribe(),
-                            );
-                            if workspace.code_index_mode == crate::workspace::CodeIndexMode::Watch {
-                                spawn_code_watcher(
-                                    workspace.clone(),
-                                    store.clone(),
-                                    self.ctx.indexer.clone().ok_or_else(|| {
-                                        anyhow::anyhow!("Indexer not initialized")
-                                    })?,
-                                    self.shutdown_tx.subscribe(),
-                                );
+                if let Some(path) = path {
+                    match crate::workspace::Workspace::discover_with_scope(
+                        self.ctx.scope.as_deref(),
+                        &path,
+                        None,
+                    ) {
+                        Ok(workspace) => {
+                            if let Err(error) = self.bind_workspace(workspace).await {
+                                tracing::error!("Failed to initialize MCP workspace: {error:#}");
                             }
-                            self.ctx.store = Some(store);
                         }
-                        Err(e) => {
-                            tracing::error!("Failed to open LanceDB store for workspace: {:#}", e);
-                        }
+                        Err(error) => tracing::warn!(
+                            "Cannot initialize MCP workspace from {}: {error:#}",
+                            path.display()
+                        ),
                     }
                 } else {
                     tracing::warn!(
-                        "No project registered for path: {:?}. Cannot initialize workspace. \
-                         Register the project with 'rms-memory init' or pass an explicit --scope.",
-                        path
-                    );
-                    tracing::info!(
-                        "Initialize rejected: client={} rootUri={:?} project_key=none vault_root=none",
-                        self.ctx.caller_id,
-                        path,
+                        "MCP client did not provide a workspace root; waiting for roots/list or an explicit tool `project` argument"
                     );
                 }
 
@@ -481,6 +643,7 @@ impl McpServer {
                             "type": "object",
                             "properties": {
                                 "query": { "type": "string", "description": "The semantic query string to search for." },
+                                "project": { "type": "string", "description": "Registered project key, used when the MCP client did not provide a workspace root." },
                                 "corpus": { "type": "string", "enum": ["vault", "code", "all"], "description": "Corpus to search. Defaults to vault." },
                                 "limit": { "type": "integer", "description": "Maximum number of chunks to return. Default is 10." },
                                 "include_content": { "type": "boolean", "description": "Whether to include full chunk text in results." },
@@ -496,6 +659,7 @@ impl McpServer {
                             "type": "object",
                             "properties": {
                                 "query": { "type": "string", "description": "The semantic code query." },
+                                "project": { "type": "string", "description": "Registered project key, used when the MCP client did not provide a workspace root." },
                                 "limit": { "type": "integer", "description": "Maximum results; default 10, maximum 100." },
                                 "include_content": { "type": "boolean", "description": "Whether to include indexed code content; default true." }
                             },
@@ -509,6 +673,7 @@ impl McpServer {
                             "type": "object",
                             "properties": {
                                 "id": { "type": "string" },
+                                "project": { "type": "string", "description": "Registered project key, used when the MCP client did not provide a workspace root." },
                                 "path": { "type": "string", "description": "Relative path to the markdown document in the vault." }
                             },
                             "required": ["path"]
@@ -521,6 +686,7 @@ impl McpServer {
                             "type": "object",
                             "properties": {
                                 "id": { "type": "string" },
+                                "project": { "type": "string", "description": "Registered project key, used when the MCP client did not provide a workspace root." },
                                 "path": { "type": "string", "description": "Relative path to save the document (e.g., 'decisions/001-db.md')." },
                                 "content": { "type": "string", "description": "The markdown content to write." },
                                 "mode": { "type": "string", "enum": ["create", "append", "replace"], "description": "Write mode." },
@@ -537,8 +703,17 @@ impl McpServer {
                             "type": "object",
                             "properties": {
                                 "manifest": { "type": "string", "description": "Optional YAML manifest path for custom sections." },
+                                "project": { "type": "string", "description": "Registered project key, used when the MCP client did not provide a workspace root." },
                                 "refresh_code": { "type": "boolean", "description": "Force code reindex before generating." }
                             }
+                        }
+                    },
+                    {
+                        "name": "rms_projects",
+                        "description": "List registered RMS Memory project keys. This tool works even when the MCP client did not provide a workspace root.",
+                        "inputSchema": {
+                            "type": "object",
+                            "properties": {}
                         }
                     }
                 ]
@@ -547,6 +722,20 @@ impl McpServer {
                 let params = params.unwrap_or(json!({}));
                 let name = params["name"].as_str().unwrap_or("");
                 let args = params["arguments"].as_object().cloned().unwrap_or_default();
+
+                if name == "rms_projects" {
+                    let registry = crate::workspace::Registry::load()?;
+                    let mut projects = registry.projects.keys().cloned().collect::<Vec<_>>();
+                    projects.sort();
+                    return Ok(json!({
+                        "content": [{
+                            "type": "text",
+                            "text": serde_json::to_string_pretty(&projects)?
+                        }]
+                    }));
+                }
+
+                self.bind_project_argument(&args).await?;
 
                 match name {
                     "rms_search" => crate::tools::search::execute(&self.ctx, &args).await,
@@ -588,6 +777,19 @@ impl McpServer {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn file_root_uri_decodes_spaces() {
+        assert_eq!(
+            super::file_uri_to_path("file:///tmp/rms%20memory").unwrap(),
+            std::path::PathBuf::from("/tmp/rms memory")
+        );
+    }
+
+    #[test]
+    fn non_file_root_uri_is_rejected() {
+        assert!(super::file_uri_to_path("https://example.com/repo").is_err());
+    }
+
     #[test]
     fn code_watcher_filters_non_source_and_generated_paths() {
         let auto = ["auto".to_string()];

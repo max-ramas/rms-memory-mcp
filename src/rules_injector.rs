@@ -19,18 +19,38 @@ pub struct InjectOptions {
 }
 
 pub fn inject_rules(project_root: &Path, options: InjectOptions) -> Result<()> {
+    let canonical_root =
+        fs::canonicalize(project_root).unwrap_or_else(|_| project_root.to_path_buf());
+    let project_key = crate::workspace::Registry::load()
+        .ok()
+        .and_then(|registry| {
+            registry.projects.into_iter().find_map(|(key, project)| {
+                let code_path = fs::canonicalize(&project.code_path)
+                    .unwrap_or_else(|_| project.code_path.into());
+                (code_path == canonical_root).then_some(key)
+            })
+        })
+        .or_else(|| {
+            canonical_root
+                .file_name()
+                .and_then(|name| name.to_str())
+                .map(str::to_owned)
+        })
+        .unwrap_or_else(|| "<registered-project-key>".to_string());
+    let render = |template: &str| template.replace("{{RMS_MEMORY_PROJECT}}", &project_key);
+
     // List of files to inject rules into
     let target_files = vec![
-        (".cursorrules", CURSOR_RULES),
-        (".windsurfrules", CURSOR_RULES),
-        (".clinerules", CURSOR_RULES),
-        (".rules", GENERAL_RULES),
-        (".github/copilot-instructions.md", CURSOR_RULES),
-        ("AGENT.md", GENERAL_RULES),
-        ("AGENTS.md", GENERAL_RULES),
-        ("CLAUDE.md", CLAUDE_RULES),
-        ("GEMINI.md", GENERAL_RULES),
-        (".zed/assistant.md", ZED_RULES),
+        (".cursorrules", render(CURSOR_RULES)),
+        (".windsurfrules", render(CURSOR_RULES)),
+        (".clinerules", render(CURSOR_RULES)),
+        (".rules", render(GENERAL_RULES)),
+        (".github/copilot-instructions.md", render(CURSOR_RULES)),
+        ("AGENT.md", render(GENERAL_RULES)),
+        ("AGENTS.md", render(GENERAL_RULES)),
+        ("CLAUDE.md", render(CLAUDE_RULES)),
+        ("GEMINI.md", render(GENERAL_RULES)),
+        (".zed/assistant.md", render(ZED_RULES)),
     ];
 
     let mut existing_count = 0;
@@ -50,7 +70,7 @@ pub fn inject_rules(project_root: &Path, options: InjectOptions) -> Result<()> {
 
     // If no rule files exist and not in full mode, just create AGENT.md as a fallback
     if existing_count == 0 && !options.full {
-        files_to_inject.push(("AGENT.md", GENERAL_RULES, false));
+        files_to_inject.push(("AGENT.md", render(GENERAL_RULES), false));
     }
 
     let mut injected_files = Vec::new();
@@ -59,11 +79,11 @@ pub fn inject_rules(project_root: &Path, options: InjectOptions) -> Result<()> {
         let file_path = project_root.join(file_path_str);
 
         if exists {
-            if append_or_replace_block(&file_path, template, options)? {
+            if append_or_replace_block(&file_path, &template, options)? {
                 injected_files.push(file_path_str.to_string());
             }
         } else {
-            if create_and_write(&file_path, template, options)? {
+            if create_and_write(&file_path, &template, options)? {
                 injected_files.push(file_path_str.to_string());
             }
         }

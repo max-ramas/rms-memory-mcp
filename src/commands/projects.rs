@@ -8,6 +8,8 @@ pub enum ProjectsCommands {
     List,
     /// Locate a project by vault path or project key
     Locate(LocateArgs),
+    /// Remove a project registration without deleting its vault files
+    Remove(RemoveArgs),
 }
 
 #[derive(Args, Debug)]
@@ -20,13 +22,34 @@ pub struct LocateArgs {
     pub project: Option<String>,
 }
 
+#[derive(Args, Debug)]
+pub struct RemoveArgs {
+    /// Registered project key to remove
+    pub project: String,
+}
+
 impl ProjectsCommands {
     pub fn run(&self) -> Result<()> {
         match self {
             ProjectsCommands::List => list(),
             ProjectsCommands::Locate(args) => locate(args),
+            ProjectsCommands::Remove(args) => remove(args),
         }
     }
+}
+
+fn remove(args: &RemoveArgs) -> Result<()> {
+    let manager = crate::config_manager::ConfigManager::open()?;
+    let snapshot = manager.snapshot();
+    let mut registry = snapshot.registry;
+    let removed = registry
+        .projects
+        .remove(&args.project)
+        .ok_or_else(|| anyhow::anyhow!("Project '{}' is not registered", args.project))?;
+    manager.replace(snapshot.revision, registry)?;
+    println!("Removed project '{}' from the registry.", args.project);
+    println!("Vault files were preserved at: {}", removed.vault_path);
+    Ok(())
 }
 
 fn list() -> Result<()> {

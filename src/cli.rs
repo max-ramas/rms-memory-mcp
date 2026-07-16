@@ -43,7 +43,7 @@ pub enum Commands {
         #[command(subcommand)]
         command: crate::commands::wiki::WikiCommands,
     },
-    /// List and locate registered projects
+    /// List, locate, and remove registered projects
     Projects {
         #[command(subcommand)]
         command: crate::commands::projects::ProjectsCommands,

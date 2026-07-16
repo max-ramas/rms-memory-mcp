@@ -84,7 +84,17 @@ impl Document {
     pub fn repair_duplicate_ids(path: &Path) -> Result<bool> {
         let text = fs::read_to_string(path)?;
         if !text.starts_with("---\n") && !text.starts_with("---\r\n") {
-            return Ok(false);
+            // Legacy Markdown may not have frontmatter at all. It is still a
+            // repairable missing-ID document; create the same rolling backup
+            // used by frontmatter repairs before adding a minimal block.
+            let timestamp = chrono::Utc::now().format("%Y%m%d%H%M%S%3f");
+            let file_name = path.file_name().unwrap_or_default().to_string_lossy();
+            let backup = path.with_file_name(format!("{file_name}.bak.frontmatter.{timestamp}"));
+            fs::copy(path, &backup)
+                .with_context(|| format!("Failed to back up {}", path.display()))?;
+            fs::write(path, format!("---\nid: {}\n---\n\n{text}", Uuid::new_v4()))
+                .with_context(|| format!("Failed to repair {}", path.display()))?;
+            return Ok(true);
         }
 
         let (newline, opening_len) = if text.starts_with("---\r\n") {
@@ -337,5 +347,23 @@ mod tests {
                 .and_then(|frontmatter| frontmatter.id)
                 .is_some()
         );
+    }
+
+    #[test]
+    fn repair_frontmatter_adds_a_block_to_plain_markdown_and_keeps_a_backup() {
+        let dir = tempdir().unwrap();
+        let file_path = dir.path().join("plain.md");
+        fs::write(&file_path, "# Legacy note\n").unwrap();
+
+        assert!(Document::repair_duplicate_ids(&file_path).unwrap());
+        let repaired = fs::read_to_string(&file_path).unwrap();
+        assert!(repaired.starts_with("---\nid: "));
+        assert!(repaired.ends_with("# Legacy note\n"));
+        assert!(fs::read_dir(dir.path()).unwrap().flatten().any(|entry| {
+            entry
+                .file_name()
+                .to_string_lossy()
+                .contains(".bak.frontmatter.")
+        }));
     }
 }
