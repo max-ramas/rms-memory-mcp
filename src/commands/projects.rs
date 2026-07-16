@@ -39,14 +39,7 @@ impl ProjectsCommands {
 }
 
 fn remove(args: &RemoveArgs) -> Result<()> {
-    let manager = crate::config_manager::ConfigManager::open()?;
-    let snapshot = manager.snapshot();
-    let mut registry = snapshot.registry;
-    let removed = registry
-        .projects
-        .remove(&args.project)
-        .ok_or_else(|| anyhow::anyhow!("Project '{}' is not registered", args.project))?;
-    manager.replace(snapshot.revision, registry)?;
+    let removed = crate::project_service::ProjectService::open()?.unregister(&args.project)?;
     println!("Removed project '{}' from the registry.", args.project);
     println!("Vault files were preserved at: {}", removed.vault_path);
     Ok(())

@@ -7,6 +7,9 @@ All notable changes to this project will be documented in this file.
 ### Added
 - **Reliable MCP project routing:** clients that omit legacy `rootUri` are resolved through MCP `roots/list`; every vault/code tool also accepts an explicit short `project` key, and the unbound `rms_projects` tool lists valid keys.
 - **Safe registry removal:** `rms-memory projects remove <key>` removes an erroneous project mapping without implicitly deleting its vault files.
+- **Transport-neutral project lifecycle API:** `ProjectService` keeps unregister and permanent data deletion as separate operations. Destructive deletion requires the exact project key, is restricted to a dedicated child of the configured master vault, removes only the vault and derived index, and never touches source code.
+- **Companion GUI lifecycle controls:** project settings expose separate unregister and permanent-delete actions, exact-key confirmation, an unsaved-settings guard, non-blocking Tauri execution, and safe scope refresh after removal.
+- **Navigable code structure graph:** every code reindex derives a deterministic `project → folder → file → symbol` hierarchy using resolved `contains` edges under the versioned `code-structure-v1` extractor. This gives GUI/graph clients a useful baseline even when language-specific call hints remain unresolved.
 - **Wiki Context Pack Generator (`rms-memory wiki`):** New core service that assembles verified context packs from vault documents, code index, project files, and CLI help output. Produces deterministic `context-pack.md` + `agent-task.md` for LLM agents to create human-readable wiki documentation. Supports custom YAML manifests with budget controls, RRF dedup, and semantic truncation.
 - **`rms_wiki_pack` MCP tool:** JSON-RPC wrapper over `WikiService::generate()`. Agents can trigger wiki generation directly from any MCP-compatible IDE.
 - **`RetrievalService`:** Public facade over `Store` — decouples wiki generation and future consumers from the database layer. Used by both MCP tools and `WikiService`.
@@ -21,6 +24,7 @@ All notable changes to this project will be documented in this file.
 
 ### Fixed
 - **Antigravity workspace initialization:** globally launched MCP processes no longer depend on process CWD (`/`). Injected agent rules carry the repository's concrete registry key as a fail-closed fallback.
+- **Plain Markdown frontmatter repair:** `doctor --repair-frontmatter` now backs up legacy Markdown files that have no YAML block, adds one stable UUID, and preserves the complete original body.
 - **Thread pool reduction:** ONNX `with_intra_threads(1)` + tokio `worker_threads=2`. Runtime verified: load avg 648 → 8.31, CPU 380% → 0%.
 - **Fast-path skip fix:** `get_file_timestamps()` returns `(doc_id, timestamp)` — no more silent vector deletion for unchanged files.
 - **Single `Arc<Mutex<Indexer>>`:** Shared between search handler and background sync — eliminates N model reloads per process.
@@ -28,12 +32,19 @@ All notable changes to this project will be documented in this file.
 - **Per-command `self_cli_help`:** Uses `find_subcommand().render_help()` instead of identical root help for all.
 
 ### Changed
+- **Fail-closed resolution order:** MCP connections resolve explicit scope or legacy `rootUri`, then negotiated `roots/list`, then an explicit tool-level `project` key. Process CWD is considered only for clients without Roots support and is never accepted when it is `/`; an established connection cannot silently switch projects.
+- **Project-aware agent rules:** injected Cursor, Claude, Zed, Gemini, and general rules include the concrete registry key and instruct rootless clients to pass it to memory tools.
 - **`inject_audit_metadata` rewritten:** Uses `serde_yaml::Mapping` instead of typed `Frontmatter` struct — preserves all custom user YAML keys.
 - **`WikiService` uses `RetrievalService`** instead of direct `Store` calls — clean separation for GUI.
 - **`ignore::WalkBuilder` in `resolve_files`:** Replaced `glob::glob` with `ignore::WalkBuilder(.git_ignore(true), .parents(true))` for proper nested `.gitignore` support.
 - **`pack_id` includes Git revision:** `git rev-parse HEAD` added to hash for reproducible builds.
 - **CLI commands unified:** `rms-memory projects`, `rms-memory wiki` added alongside existing commands.
 - **Graph Store Query API:** Added `Store::query_graph_nodes()`, `Store::query_graph_edges()` public methods. Added `from_string()`/`into_string()` on `GraphNodeKey`, `into_string()` on `EdgeRelation`.
+
+### Verification
+- **Installed-binary routing gate:** a clean `build.sh` release build was copied to `/usr/local/bin/rms-memory` and ad-hoc signed. A live JSON-RPC session launched with `cwd=/` confirmed that the installed binary exposes `project` plus `rms_projects`, and successfully wrote an architecture record to the `rms-threads-assistant` vault.
+- **Regression suite:** 87 library tests and `cargo clippy --all-targets -- -D warnings` pass, including project unregister/deletion safety coverage.
+- **Companion GUI gate:** TypeScript, production Vite build, bundle budget, strict Rust Clippy, and React Doctor 100/100 all pass for the lifecycle UI.
 
 ## [1.0.5] - 2026-07-13
 

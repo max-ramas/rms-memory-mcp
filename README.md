@@ -43,7 +43,8 @@ You're developing a single project but switching between different agents — Cu
 | 🌐 **Multilingual Semantic Parsing** | `fastembed-rs` + `multilingual-e5-small` — native Russian & English understanding. |
 | 🌳 **AST Markdown Chunker** | `pulldown-cmark`-based chunking keeps code blocks and lists bound to their parent heading. |
 | 🧩 **Semantic Code Memory** | Optional Tree-sitter indexing for Rust, Go, JS/JSX, TS/TSX, Python, C/C++, Java, Ruby, Swift, and Vue `<script>` blocks; stable segment identities and repeated preambles preserve context when large implementations split. |
-| 🕸️ **Knowledge Graph Foundation** | Derived Markdown/code relationships and durable user overrides are stored separately from retrieval chunks, ready for a future visual editor. |
+| 🕸️ **Knowledge Graph Foundation** | Derived Markdown/code relationships and durable user overrides are stored separately from retrieval chunks and consumed by the companion GUI graph. |
+| 🧹 **Safe Project Lifecycle** | Unregistering preserves vault/index data; permanent GUI deletion requires the exact project key, is confined to the master vault, and never touches source code. |
 | 🔀 **Federated Corpus Search** | Search `vault`, `code`, or `all`; mixed results use Reciprocal Rank Fusion rather than incompatible raw vector distances. |
 | ⚙️ **Dynamic Auto-Installer** | `rms-memory install` scans your system and wires itself into every supported IDE. |
 | 📜 **Rules-as-Code Patching** | Non-destructive AST patching of `.cursorrules`, `.zed/assistant.md`, etc. Opt-in by default. |
@@ -135,13 +136,20 @@ The simplest way to configure the server is to run the interactive setup wizard.
 rms-memory config
 ```
 
-*(Alternatively, you can pass flags directly: `rms-memory config --vault-path ~/MyVaults/ --auto-add true`)*
+*(Alternatively, set the vault root directly with `rms-memory config --vault-path ~/MyVaults/`, then run `rms-memory init` in each repository you want to register.)*
 
-The next time you open a project in a connected IDE, the server reads the `rootUri` from the MCP `initialize` handshake and provisions a clean, structured vault:
+Register a repository explicitly from its root before connecting IDE agents:
+
+```bash
+cd /path/to/project
+rms-memory init
+```
+
+This creates the project mapping in `~/.rms-memory/registry.toml` and provisions its isolated, structured vault. Routine MCP discovery is read-only and fail-closed: it never creates a project from `/`, never falls back to a shared global vault, and never guesses between multiple registered projects.
 
 ```text
 ~/MyVaults/
-  └── <ProjectHash>/
+  └── <ProjectKey>/
       ├── rules/
       ├── decisions/
       ├── architecture/
@@ -224,7 +232,19 @@ Tool descriptions are written to be **action-oriented**, so agents use the vault
 </tr>
 </table>
 
-The server first resolves the legacy `rootUri`, then negotiates MCP `roots/list`. If a client exposes neither (or opens several registered roots), pass the short registry key in `project`; injected agent rules contain the correct key for that repository.
+The server resolves an explicit scope or legacy `rootUri`, then negotiates MCP `roots/list`. If a client exposes neither (or opens several registered roots), pass the short registry key in `project`; injected agent rules contain the correct key for that repository. `rms_projects` lists valid keys without requiring a bound workspace. Once a connection is bound, it cannot silently switch projects.
+
+To remove an accidental registration without deleting its Markdown vault:
+
+```bash
+rms-memory projects remove <key>
+```
+
+The CLI command is intentionally non-destructive. The companion GUI exposes a
+separate **Delete project and data** action for permanent cleanup of the
+registration, Markdown vault, and derived index. It requires typing the exact
+project key and accepts only a dedicated child of the configured master vault;
+the repository source path is explicitly excluded from deletion.
 
 ## 🏗 Architecture Highlights
 
@@ -232,6 +252,15 @@ The server first resolves the legacy `rootUri`, then negotiates MCP `roots/list`
 <summary><b>Unified Configuration & Knowledge Isolation</b></summary>
 
 A central `~/.rms-memory/registry.toml` routes every project to an isolated vault, computed from a hash of the project path. No `.mcp` files, no per-repo config — global MCP entries (e.g. Zed's `settings.json`) can target any workspace automatically.
+</details>
+
+<details>
+<summary><b>Safe Project Lifecycle</b></summary>
+
+The transport-neutral `ProjectService` is the single implementation used by
+the CLI and companion GUI. Registry mutation remains revisioned through
+`ConfigManager`; deletion validates canonical paths before unregistering and
+returns structured warnings if filesystem cleanup cannot be completed.
 </details>
 
 <details>

@@ -6,11 +6,13 @@ RMS Memory is a specialized Model Context Protocol (MCP) server that acts as loc
 
 ### 1. Unified Configuration & Knowledge Isolation
 - **Global Registry:** No more polluting code repositories with `.mcp` or `RMS.toml` files. The routing logic uses a central `~/.rms-memory/registry.toml`.
-- **Auto-Discovery & Provisioning:** The server reads the `rootUri` dynamically from the MCP `initialize` request sent by the IDE (falling back to the current working directory if missing). It then calculates a unique hash and seamlessly routes agents to an isolated external Markdown vault (`/user/defined/path/ProjectName`). If it doesn't exist, it is cleanly provisioned with structured directories (`rules/`, `decisions/`, `architecture/`, `artifacts/`, `docs/`, `api/`). This lazy initialization enables global MCP servers (like Zed's `settings.json`) to accurately target specific workspaces.
+- **Explicit Provisioning, Read-Only Discovery:** `rms-memory init` registers and provisions a project once. Routine CLI/MCP resolution only reads the registry; it never auto-creates a project from an ambiguous path and never treats `/` or a broad home directory as a safe fallback.
+- **Deterministic MCP Routing:** Connections resolve explicit `--scope` or legacy `rootUri`, then negotiated MCP `roots/list`, then an explicit short `project` argument. Process CWD is used only for clients that do not advertise Roots and only when it is not `/`. A connection binds to one project and refuses silent switching.
+- **Rootless Client Support:** `rms_projects` lists keys before workspace binding. Injected agent rules carry the repository's concrete key, allowing Antigravity and similar globally launched clients to call tools with `project: "<key>"` without exposing full paths.
 
 ### 2. Linked Documents & Documentation Import
 - **Intelligent Importer:** The server features a native `import` module (`rms-memory import`) that scans the target codebase for existing documentation (`README.md`, `CLAUDE.md`, `.cursorrules`, `docs/`, `ADR/`).
-- **Interactive & Auto Integration:** Users can interactively choose how to handle existing knowledge during `rms-memory init` or let the server auto-import during `auto_add` based on the `--auto-import` config strategy.
+- **Explicit Integration:** During `rms-memory init`, users can interactively choose how to handle existing knowledge. Routine workspace discovery does not import documents or mutate a repository.
 - **Linked Documents (No Duplication):** The recommended `Link Only` and `Import & Organize` flows utilize a unique Linked Document architecture. Instead of duplicating project files into the Vault, the system creates a lightweight "Link File" (a markdown file containing standard Frontmatter with a `link: <relative/path/to/source>` property).
 - **Guaranteed Consistency:** 
   - **Reads:** Intercepted by the server to return the live source file content.
@@ -33,8 +35,8 @@ RMS Memory is a specialized Model Context Protocol (MCP) server that acts as loc
 - **Multilanguage semantic chunks:** Tree-sitter adapters cover Rust, Go, JS/JSX, TS/TSX, Python, C/C++, Java, Ruby, Swift, and inline Vue scripts. Large items repeat their preamble and declaration signature in each segment, so a retrieved method remains interpretable outside its original file.
 - **Incremental vectors:** Stable segment IDs and content hashes allow reindexing to reuse embeddings for unchanged code and delete only segments no longer emitted.
 - **Federated retrieval:** `rms_search` accepts `corpus: vault|code|all`; `rms_code_search` is the code-only shortcut. `all` independently ranks both corpora, then merges with Reciprocal Rank Fusion (RRF), never raw cross-table distances. Code results include file, symbol, kind, line range, and segment index.
-- **Graph contract:** Nodes and edges never point to retrieval chunks, whose boundaries may change. Markdown links plus language-level imports/includes and lexical calls are stored as versioned derived edges; user edges and suppress/restore overrides survive reconciliation. All call edges are intentionally syntax-level hints, not a compiler-accurate call graph.
-- **GUI-ready core:** A revisioned `ConfigManager` owns validated, atomic configuration updates and change subscriptions. A transport-neutral job manager publishes bounded typed progress events, so a future GUI can use a human-oriented API without repurposing MCP.
+- **Graph contract:** Nodes and edges never point to retrieval chunks, whose boundaries may change. Every reindex emits a deterministic `project → folder → file → symbol` structural projection with resolved `contains` edges. Markdown links plus language-level imports/includes and lexical calls are stored as versioned derived edges; user edges and suppress/restore overrides survive reconciliation. All call edges are intentionally syntax-level hints, not a compiler-accurate call graph.
+- **Shared GUI core:** A revisioned `ConfigManager` owns validated, atomic configuration updates and change subscriptions. Transport-neutral services and bounded job events are consumed by the companion GUI through human-oriented Tauri commands without repurposing MCP.
 - **Safe activation:** `code_index_mode = off|manual|watch` defaults to `off`; set it with `rms-memory config --code-index-mode watch` from the registered project root. `code_languages = ["auto"]` selects all bundled adapters, or use `rms-memory config --code-languages go,typescript,vue`. Watch mode is opt-in, coalesces enabled source events for three seconds, and uses a shared completion marker so concurrent IDE servers do not repeat the same completed generation.
 - **Live validation:** An unchanged reindex on this repository processed 43 Rust files, 298 items, and 438 segments with all vectors reused. A real-project stress gate completed concurrent GeoMail, License Server, RMS Monitoring, and GeoTax Site indexing; after four IDE restarts, seven MCP servers remained at 0.0% CPU with no background reindex.
 
@@ -159,7 +161,7 @@ Multi-IDE scenarios exposed a CPU storm: 4 processes consuming ~380% CPU, load a
 - **Codex IDE:** Auto-installer supports `~/.codex/mcp.json` alongside 11 existing IDEs.
 - **Runtime Verified:** load avg 648 → 8.31 (-98.7%), CPU 380% → 0%, memory 2.5GB → ~1.3GB across 3 IDE processes.
 
-### 14. Wiki Context Pack Generator (v1.0.6)
+### 17. Wiki Context Pack Generator (v1.0.6)
 
 The Wiki Generator assembles deterministic context packs from multiple sources for LLM agents to create human-readable documentation.
 
@@ -171,12 +173,25 @@ The Wiki Generator assembles deterministic context packs from multiple sources f
 - **MCP Tool:** `rms_wiki_pack` — agents trigger generation directly from any IDE.
 - **CLI:** `rms-memory wiki generate/init/clean` + `rms-memory wiki generate --stdout`.
 
-### 15. Project Label Provenance (v1.0.6)
+### 18. Project Label Provenance (v1.0.6)
 
 Every document now carries its originating project identity.
 
 - **`project: <key>` in frontmatter:** Set automatically on first write from registry key. Preserved on updates. Rejected on conflict.
 - **Custom YAML Preservation:** `inject_audit_metadata` uses `serde_yaml::Mapping` — user-defined keys survive `replace` operations.
 - **Registry Diagnostics:** `rms-memory projects list` and `rms-memory projects locate --vault/--project`.
+- **Safe Registry Cleanup:** `rms-memory projects remove <key>` unregisters an accidental mapping while preserving its vault for explicit inspection or deletion.
+- **Explicit Destructive Cleanup:** The companion GUI and future transports call the shared `ProjectService`. Permanent cleanup requires an exact project-key confirmation and accepts only a dedicated vault below the configured master vault; filesystem root, master vault, user home, source repository, symlink roots, and external paths are rejected.
+- **Responsive GUI Workflow:** Tauri runs filesystem cleanup outside the UI thread. Unsaved configuration blocks both removal actions; after success the GUI reloads the registry, clears stale file selection, and selects a remaining valid scope. Partial filesystem failures are surfaced as structured warnings.
 - **Global Vault Fallback Removed:** Bad `rootUri` returns error with client/project/vault logging — no more orphaned files in global vault root.
 - **ChatGPT / Codex TOML:** `inject_toml()` patcher for `~/.codex/config.toml` `[mcp_servers]` section.
+
+### 19. Rootless MCP Routing & Deployment Verification (v1.0.6)
+
+Antigravity exposed a protocol edge case: a globally configured MCP process may start with `cwd=/` and omit legacy `rootUri`, even though the project already exists in the RMS registry.
+
+- **MCP Roots negotiation:** clients advertising the Roots capability receive a server-initiated `roots/list` request after `notifications/initialized`. File URIs are decoded safely and deduplicated by resolved vault.
+- **Explicit project fallback:** all vault/code tools accept `project: "<registry-key>"`; the unbound `rms_projects` tool exposes valid keys. Zero or multiple matches remain actionable errors instead of cross-project writes.
+- **Repository-specific rules:** rule templates substitute the registered key during injection, so an agent knows exactly what to pass when its host omits workspace context.
+- **Legacy repair:** `doctor --repair-frontmatter` now handles plain Markdown with no YAML block by creating a backup, inserting one UUID, and leaving the body intact.
+- **Production gate:** `build.sh` completed a clean release build, installed and signed `/usr/local/bin/rms-memory`, and a live session from `cwd=/` successfully wrote `architecture/llm-providers-and-global-key-management.md` into the `rms-threads-assistant` vault using only its short project key.

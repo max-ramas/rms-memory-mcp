@@ -737,4 +737,19 @@ mod tests {
             std::time::UNIX_EPOCH
         ));
     }
+
+    #[test]
+    fn structural_projection_edges_are_stable_and_resolved() {
+        let source = crate::graph::GraphNodeKey::code("structure:project:example").unwrap();
+        let target = crate::graph::GraphNodeKey::code("structure:file:src/lib.rs").unwrap();
+        let mut edges = HashMap::new();
+        insert_structure_edge(&mut edges, &source, &target, 7).unwrap();
+        let edge = edges.values().next().unwrap();
+        assert_eq!(edges.len(), 1);
+        assert_eq!(edge.relation.as_str(), "contains");
+        assert_eq!(edge.extractor.as_deref(), Some(STRUCTURE_EXTRACTOR));
+        assert_eq!(edge.resolution, crate::graph::EdgeResolution::Resolved);
+        assert_eq!(edge.source_key, source);
+        assert_eq!(edge.target_key, target);
+    }
 }

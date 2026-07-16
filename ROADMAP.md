@@ -75,15 +75,23 @@ This document outlines the strategic direction and upcoming milestones for RMS M
 - [x] `RetrievalService` facade — decoupled retrieval shared by MCP tools and WikiService.
 - [x] Project label provenance: `project: <key>` auto-set, preserved, conflict-detected via `serde_yaml::Mapping`.
 - [x] `rms-memory projects list/locate` for registry diagnostics.
+- [x] `rms-memory projects remove <key>` for safe unregister without implicit vault deletion.
+- [x] Transport-neutral `ProjectService`: separate unregister and confirmed vault/index deletion, with canonical containment checks and an explicit source-code exclusion.
+- [x] Companion GUI lifecycle controls: separate actions, exact-key confirmation, unsaved-settings guard, and valid-scope refresh after removal.
 - [x] ChatGPT / Codex TOML installer: `inject_toml()` for `~/.codex/config.toml` `[mcp_servers]`.
 - [x] Global vault fallback removed — bad rootUri → error + diagnostic log.
+- [x] Rootless MCP routing: negotiated `roots/list`, explicit tool-level `project`, unbound `rms_projects`, and repository-specific injected keys.
+- [x] Deterministic code hierarchy: resolved `project → folder → file → symbol` `contains` edges under `code-structure-v1`.
+- [x] Plain Markdown repair: backup + stable UUID frontmatter without body loss.
+- [x] Installed-binary gate: clean `build.sh`, valid ad-hoc signature, and successful `rms_write` from `cwd=/` into `rms-threads-assistant`.
 - [x] `ignore::WalkBuilder` for wiki file walking (nested `.gitignore`).
 - [x] `pack_id` with Git revision for reproducible builds.
 - [x] Security: wiki path containment, symlink validation, secrets exclusion.
+- [x] Final lifecycle verification: 87 core tests, strict core/GUI Clippy, production GUI build and bundle budget, React Doctor 100/100.
 
-## v1.1 — GUI Client, Workspace Split & Ecosystem (Next)
+## v1.1 — Workspace Split & Ecosystem (Next)
 
-**Goal:** Transition from a monolithic architecture into a modular ecosystem of crates.
+**Goal:** Transition the already shared core/GUI architecture from a monolithic crate into a modular ecosystem of crates.
 
 - `rms-memory-core` — Core abstractions, API schemas, and types.
 - `rms-memory-vault` — File-system interactions and Vault management.
@@ -93,7 +101,7 @@ This document outlines the strategic direction and upcoming milestones for RMS M
 
 This enables downstream consumers to use just `rms-memory-index` without the MCP layer.
 
-The already implemented graph, revisioned configuration manager, and transport-neutral jobs/events layer form the core contract for a future GUI. The GUI will use its own human-oriented API rather than MCP, which remains the IDE/agent protocol.
+The companion GUI already consumes the core library through human-oriented Tauri commands for graph, configuration, jobs, and project lifecycle operations. MCP remains the IDE/agent protocol; v1.1 focuses on extracting stable crate boundaries rather than inventing a second application core.
 
 ## Multilanguage Code Memory — 1.0.5 extension in progress
 
