@@ -40,6 +40,24 @@ pub enum CodeIndexStatus {
 
 const CODE_INDEX_MARKER: &str = ".code-index.updated";
 
+/// Remove code segments written by older versions for files inside the
+/// reserved Vault Wiki namespace.
+pub async fn purge_wiki_code_records(
+    workspace: &crate::workspace::Workspace,
+    store: &crate::store::Store,
+) -> Result<usize> {
+    let stale = store
+        .indexed_code_file_paths()
+        .await?
+        .into_iter()
+        .filter(|path| {
+            crate::path_policy::is_vault_wiki_path(&workspace.root, &workspace.code_path.join(path))
+        })
+        .collect::<Vec<_>>();
+    store.delete_code_file_paths(&stale).await?;
+    Ok(stale.len())
+}
+
 pub async fn index_code_full(
     workspace: &crate::workspace::Workspace,
     store: &crate::store::Store,
@@ -155,7 +173,10 @@ async fn index_code_full_inner(
             }
         };
         let path = entry.path();
-        if is_hard_excluded(path) || !is_indexable_code_path(path, &workspace.code_languages) {
+        if crate::path_policy::is_vault_wiki_path(&workspace.root, path)
+            || is_hard_excluded(path)
+            || !is_indexable_code_path(path, &workspace.code_languages)
+        {
             continue;
         }
         stats.files_scanned += 1;
@@ -491,6 +512,7 @@ async fn index_code_full_inner(
             structure_edges.into_values().collect(),
         )
         .await?;
+    crate::vault_graph::purge_wiki_graph_records(workspace, store).await?;
     Ok(stats)
 }
 
@@ -655,6 +677,61 @@ mod tests {
         assert_eq!(results[0].qualified_symbol, "example");
         assert_eq!(results[0].language, "rust");
         assert_eq!(results[0].segment_index, 0);
+    }
+
+    #[tokio::test]
+    async fn legacy_wiki_code_segments_are_purged_by_path() {
+        let directory = tempfile::tempdir().unwrap();
+        let workspace = crate::workspace::Workspace {
+            root: directory.path().to_path_buf(),
+            code_path: directory.path().to_path_buf(),
+            include: vec!["**/*.md".to_string()],
+            exclude: vec![],
+            code_index_mode: crate::workspace::CodeIndexMode::Manual,
+            code_languages: vec!["rust".to_string()],
+        };
+        let store =
+            crate::store::Store::init(&directory.path().join("db").to_string_lossy(), "memory")
+                .await
+                .unwrap();
+        let table = store.recreate_code_table().await.unwrap();
+        let record = |id: &str, file_path: &str| crate::store::CodeChunkRecord {
+            id: id.to_string(),
+            item_key: format!("item-{id}"),
+            file_path: file_path.to_string(),
+            module_path: String::new(),
+            symbol_name: id.to_string(),
+            qualified_symbol: id.to_string(),
+            kind: "function".to_string(),
+            language: "rust".to_string(),
+            start_line: 1,
+            end_line: 2,
+            segment_index: 0,
+            item_hash: format!("item-hash-{id}"),
+            content_hash: format!("content-hash-{id}"),
+            content: format!("fn {id}() {{}}"),
+            timestamp: None,
+            vector: vec![0.0; crate::store::VECTOR_DIMENSION],
+        };
+        store
+            .insert_code_batch(
+                &table,
+                vec![
+                    record("canonical", "src/lib.rs"),
+                    record("generated", "wiki/.generation/generated.rs"),
+                ],
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(
+            purge_wiki_code_records(&workspace, &store).await.unwrap(),
+            1
+        );
+        assert_eq!(
+            store.indexed_code_file_paths().await.unwrap(),
+            vec!["src/lib.rs"]
+        );
     }
 
     #[tokio::test]

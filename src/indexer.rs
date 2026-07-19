@@ -229,7 +229,7 @@ async fn sync_vault_inner(
         }
     };
 
-    let existing_docs = match store.get_all_document_timestamps(&table).await {
+    let mut existing_docs = match store.get_all_document_timestamps(&table).await {
         Ok(docs) => docs,
         Err(e) => {
             tracing::error!(
@@ -241,7 +241,7 @@ async fn sync_vault_inner(
     };
     // Path-based cache: skip parsing files whose mtime hasn't changed.
     // Returns map of path → (doc_id, last_seen_mtime).
-    let path_info = match store.get_file_timestamps(&table).await {
+    let mut path_info = match store.get_file_timestamps(&table).await {
         Ok(ts) => ts,
         Err(e) => {
             tracing::error!(
@@ -251,6 +251,34 @@ async fn sync_vault_inner(
             std::collections::HashMap::new()
         }
     };
+    // One-time/continuous migration: purge any Wiki chunks written by older
+    // versions. Delete by path (not document_id) because a generated page can
+    // carry the same frontmatter ID as its canonical source.
+    let excluded_paths = path_info
+        .keys()
+        .filter(|path| crate::path_policy::is_vault_wiki_relative_path(path))
+        .cloned()
+        .collect::<Vec<_>>();
+    let purged_excluded = !excluded_paths.is_empty();
+    if purged_excluded {
+        tracing::info!(
+            "Sync: purging {} legacy Wiki path(s) from canonical Vault index",
+            excluded_paths.len()
+        );
+        store.delete_document_paths(&table, &excluded_paths).await?;
+        // Re-read both views after deletion so duplicate document IDs cannot
+        // leave stale timestamps or suppress canonical re-indexing.
+        existing_docs = store.get_all_document_timestamps(&table).await?;
+        path_info = store.get_file_timestamps(&table).await?;
+    }
+    let purged_code = crate::code_indexer::purge_wiki_code_records(workspace, store).await?;
+    let purged_graph_nodes = crate::vault_graph::purge_wiki_graph_records(workspace, store).await?;
+    if purged_code > 0 || purged_graph_nodes > 0 {
+        tracing::info!(
+            "Sync: purged {purged_code} legacy Wiki code path(s) and {purged_graph_nodes} graph node(s)"
+        );
+    }
+
     let mut to_delete = Vec::new();
     let mut to_index = Vec::new();
 
@@ -320,7 +348,8 @@ async fn sync_vault_inner(
         }
     }
 
-    let graph_needs_reconcile = !to_delete.is_empty() || !to_index.is_empty();
+    let graph_needs_reconcile =
+        purged_excluded || purged_graph_nodes > 0 || !to_delete.is_empty() || !to_index.is_empty();
 
     // 1. Delete old vectors
     for doc_id in &to_delete {
@@ -566,6 +595,8 @@ async fn index_vault_full_inner(
         tracing::info!("Full Reindex: No indexable content found.");
     }
     crate::vault_graph::reconcile_vault_links(workspace, store).await?;
+    crate::code_indexer::purge_wiki_code_records(workspace, store).await?;
+    crate::vault_graph::purge_wiki_graph_records(workspace, store).await?;
 
     Ok(())
 }

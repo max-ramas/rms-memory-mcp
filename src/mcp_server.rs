@@ -77,6 +77,7 @@ fn spawn_sync_watcher(
 
         // File Watcher
         let (tx, mut rx) = tokio::sync::mpsc::channel(100);
+        let watched_vault_root = workspace.root.clone();
         let mut watcher = match notify::RecommendedWatcher::new(
             move |res: notify::Result<notify::Event>| {
                 if let Ok(event) = res
@@ -95,6 +96,7 @@ fn spawn_sync_watcher(
                             .and_then(|ext| ext.to_str())
                             .is_some_and(|ext| ext.eq_ignore_ascii_case("md"));
                         if is_markdown
+                            && !crate::path_policy::is_vault_wiki_path(&watched_vault_root, path)
                             && !p.contains(".lancedb")
                             && !p.contains(".bak")
                             && !p.ends_with("store.json")
@@ -181,6 +183,7 @@ fn spawn_code_watcher(
     tokio::spawn(async move {
         let (tx, mut rx) = tokio::sync::mpsc::channel::<std::time::SystemTime>(100);
         let watched_languages = workspace.code_languages.clone();
+        let watched_vault_root = workspace.root.clone();
         let mut watcher = match notify::RecommendedWatcher::new(
             move |result: notify::Result<notify::Event>| {
                 if let Ok(event) = result
@@ -190,10 +193,9 @@ fn spawn_code_watcher(
                             | notify::EventKind::Create(_)
                             | notify::EventKind::Remove(_)
                     )
-                    && event
-                        .paths
-                        .iter()
-                        .any(|path| is_watched_code_path(path, &watched_languages))
+                    && event.paths.iter().any(|path| {
+                        is_watched_code_path(&watched_vault_root, path, &watched_languages)
+                    })
                 {
                     let _ = tx.try_send(std::time::SystemTime::now());
                 }
@@ -259,8 +261,13 @@ fn spawn_code_watcher(
     });
 }
 
-fn is_watched_code_path(path: &std::path::Path, configured_languages: &[String]) -> bool {
+fn is_watched_code_path(
+    vault_root: &std::path::Path,
+    path: &std::path::Path,
+    configured_languages: &[String],
+) -> bool {
     crate::code_indexer::is_indexable_code_path(path, configured_languages)
+        && !crate::path_policy::is_vault_wiki_path(vault_root, path)
         && !path.components().any(|component| {
             matches!(
                 component.as_os_str().to_str(),
@@ -793,29 +800,46 @@ mod tests {
     #[test]
     fn code_watcher_filters_non_source_and_generated_paths() {
         let auto = ["auto".to_string()];
+        let vault = std::path::Path::new("/vault");
         assert!(super::is_watched_code_path(
+            vault,
             std::path::Path::new("src/lib.rs"),
             &auto
         ));
         assert!(super::is_watched_code_path(
+            vault,
             std::path::Path::new("src/main.go"),
             &auto
         ));
         assert!(!super::is_watched_code_path(
+            vault,
             std::path::Path::new("README.md"),
             &auto
         ));
         assert!(!super::is_watched_code_path(
+            vault,
             std::path::Path::new("target/debug/lib.rs"),
             &auto
         ));
         assert!(!super::is_watched_code_path(
+            vault,
             std::path::Path::new(".git/hooks/check.rs"),
             &auto
         ));
         assert!(!super::is_watched_code_path(
+            vault,
             std::path::Path::new("src/lib.rs"),
             &["go".to_string()]
+        ));
+        assert!(!super::is_watched_code_path(
+            vault,
+            std::path::Path::new("/vault/wiki/generated.rs"),
+            &auto
+        ));
+        assert!(super::is_watched_code_path(
+            vault,
+            std::path::Path::new("/project/wiki/handwritten.rs"),
+            &auto
         ));
     }
 }

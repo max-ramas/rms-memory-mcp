@@ -15,6 +15,7 @@ pub mod graph_store;
 pub mod index_lock;
 pub mod indexer;
 pub mod jobs;
+pub mod path_policy;
 pub mod project_service;
 pub mod retrieval;
 pub mod semantic_graph;

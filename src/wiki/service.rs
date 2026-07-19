@@ -278,6 +278,10 @@ impl WikiService {
                 }
 
                 let path = entry.path();
+                if crate::path_policy::is_vault_wiki_path(&self.workspace_root, path) {
+                    tracing::debug!("Wiki: excluding its own output: {}", path.display());
+                    continue;
+                }
                 if !pat.matches_path(path) {
                     continue;
                 }

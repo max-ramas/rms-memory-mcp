@@ -49,6 +49,7 @@ You're developing a single project but switching between different agents — Cu
 | ⚙️ **Dynamic Auto-Installer** | `rms-memory install` scans your system and wires itself into every supported IDE. |
 | 📜 **Rules-as-Code Patching** | Non-destructive AST patching of `.cursorrules`, `.zed/assistant.md`, etc. Opt-in by default. |
 | 🧪 **Durable Vault Writes** | `rms_write` creates rolling `.bak` backups and atomically replaces `create`/`replace` targets after fsync, so interrupted writes never expose a truncated Markdown file. |
+| 📚 **Canonical Wiki Isolation** | Generated `<vault>/wiki/**` files remain editable and Git-synchronized, but are excluded from indexes, search, watchers, graph and Wiki source packs to prevent duplicate memory. |
 | 🛡️ **Ten-Point Resiliency** | GC, background sync, write-guard snapshots, macOS sandbox bypass, `llms.txt` export, path traversal + injection protection, zombie prevention, graceful shutdown. |
 | 🔒 **Security Hardened** | Panic-free database layer, symlink traversal blocked, JSON-RPC error responses, request size limits. 3-agent audit completed with 14 critical/high bugs resolved. |
 | 🧠 **Audit Metadata** | Every record auto-receives `last_modified_by`, `timestamp`, `confidence`, `source` — agents can filter by reliability. |
@@ -106,6 +107,10 @@ rms-memory install
 ```
 
 This scans `~/.config/` and `~/Library/Application Support/` and hooks `rms-memory` directly into **Cursor**, **Zed**, **Claude Code**, **OpenCode**, and others — no manual JSON editing.
+
+### Generated Wiki namespace
+
+The optional desktop GUI writes human-readable Wiki pages to `<vault>/wiki/`. RMS Memory MCP remains AI-free and treats this directory as generated output rather than canonical memory. A shared case-insensitive path policy (`src/path_policy.rs`, also reused by the GUI) excludes the entire namespace from Markdown/code indexing, vector and full-text retrieval, watchers, the durable graph and Wiki context packs. Full or incremental sync removes legacy Wiki-derived records by path without deleting the files, and `doctor` reports the isolation state explicitly.
 
 For virtual projects without a filesystem path (threads, leads, etc.), use `--scope`:
 

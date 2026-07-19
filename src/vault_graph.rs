@@ -11,6 +11,31 @@ struct VaultDocument {
     links: Vec<String>,
 }
 
+/// Purge graph identities that were persisted before the Wiki namespace was
+/// reserved for GUI-generated material.
+pub async fn purge_wiki_graph_records(
+    workspace: &crate::workspace::Workspace,
+    store: &crate::store::Store,
+) -> Result<usize> {
+    let tables = store.open_or_create_graph_tables().await?;
+    let stale = store
+        .query_graph_nodes(&tables, 0)
+        .await?
+        .into_iter()
+        .filter(|node| match (node.corpus.as_str(), node.path.as_deref()) {
+            ("vault", Some(path)) => crate::path_policy::is_vault_wiki_relative_path(path),
+            ("code", Some(path)) => crate::path_policy::is_vault_wiki_path(
+                &workspace.root,
+                &workspace.code_path.join(path),
+            ),
+            _ => false,
+        })
+        .map(|node| node.node_key.as_str().to_string())
+        .collect::<Vec<_>>();
+    store.delete_graph_nodes_and_edges(&tables, &stale).await?;
+    Ok(stale.len())
+}
+
 /// Rebuild the Markdown-link projection of the graph. This scan is read-only:
 /// missing frontmatter ids use the same deterministic path-derived identity as
 /// the Vault index and malformed documents are skipped.
@@ -204,6 +229,82 @@ mod tests {
                 .await
                 .unwrap(),
             1
+        );
+    }
+
+    #[tokio::test]
+    async fn legacy_wiki_graph_nodes_and_incident_edges_are_purged() {
+        let directory = tempfile::tempdir().unwrap();
+        let workspace = crate::workspace::Workspace {
+            root: directory.path().to_path_buf(),
+            code_path: directory.path().to_path_buf(),
+            include: vec!["**/*.md".to_string()],
+            exclude: vec![],
+            code_index_mode: crate::workspace::CodeIndexMode::Off,
+            code_languages: vec!["auto".to_string()],
+        };
+        let store =
+            crate::store::Store::init(&directory.path().join("db").to_string_lossy(), "memory")
+                .await
+                .unwrap();
+        let generation = 1;
+        let canonical_key = crate::graph::GraphNodeKey::vault("canonical").unwrap();
+        let wiki_key = crate::graph::GraphNodeKey::vault("generated-wiki").unwrap();
+        let node = |key: crate::graph::GraphNodeKey, path: &str| crate::graph::GraphNodeRecord {
+            node_key: key.clone(),
+            corpus: "vault".to_string(),
+            source_id: key.as_str().split_once(':').unwrap().1.to_string(),
+            kind: "note".to_string(),
+            label: path.to_string(),
+            path: Some(path.to_string()),
+            metadata_json: "{}".to_string(),
+            generation: Some(generation),
+            updated_at: chrono::Utc::now().to_rfc3339(),
+        };
+        let relation = crate::graph::EdgeRelation::new("links_to").unwrap();
+        let edge_key =
+            crate::graph::derived_edge_key("legacy-test", &canonical_key, &wiki_key, &relation)
+                .unwrap();
+        store
+            .reconcile_derived_graph(
+                "legacy-test",
+                generation,
+                vec![
+                    node(canonical_key.clone(), "docs/canonical.md"),
+                    node(wiki_key.clone(), "wiki/.generation/page.md"),
+                ],
+                vec![crate::graph::GraphEdgeRecord {
+                    edge_key,
+                    source_key: canonical_key.clone(),
+                    target_key: wiki_key.clone(),
+                    relation,
+                    origin: crate::graph::EdgeOrigin::Derived,
+                    extractor: Some("legacy-test".to_string()),
+                    resolution: crate::graph::EdgeResolution::Resolved,
+                    confidence: None,
+                    generation: Some(generation),
+                    metadata_json: "{}".to_string(),
+                    created_at: chrono::Utc::now().to_rfc3339(),
+                    updated_at: chrono::Utc::now().to_rfc3339(),
+                }],
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(
+            purge_wiki_graph_records(&workspace, &store).await.unwrap(),
+            1
+        );
+        let tables = store.open_or_create_graph_tables().await.unwrap();
+        let nodes = store.query_graph_nodes(&tables, 0).await.unwrap();
+        assert_eq!(nodes.len(), 1);
+        assert_eq!(nodes[0].node_key, canonical_key);
+        assert!(
+            store
+                .query_graph_edges(&tables, 0)
+                .await
+                .unwrap()
+                .is_empty()
         );
     }
 }

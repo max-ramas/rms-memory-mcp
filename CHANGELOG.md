@@ -2,6 +2,24 @@
 
 All notable changes to this project will be documented in this file.
 
+## [Unreleased] - 2026-07-19
+
+### Added
+- A centralized, case-insensitive Vault path policy (`src/path_policy.rs`) for the generated `wiki/**` namespace, shared with the companion GUI for consistent Wiki path checks.
+- Doctor check **Wiki index isolation**, including remediation guidance.
+- Regression coverage proving Wiki files remain on disk while legacy Vault chunks, code records, graph nodes, incident edges and overrides are removed.
+
+### Changed
+- Vault Markdown discovery, incremental/full indexing, Markdown/code watchers, code walking, federated search, graph reconciliation and Wiki context-pack input now exclude `<vault>/wiki/**` consistently.
+- The code walker applies the exclusion only when `wiki/` belongs to the active Vault; an unrelated source-code directory named `wiki` under a separate project root remains indexable.
+- Legacy Wiki-derived records are purged by normalized path during sync/reindex, including records that share an erroneous duplicate frontmatter ID.
+- MCP remains AI-free: organizer/Wiki LLM orchestration lives only in the GUI; this crate supplies deterministic isolation and context-pack data.
+
+### Verification
+- `cargo check --all-targets` passes.
+- Complete Rust suite passes: 93 library tests plus main/doc targets.
+- `git diff --check` passes.
+
 ## [1.0.6] - 2026-07-13
 
 ### Added

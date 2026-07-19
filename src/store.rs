@@ -367,10 +367,55 @@ impl Store {
         Ok(segments)
     }
 
+    /// Distinct relative source paths currently present in the derived code corpus.
+    pub async fn indexed_code_file_paths(&self) -> Result<Vec<String>> {
+        use futures::stream::StreamExt;
+        use lancedb::arrow::arrow_array::StringArray;
+        use lancedb::query::{ExecutableQuery, QueryBase};
+
+        let table = match self.db.open_table(self.code_table_name()).execute().await {
+            Ok(table) => table,
+            Err(_) => return Ok(Vec::new()),
+        };
+        let mut stream = table
+            .query()
+            .select(lancedb::query::Select::Columns(vec![
+                "file_path".to_string(),
+            ]))
+            .execute()
+            .await?;
+        let mut paths = std::collections::BTreeSet::new();
+        while let Some(batch) = stream.next().await {
+            let batch = batch?;
+            let values = batch
+                .column_by_name("file_path")
+                .and_then(|column| column.as_any().downcast_ref::<StringArray>())
+                .context("code file_path column is not a StringArray")?;
+            for index in 0..batch.num_rows() {
+                paths.insert(values.value(index).to_string());
+            }
+        }
+        Ok(paths.into_iter().collect())
+    }
+
     pub async fn delete_code_segments(&self, table: &Table, ids: &[String]) -> Result<()> {
         for id in ids {
             table
                 .delete(&format!("id = '{}'", escape_filter(id)))
+                .await?;
+        }
+        Ok(())
+    }
+
+    /// Remove every derived code segment belonging to the supplied relative paths.
+    pub async fn delete_code_file_paths(&self, paths: &[String]) -> Result<()> {
+        let table = match self.db.open_table(self.code_table_name()).execute().await {
+            Ok(table) => table,
+            Err(_) => return Ok(()),
+        };
+        for path in paths {
+            table
+                .delete(&format!("file_path = '{}'", escape_filter(path)))
                 .await?;
         }
         Ok(())
@@ -455,6 +500,19 @@ impl Store {
         table
             .delete(&format!("document_id = '{}'", escape_filter(document_id)))
             .await?;
+        Ok(())
+    }
+
+    /// Remove persisted chunks by their relative Vault path.
+    ///
+    /// Path-based deletion is required for namespace migrations because legacy
+    /// Wiki records can share a frontmatter ID with their canonical source.
+    pub async fn delete_document_paths(&self, table: &Table, paths: &[String]) -> Result<()> {
+        for path in paths {
+            table
+                .delete(&format!("path = '{}'", escape_filter(path)))
+                .await?;
+        }
         Ok(())
     }
 
@@ -723,6 +781,9 @@ fn extract_results(
         confidence_col.and_then(|c| c.as_any().downcast_ref::<Float32Array>().cloned());
 
     for i in 0..batch.num_rows() {
+        if crate::path_policy::is_vault_wiki_relative_path(path_array.value(i)) {
+            continue;
+        }
         results.push(SearchResult {
             path: path_array.value(i).to_string(),
             heading: heading_array.value(i).to_string(),

@@ -341,7 +341,9 @@ impl Workspace {
                     let path_str = path.to_string_lossy();
                     let included = include_patterns.iter().any(|p| p.matches(&path_str));
                     let excluded = exclude_patterns.iter().any(|p| p.matches(&path_str));
-                    if included && !excluded {
+                    let canonical_excluded =
+                        crate::path_policy::is_vault_wiki_path(&self.root, &path);
+                    if included && !excluded && !canonical_excluded {
                         files.push(path);
                     }
                 }
@@ -463,5 +465,37 @@ mod tests {
             "Explicit scope with project path must produce same identifier regardless of cwd"
         );
         // Clean up: if someone runs discover_with_scope, it may create vault dirs
+    }
+
+    #[test]
+    fn markdown_discovery_excludes_wiki_but_keeps_files_on_disk() {
+        let directory = tempfile::tempdir().unwrap();
+        let vault = directory.path().join("vault");
+        std::fs::create_dir_all(vault.join("docs")).unwrap();
+        std::fs::create_dir_all(vault.join("wiki/.generation")).unwrap();
+        std::fs::create_dir_all(vault.join("wiki/_archive")).unwrap();
+        std::fs::write(vault.join("docs/source.md"), "# Source\n").unwrap();
+        std::fs::write(vault.join("wiki/page.md"), "# Projection\n").unwrap();
+        std::fs::write(
+            vault.join("wiki/.generation/context-pack.md"),
+            "# Generated\n",
+        )
+        .unwrap();
+        std::fs::write(vault.join("wiki/_archive/old.md"), "# Old\n").unwrap();
+
+        let workspace = Workspace {
+            root: vault.clone(),
+            code_path: directory.path().to_path_buf(),
+            include: vec!["**/*.md".to_string()],
+            exclude: Vec::new(),
+            code_index_mode: CodeIndexMode::Off,
+            code_languages: default_code_languages(),
+        };
+
+        let files = workspace.find_markdown_files().unwrap();
+        assert_eq!(files, vec![vault.join("docs/source.md")]);
+        assert!(vault.join("wiki/page.md").exists());
+        assert!(vault.join("wiki/.generation/context-pack.md").exists());
+        assert!(vault.join("wiki/_archive/old.md").exists());
     }
 }

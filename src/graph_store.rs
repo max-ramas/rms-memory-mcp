@@ -424,6 +424,73 @@ impl Store {
         Ok(records)
     }
 
+    /// Delete graph nodes and every edge/override incident to them.
+    ///
+    /// This is deliberately separate from extractor reconciliation because a
+    /// canonical node identity may otherwise survive after all of its derived
+    /// edges have been pruned.
+    pub async fn delete_graph_nodes_and_edges(
+        &self,
+        tables: &GraphTables,
+        node_keys: &[String],
+    ) -> Result<()> {
+        if node_keys.is_empty() {
+            return Ok(());
+        }
+        let keys = node_keys
+            .iter()
+            .map(String::as_str)
+            .collect::<std::collections::HashSet<_>>();
+        // Read the physical edge table directly. `query_graph_edges` applies
+        // suppression overrides, but suppressed incident edges must be removed
+        // as well during namespace migration.
+        use lancedb::query::Select;
+        let mut stream = tables
+            .edges
+            .query()
+            .select(Select::Columns(vec![
+                "edge_key".into(),
+                "source_key".into(),
+                "target_key".into(),
+            ]))
+            .execute()
+            .await?;
+        let mut incident_edges = Vec::new();
+        while let Some(batch) = stream.next().await.transpose()? {
+            let text = |name: &str| -> Result<&StringArray> {
+                batch
+                    .column_by_name(name)
+                    .and_then(|column| column.as_any().downcast_ref::<StringArray>())
+                    .with_context(|| format!("graph edge migration column {name} is not a string"))
+            };
+            for index in 0..batch.num_rows() {
+                if keys.contains(text("source_key")?.value(index))
+                    || keys.contains(text("target_key")?.value(index))
+                {
+                    incident_edges.push(text("edge_key")?.value(index).to_string());
+                }
+            }
+        }
+        for edge_key in incident_edges {
+            let escaped = escape(&edge_key);
+            tables
+                .overrides
+                .delete(&format!("edge_key = '{escaped}'"))
+                .await?;
+            tables
+                .edges
+                .delete(&format!("edge_key = '{escaped}'"))
+                .await?;
+        }
+        for node_key in node_keys {
+            tables
+                .nodes
+                .delete(&format!("node_key = '{}'", escape(node_key)))
+                .await?;
+        }
+        Ok(())
+    }
+
     async fn upsert_graph_nodes(&self, table: &Table, nodes: Vec<GraphNodeRecord>) -> Result<()> {
         if nodes.is_empty() {
             return Ok(());

@@ -156,7 +156,7 @@ impl DoctorArgs {
         let mut issues = 0u32;
 
         // 1. Check vault directory structure
-        println!("\n[1/5] Vault directory structure...");
+        println!("\n[1/6] Vault directory structure...");
         let required_dirs = [
             "rules",
             "decisions",
@@ -176,7 +176,7 @@ impl DoctorArgs {
         }
 
         // 2. Check for files missing document IDs
-        println!("\n[2/5] Document IDs...");
+        println!("\n[2/6] Document IDs...");
         let files = workspace.find_markdown_files().unwrap_or_default();
         let mut missing_ids = Vec::new();
         let mut invalid_frontmatter = Vec::new();
@@ -257,7 +257,7 @@ impl DoctorArgs {
         }
 
         // 3. Check for broken Markdown links
-        println!("\n[3/5] Cross-document links...");
+        println!("\n[3/6] Cross-document links...");
         let mut broken_links = Vec::new();
         let file_set: std::collections::HashSet<_> = files
             .iter()
@@ -295,7 +295,7 @@ impl DoctorArgs {
         }
 
         // 4. Check LanceDB store
-        println!("\n[4/5] LanceDB store...");
+        println!("\n[4/6] LanceDB store...");
         match workspace.get_store().await {
             Ok(store) => {
                 match crate::index_lock::inspect(&store.storage_path) {
@@ -332,8 +332,65 @@ impl DoctorArgs {
             }
         }
 
-        // 5. Check registry coherence
-        println!("\n[5/5] Registry coherence...");
+        // 5. Verify that GUI Wiki output has not leaked into canonical memory.
+        println!("\n[5/6] Wiki index isolation...");
+        match workspace.get_store().await {
+            Ok(store) => {
+                let leaked_vault = match store.open_table().await {
+                    Ok(table) => store
+                        .get_file_timestamps(&table)
+                        .await
+                        .map(|paths| {
+                            paths
+                                .into_keys()
+                                .filter(|path| {
+                                    crate::path_policy::is_vault_wiki_relative_path(path)
+                                })
+                                .collect::<Vec<_>>()
+                        })
+                        .unwrap_or_default(),
+                    Err(_) => Vec::new(),
+                };
+                let leaked_code = store
+                    .indexed_code_file_paths()
+                    .await
+                    .map(|paths| {
+                        paths
+                            .into_iter()
+                            .filter(|path| {
+                                crate::path_policy::is_vault_wiki_path(
+                                    &workspace.root,
+                                    &workspace.code_path.join(path),
+                                )
+                            })
+                            .collect::<Vec<_>>()
+                    })
+                    .unwrap_or_default();
+                if leaked_vault.is_empty() && leaked_code.is_empty() {
+                    println!("  ✅ wiki/** is excluded from canonical Vault and code indexes");
+                } else {
+                    println!(
+                        "  ⚠️  Legacy Wiki records found: {} Vault path(s), {} code path(s)",
+                        leaked_vault.len(),
+                        leaked_code.len()
+                    );
+                    for path in leaked_vault.iter().chain(leaked_code.iter()) {
+                        println!("     - {path}");
+                    }
+                    println!(
+                        "     A normal sync purges these records; run `rms-memory reindex --code` to rebuild code memory immediately."
+                    );
+                    issues += (leaked_vault.len() + leaked_code.len()) as u32;
+                }
+            }
+            Err(error) => {
+                println!("  ⚠️  Cannot verify Wiki isolation: {error}");
+                issues += 1;
+            }
+        }
+
+        // 6. Check registry coherence
+        println!("\n[6/6] Registry coherence...");
         if let Ok(registry) = crate::config_manager::load_registry() {
             let vault_canon =
                 std::fs::canonicalize(&workspace.root).unwrap_or_else(|_| workspace.root.clone());

@@ -1,5 +1,13 @@
 # RMS Memory MCP Server — Walkthrough
 
+Updated: 2026-07-19
+
+## Generated Wiki isolation
+
+`src/path_policy.rs` is the single authority for deciding whether a path belongs to the generated Vault Wiki namespace. The policy is relative to the canonical Vault root, case-insensitive for the first `wiki` component, rejects path escape, and therefore covers `.generation`, archives and future Wiki subdirectories without duplicating checks across subsystems. The companion GUI reuses the same library policy for Wiki path checks so AI apply/generation cannot invent a second exclusion rule.
+
+Wiki Markdown remains on disk and participates in the user's normal Git/GitHub workflow. It is excluded from Vault discovery, vector/FTS retrieval, Markdown and code watchers, the code corpus, the durable hybrid graph and Wiki context-pack inputs. Incremental/full sync and code reindex remove pre-policy derived data by normalized path, including incident graph edges and overrides, while preserving the source files. Doctor exposes the condition as a separate check so migration is observable instead of silently claiming a clean store. LLM clients, API keys and organizer/Wiki prompts remain exclusively in the GUI — this MCP binary stays AI-free.
+
 RMS Memory is a specialized Model Context Protocol (MCP) server that acts as localized persistent memory for LLM agents. It keeps human-authored knowledge in centralized Markdown Vaults and can optionally maintain a separate derived semantic index for Rust code, solving context fragmentation across multiple IDEs (Cursor, Zed, VS Code, Claude Code, Codex).
 
 ## Core Architecture Highlights
