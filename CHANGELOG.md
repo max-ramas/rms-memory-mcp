@@ -2,6 +2,25 @@
 
 All notable changes to this project will be documented in this file.
 
+## [Unreleased] - 2026-07-20
+
+### Security
+- Vault-aware `link:` resolution: after resolving frontmatter links, paths must canonicalize inside the vault; symlink targets outside the vault are rejected on read and write.
+- MCP `rms_write` requires `.md` and rejects writes into the generated `wiki/**` namespace (write isolation, not only index isolation).
+- `rms_wiki_pack` manifests must resolve under the vault (no absolute escape, `..`, or symlink escape).
+
+### Added
+- DocumentService wiki-safe channel (`read_wiki` / `write_wiki` / `create_wiki` / `delete_wiki`): containment + ETag without audit-frontmatter injection for managed Wiki pages.
+- Canonical DocumentService list/read/write/create/rename/delete exclude or reject `wiki/**` via `path_policy`.
+
+### Changed
+- Embedding batch size raised 8→32 for vault and code indexing (intra-threads remain 1).
+- Semantic graph embeds selected node queries in one batch instead of one ONNX call per node.
+
+### Verification
+- `cargo test --lib`: 114 passed (containment, wiki-safe writers, path_policy, semantic batch embed).
+- Embedding batch size 32; semantic graph one-shot embed for selected nodes.
+
 ## [Unreleased] - 2026-07-19
 
 ### Added

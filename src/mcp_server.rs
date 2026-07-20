@@ -44,6 +44,55 @@ fn file_uri_to_path(uri: &str) -> Result<std::path::PathBuf> {
         .map_err(|_| anyhow::anyhow!("invalid file URI"))
 }
 
+/// Resolve a `manifest` argument for `rms_wiki_pack` to a real file on disk,
+/// requiring the resulting path (after any symlinks) to stay inside the vault.
+///
+/// This prevents an attacker from pointing the wiki packager at
+/// `/etc/passwd`, a private key store, or any other file outside the vault
+/// and reading it back through the generated wiki output.
+fn resolve_manifest_path(
+    workspace_root: &std::path::Path,
+    manifest_arg: &str,
+) -> Result<std::path::PathBuf> {
+    if manifest_arg.trim().is_empty() {
+        anyhow::bail!("Wiki manifest path must not be empty");
+    }
+    let candidate_path = std::path::Path::new(manifest_arg);
+    // Absolute manifests are accepted only if they still resolve inside the
+    // canonicalised vault root. All other manifests are treated as vault-
+    // relative and cannot contain `..` traversal segments.
+    let candidate = if candidate_path.is_absolute() {
+        candidate_path.to_path_buf()
+    } else {
+        for component in candidate_path.components() {
+            if component == std::path::Component::ParentDir {
+                anyhow::bail!(
+                    "Wiki manifest path must not contain '..': {}",
+                    manifest_arg
+                );
+            }
+        }
+        workspace_root.join(candidate_path)
+    };
+
+    let canonical_root = std::fs::canonicalize(workspace_root)
+        .unwrap_or_else(|_| workspace_root.to_path_buf());
+    let canonical = std::fs::canonicalize(&candidate).map_err(|error| {
+        anyhow::anyhow!(
+            "Wiki manifest not found at {}: {error}",
+            candidate.display()
+        )
+    })?;
+    if !canonical.starts_with(&canonical_root) {
+        anyhow::bail!(
+            "Wiki manifest '{}' resolves outside the vault ({}), refusing to load",
+            manifest_arg,
+            canonical.display()
+        );
+    }
+    Ok(canonical)
+}
+
 use crate::indexer::Indexer;
 use crate::tools::AppContext;
 use std::sync::Arc;
@@ -491,12 +540,15 @@ impl McpServer {
             )
         })?;
         let registry = crate::workspace::Registry::load()?;
-        let config = registry
-            .locate_by_project(requested)
-            .ok_or_else(|| anyhow::anyhow!("Unknown RMS Memory project key: '{requested}'"))?;
-        let workspace =
-            crate::workspace::Workspace::discover(std::path::Path::new(&config.code_path), None)?;
-        self.bind_workspace(workspace).await
+        if let Some(config) = registry.locate_by_project(requested) {
+            let workspace =
+                crate::workspace::Workspace::discover(std::path::Path::new(&config.code_path), None)?;
+            return self.bind_workspace(workspace).await;
+        }
+        if let Some(message) = registry.migration_redirect_message(requested) {
+            anyhow::bail!(message);
+        }
+        anyhow::bail!("Unknown RMS Memory project key: '{requested}'");
     }
 
     async fn handle_notification(
@@ -754,12 +806,20 @@ impl McpServer {
                             .get("refresh_code")
                             .and_then(|v| v.as_bool())
                             .unwrap_or(false);
-                        let manifest =
-                            if let Some(path) = args.get("manifest").and_then(|v| v.as_str()) {
-                                crate::wiki::WikiManifest::from_file(std::path::Path::new(path))?
-                            } else {
-                                crate::wiki::WikiManifest::default_manifest()
-                            };
+                        let manifest = if let Some(path) =
+                            args.get("manifest").and_then(|v| v.as_str())
+                        {
+                            let workspace_root =
+                                self.ctx.workspace_root.as_ref().ok_or_else(|| {
+                                    anyhow::anyhow!(
+                                        "Workspace root not initialized; cannot resolve manifest path"
+                                    )
+                                })?;
+                            let resolved = resolve_manifest_path(workspace_root, path)?;
+                            crate::wiki::WikiManifest::from_file(&resolved)?
+                        } else {
+                            crate::wiki::WikiManifest::default_manifest()
+                        };
                         let req = crate::wiki::WikiGenerateRequest {
                             manifest,
                             refresh_code: refresh,
@@ -784,6 +844,70 @@ impl McpServer {
 
 #[cfg(test)]
 mod tests {
+    use tempfile::tempdir;
+
+    #[test]
+    fn resolve_manifest_path_accepts_vault_relative() {
+        let dir = tempdir().unwrap();
+        std::fs::write(dir.path().join("m.yaml"), "schema_version: 1\nsections: []\n").unwrap();
+        let resolved = super::resolve_manifest_path(dir.path(), "m.yaml").unwrap();
+        assert!(resolved.starts_with(std::fs::canonicalize(dir.path()).unwrap()));
+    }
+
+    #[test]
+    fn resolve_manifest_path_accepts_absolute_inside_vault() {
+        let dir = tempdir().unwrap();
+        std::fs::write(dir.path().join("m.yaml"), "x").unwrap();
+        let absolute = dir.path().join("m.yaml");
+        let resolved =
+            super::resolve_manifest_path(dir.path(), absolute.to_str().unwrap()).unwrap();
+        assert!(resolved.starts_with(std::fs::canonicalize(dir.path()).unwrap()));
+    }
+
+    #[test]
+    fn resolve_manifest_path_rejects_absolute_outside_vault() {
+        let vault = tempdir().unwrap();
+        let outside = tempdir().unwrap();
+        std::fs::write(outside.path().join("evil.yaml"), "x").unwrap();
+        let outside_path = outside.path().join("evil.yaml");
+        let error = super::resolve_manifest_path(vault.path(), outside_path.to_str().unwrap())
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("outside the vault"), "got: {error}");
+    }
+
+    #[test]
+    fn resolve_manifest_path_rejects_parent_traversal() {
+        let vault = tempdir().unwrap();
+        let error = super::resolve_manifest_path(vault.path(), "../evil.yaml")
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains(".."), "got: {error}");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn resolve_manifest_path_rejects_symlink_escape() {
+        let vault = tempdir().unwrap();
+        let outside = tempdir().unwrap();
+        let target = outside.path().join("evil.yaml");
+        std::fs::write(&target, "x").unwrap();
+        std::os::unix::fs::symlink(&target, vault.path().join("escape.yaml")).unwrap();
+        let error = super::resolve_manifest_path(vault.path(), "escape.yaml")
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("outside the vault"), "got: {error}");
+    }
+
+    #[test]
+    fn resolve_manifest_path_rejects_missing_file() {
+        let vault = tempdir().unwrap();
+        let error = super::resolve_manifest_path(vault.path(), "missing.yaml")
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("not found"), "got: {error}");
+    }
+
     #[test]
     fn file_root_uri_decodes_spaces() {
         assert_eq!(

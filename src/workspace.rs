@@ -17,6 +17,14 @@ pub struct Registry {
     pub global: GlobalConfig,
     #[serde(default)]
     pub projects: HashMap<String, ProjectConfig>,
+    #[serde(default)]
+    pub migrations: HashMap<String, MigrationRedirect>,
+}
+
+#[derive(Deserialize, Serialize, Debug, Clone, PartialEq, Eq)]
+pub struct MigrationRedirect {
+    pub to: String,
+    pub migrated_at: String,
 }
 
 impl Default for Registry {
@@ -26,6 +34,7 @@ impl Default for Registry {
             config_revision: 0,
             global: GlobalConfig::default(),
             projects: HashMap::new(),
+            migrations: HashMap::new(),
         }
     }
 }
@@ -386,7 +395,78 @@ impl Registry {
     }
 
     pub fn locate_by_project(&self, key: &str) -> Option<&ProjectConfig> {
-        self.projects.get(key)
+        self.locate_by_project_key(key).map(|(_, config)| config)
+    }
+
+    pub fn locate_by_project_key(&self, key: &str) -> Option<(&str, &ProjectConfig)> {
+        if let Some((registered, config)) = self.projects.get_key_value(key) {
+            return Some((registered.as_str(), config));
+        }
+        if let Some((registered, config)) = self
+            .projects
+            .iter()
+            .find(|(registered, _)| Self::keys_equivalent(registered, key))
+        {
+            return Some((registered.as_str(), config));
+        }
+        let mut current = key;
+        let mut visited = std::collections::HashSet::new();
+        while let Some(redirect) = self.find_migration(current) {
+            if !visited.insert(current.to_string()) {
+                return None;
+            }
+            if let Some((registered, config)) = self.projects.get_key_value(&redirect.to) {
+                return Some((registered.as_str(), config));
+            }
+            current = redirect.to.as_str();
+        }
+        None
+    }
+
+    fn find_migration(&self, key: &str) -> Option<&MigrationRedirect> {
+        if let Some(redirect) = self.migrations.get(key) {
+            return Some(redirect);
+        }
+        self.migrations
+            .iter()
+            .find(|(registered, _)| Self::keys_equivalent(registered, key))
+            .map(|(_, redirect)| redirect)
+    }
+
+    pub fn keys_equivalent(left: &str, right: &str) -> bool {
+        left.eq_ignore_ascii_case(right)
+    }
+
+    pub fn resolve_project_key(&self, key: &str) -> Option<&str> {
+        self.locate_by_project_key(key).map(|(resolved, _)| resolved)
+    }
+
+    pub fn migration_redirect_message(&self, requested: &str) -> Option<String> {
+        let redirect = self.find_migration(requested)?;
+        Some(format!(
+            "Project '{requested}' was migrated to '{}' on {}. Update your MCP or GUI project selection.",
+            redirect.to, redirect.migrated_at
+        ))
+    }
+
+    pub fn coalesce_migrations(&mut self, old_key: &str, new_key: &str) {
+        for redirect in self.migrations.values_mut() {
+            if Self::keys_equivalent(&redirect.to, old_key) {
+                redirect.to = new_key.to_string();
+            }
+        }
+        self.migrations.insert(
+            old_key.to_string(),
+            MigrationRedirect {
+                to: new_key.to_string(),
+                migrated_at: chrono::Utc::now().to_rfc3339(),
+            },
+        );
+        if Self::keys_equivalent(old_key, new_key) {
+            self.migrations.remove(old_key);
+        } else {
+            self.migrations.remove(new_key);
+        }
     }
 }
 

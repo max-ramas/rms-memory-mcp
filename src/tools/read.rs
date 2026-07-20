@@ -12,7 +12,12 @@ pub async fn execute(
     let path_str = args.get("path").and_then(|v| v.as_str()).unwrap_or("");
     let file_path = super::validation::resolve_vault_path(workspace_root, path_str)?;
 
-    if let Some(linked_content) = crate::link::get_linked_content(&file_path) {
+    // If this document is a link, fetch the linked content — but only when the
+    // resolved target stays inside the vault. Escapes fall through to reading
+    // the link file itself instead of leaking data from outside the vault.
+    if let Some(linked_content) =
+        crate::link::get_linked_content_in_vault(&file_path, workspace_root)
+    {
         Ok(super::response::json_text_response(&linked_content))
     } else {
         let store = ctx

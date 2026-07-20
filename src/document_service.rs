@@ -3,6 +3,15 @@
 //! This is deliberately separate from the MCP tool handlers: every caller gets
 //! the same vault-boundary checks, linked-document behaviour, audit metadata,
 //! conflict detection and rolling snapshots.
+//!
+//! # Canonical vs. Wiki namespaces
+//!
+//! The canonical methods (`list`, `read`, `write`, `create`, `rename`,
+//! `delete`) refuse to touch anything in the generated Wiki namespace. Wiki
+//! pages have their own set of methods (`read_wiki`, `write_wiki`,
+//! `create_wiki`) that skip audit metadata injection so managed regions stay
+//! intact. This keeps the corpus of "human memory" and the "generated wiki
+//! output" strictly separate at the API layer.
 
 use anyhow::{Context, Result, bail};
 use chrono::{DateTime, Utc};
@@ -86,21 +95,32 @@ impl DocumentService {
         })
     }
 
+    /// List canonical memory documents. Wiki-owned files are excluded because
+    /// generated Wiki output must never appear as canonical memory input.
     pub fn list(&self) -> Result<Vec<DocumentEntry>> {
         let mut documents = Vec::new();
         for entry in walkdir::WalkDir::new(&self.root)
             .follow_links(false)
             .into_iter()
-            .filter_entry(|entry| !is_internal_directory(entry.path()))
+            .filter_entry(|entry| {
+                !is_internal_directory(entry.path())
+                    && !crate::path_policy::is_vault_wiki_path(&self.root, entry.path())
+            })
             .filter_map(std::result::Result::ok)
         {
             if !entry.file_type().is_file() || !is_markdown(entry.path()) || is_backup(entry.path())
             {
                 continue;
             }
+            // Extra defence: even if the walker missed it, drop wiki-relative
+            // paths before they leave the service.
+            let relative = self.relative_string(entry.path())?;
+            if crate::path_policy::is_vault_wiki_relative_path(&relative) {
+                continue;
+            }
             let metadata = entry.metadata().ok();
             documents.push(DocumentEntry {
-                path: self.relative_string(entry.path())?,
+                path: relative,
                 modified_at: metadata
                     .as_ref()
                     .and_then(|metadata| metadata.modified().ok())
@@ -113,6 +133,18 @@ impl DocumentService {
     }
 
     pub fn read(&self, path: &str) -> Result<DocumentRead> {
+        reject_wiki(path)?;
+        self.read_any(path)
+    }
+
+    /// Wiki-only read. Returns the raw wiki page bytes; skips audit metadata
+    /// (there is none to inject). Rejects non-wiki paths.
+    pub fn read_wiki(&self, path: &str) -> Result<DocumentRead> {
+        require_wiki(path)?;
+        self.read_any(path)
+    }
+
+    fn read_any(&self, path: &str) -> Result<DocumentRead> {
         let requested = self.resolve_existing(path)?;
         let (editable, linked_target) = self.resolve_edit_target(&requested)?;
         let content = fs::read_to_string(&editable)
@@ -135,22 +167,58 @@ impl DocumentService {
     }
 
     pub fn create(&self, request: DocumentWriteRequest) -> Result<DocumentWriteResult> {
+        reject_wiki(&request.path)?;
+        self.create_internal(request, /* inject_audit = */ true)
+    }
+
+    /// Create a new Wiki page. Skips audit metadata injection to keep managed
+    /// regions and provenance stamps intact.
+    pub fn create_wiki(&self, request: DocumentWriteRequest) -> Result<DocumentWriteResult> {
+        require_wiki(&request.path)?;
+        self.create_internal(request, /* inject_audit = */ false)
+    }
+
+    fn create_internal(
+        &self,
+        request: DocumentWriteRequest,
+        inject_audit: bool,
+    ) -> Result<DocumentWriteResult> {
         let target = self.resolve_new(&request.path)?;
         if target.exists() {
             bail!("Document already exists: {}", request.path);
         }
-        self.replace_at(target, request, true, None)
+        self.replace_at(target, request, true, None, inject_audit)
     }
 
     pub fn write(&self, request: DocumentWriteRequest) -> Result<DocumentWriteResult> {
+        reject_wiki(&request.path)?;
+        self.write_internal(request, /* inject_audit = */ true)
+    }
+
+    /// Wiki-safe overwrite. Skips audit metadata injection and writes exactly
+    /// the bytes provided; still enforces vault containment, `.md` policy,
+    /// symlink-safe ancestor canonicalisation, and the ETag conflict guard.
+    /// Rejects non-wiki paths.
+    pub fn write_wiki(&self, request: DocumentWriteRequest) -> Result<DocumentWriteResult> {
+        require_wiki(&request.path)?;
+        self.write_internal(request, /* inject_audit = */ false)
+    }
+
+    fn write_internal(
+        &self,
+        request: DocumentWriteRequest,
+        inject_audit: bool,
+    ) -> Result<DocumentWriteResult> {
         let requested = self.resolve_existing(&request.path)?;
         let (target, linked_target) = self.resolve_edit_target(&requested)?;
-        self.replace_at(target, request, false, linked_target)
+        self.replace_at(target, request, false, linked_target, inject_audit)
     }
 
     /// Renames a document without silently replacing an existing destination.
     /// A linked document is moved as the link document; its source is untouched.
     pub fn rename(&self, from: &str, to: &str) -> Result<DocumentEntry> {
+        reject_wiki(from)?;
+        reject_wiki(to)?;
         let source = self.resolve_existing(from)?;
         let destination = self.resolve_new(to)?;
         if destination.exists() {
@@ -173,6 +241,18 @@ impl DocumentService {
     /// Moves a document to an internal vault trash directory. It never performs
     /// an irreversible delete, and does not recursively delete directories.
     pub fn delete(&self, path: &str) -> Result<DocumentDeleteResult> {
+        reject_wiki(path)?;
+        self.delete_internal(path)
+    }
+
+    /// Wiki-only variant of [`Self::delete`]. Used by AI apply rollback when a
+    /// newly created wiki page needs to be undone.
+    pub fn delete_wiki(&self, path: &str) -> Result<DocumentDeleteResult> {
+        require_wiki(path)?;
+        self.delete_internal(path)
+    }
+
+    fn delete_internal(&self, path: &str) -> Result<DocumentDeleteResult> {
         let source = self.resolve_existing(path)?;
         let relative = source
             .strip_prefix(&self.root)
@@ -202,6 +282,7 @@ impl DocumentService {
         request: DocumentWriteRequest,
         created: bool,
         linked_target: Option<String>,
+        inject_audit: bool,
     ) -> Result<DocumentWriteResult> {
         if !created {
             let current = fs::read_to_string(&target)
@@ -214,22 +295,28 @@ impl DocumentService {
                     request.path
                 );
             }
-            self.create_backup(&target)?;
+            if inject_audit {
+                self.create_backup(&target)?;
+            }
         }
 
-        let mut metadata_args = Map::new();
-        if let Some(confidence) = request.confidence {
-            metadata_args.insert("confidence".to_owned(), Value::from(confidence));
-        }
-        if let Some(source) = request.source.as_ref() {
-            metadata_args.insert("source".to_owned(), Value::from(source.clone()));
-        }
-        let content = crate::tools::write::inject_audit_metadata(
-            &request.content,
-            &self.caller_id,
-            self.project_key.as_deref(),
-            &metadata_args,
-        )?;
+        let content = if inject_audit {
+            let mut metadata_args = Map::new();
+            if let Some(confidence) = request.confidence {
+                metadata_args.insert("confidence".to_owned(), Value::from(confidence));
+            }
+            if let Some(source) = request.source.as_ref() {
+                metadata_args.insert("source".to_owned(), Value::from(source.clone()));
+            }
+            crate::tools::write::inject_audit_metadata(
+                &request.content,
+                &self.caller_id,
+                self.project_key.as_deref(),
+                &metadata_args,
+            )?
+        } else {
+            request.content.clone()
+        };
         atomic_replace(&target, content.as_bytes())?;
         Ok(DocumentWriteResult {
             path: request.path,
@@ -301,13 +388,20 @@ impl DocumentService {
     }
 
     fn resolve_edit_target(&self, requested: &Path) -> Result<(PathBuf, Option<String>)> {
-        let target = crate::link::resolve_link(requested);
-        let target = fs::canonicalize(&target).with_context(|| {
-            format!(
-                "Linked document target does not exist for {}",
-                requested.display()
-            )
-        })?;
+        // Vault-aware link resolution: if the requested document is a link,
+        // the returned target is guaranteed to be inside the vault (both by
+        // parsing and by canonicalisation-plus-symlink check).
+        let target = crate::link::resolve_link_in_vault(requested, &self.root).with_context(
+            || {
+                format!(
+                    "Linked document target does not exist or escapes vault for {}",
+                    requested.display()
+                )
+            },
+        )?;
+        // `resolve_link_in_vault` returns a canonicalised path when it followed
+        // a link, or the original path (which is already canonical because the
+        // caller went through `resolve_existing`) when there was no link.
         self.ensure_inside_root(&target)?;
         if !target.is_file() || !is_markdown(&target) {
             bail!(
@@ -351,6 +445,24 @@ fn validate_document_path(path: &str) -> Result<()> {
         .any(|component| !matches!(component, Component::Normal(_)))
     {
         bail!("Document path must not contain '.' or '..' components");
+    }
+    Ok(())
+}
+
+fn reject_wiki(path: &str) -> Result<()> {
+    if crate::path_policy::is_vault_wiki_relative_path(path) {
+        bail!(
+            "Path '{path}' is inside the generated Wiki namespace. Canonical memory tools cannot touch Wiki output; use the *_wiki DocumentService methods instead."
+        );
+    }
+    Ok(())
+}
+
+fn require_wiki(path: &str) -> Result<()> {
+    if !crate::path_policy::is_vault_wiki_relative_path(path) {
+        bail!(
+            "Path '{path}' is not inside the Wiki namespace. Wiki-safe methods only accept wiki/ paths."
+        );
     }
     Ok(())
 }
@@ -482,6 +594,74 @@ mod tests {
         }
     }
 
+    #[cfg(unix)]
+    #[test]
+    fn create_with_directory_symlink_escape_is_blocked() {
+        // Regression: if a symlink appears in the middle of an otherwise-new
+        // path (e.g. `parent/notes/a.md` where `parent` is a directory symlink
+        // pointing outside), ancestor canonicalisation must catch it before
+        // create_dir_all can follow the link outside the vault.
+        let vault = tempdir().unwrap();
+        let outside = tempdir().unwrap();
+        std::os::unix::fs::symlink(outside.path(), vault.path().join("escape")).unwrap();
+        let service = service(vault.path());
+        let error = service
+            .create(DocumentWriteRequest {
+                path: "escape/new/notes/a.md".into(),
+                content: "x".into(),
+                expected_etag: None,
+                confidence: None,
+                source: None,
+            })
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("escapes vault"), "got: {error}");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn resolve_edit_target_rejects_link_that_escapes_via_symlink() {
+        let vault = tempdir().unwrap();
+        let outside = tempdir().unwrap();
+        let outside_source = outside.path().join("secret.md");
+        fs::write(&outside_source, "top secret").unwrap();
+
+        // A symlink inside the vault that points at the outside file.
+        std::os::unix::fs::symlink(&outside_source, vault.path().join("escape.md")).unwrap();
+        // A vault document whose frontmatter links to the symlink.
+        fs::write(
+            vault.path().join("doc.md"),
+            "---\nlink: escape.md\n---\ncontent",
+        )
+        .unwrap();
+
+        let service = service(vault.path());
+        let error = service.read("doc.md").unwrap_err().to_string();
+        assert!(
+            error.contains("escapes vault") || error.contains("does not exist"),
+            "got: {error}"
+        );
+
+        // Writing through the same escaping link must also fail.
+        let error = service
+            .write(DocumentWriteRequest {
+                path: "doc.md".into(),
+                content: "clobber".into(),
+                expected_etag: None,
+                confidence: None,
+                source: None,
+            })
+            .unwrap_err()
+            .to_string();
+        assert!(
+            error.contains("escapes vault") || error.contains("does not exist"),
+            "got: {error}"
+        );
+
+        // The outside file must remain untouched.
+        assert_eq!(fs::read_to_string(&outside_source).unwrap(), "top secret");
+    }
+
     #[test]
     fn delete_is_recoverable_and_list_hides_internal_files() {
         let directory = tempdir().unwrap();
@@ -499,5 +679,148 @@ mod tests {
         assert!(!directory.path().join("a.md").exists());
         assert!(directory.path().join(&deleted.trashed_path).exists());
         assert!(service.list().unwrap().is_empty());
+    }
+
+    #[test]
+    fn canonical_methods_reject_wiki_paths() {
+        let directory = tempdir().unwrap();
+        fs::create_dir_all(directory.path().join("wiki")).unwrap();
+        fs::write(directory.path().join("wiki/page.md"), "hi").unwrap();
+        let service = service(directory.path());
+
+        for error in [
+            service.read("wiki/page.md").unwrap_err().to_string(),
+            service
+                .write(DocumentWriteRequest {
+                    path: "wiki/page.md".into(),
+                    content: "no".into(),
+                    expected_etag: None,
+                    confidence: None,
+                    source: None,
+                })
+                .unwrap_err()
+                .to_string(),
+            service
+                .create(DocumentWriteRequest {
+                    path: "wiki/new.md".into(),
+                    content: "no".into(),
+                    expected_etag: None,
+                    confidence: None,
+                    source: None,
+                })
+                .unwrap_err()
+                .to_string(),
+            service
+                .rename("wiki/page.md", "wiki/other.md")
+                .unwrap_err()
+                .to_string(),
+            service.delete("wiki/page.md").unwrap_err().to_string(),
+        ] {
+            assert!(
+                error.contains("Wiki"),
+                "expected wiki rejection, got: {error}"
+            );
+        }
+    }
+
+    #[test]
+    fn list_excludes_wiki_and_hidden_directories() {
+        let directory = tempdir().unwrap();
+        fs::create_dir_all(directory.path().join("wiki/sub")).unwrap();
+        fs::create_dir_all(directory.path().join(".rms-memory")).unwrap();
+        fs::write(directory.path().join("wiki/index.md"), "wiki root").unwrap();
+        fs::write(directory.path().join("wiki/sub/page.md"), "wiki child").unwrap();
+        fs::write(
+            directory.path().join(".rms-memory/notes.md"),
+            "internal note",
+        )
+        .unwrap();
+        fs::write(directory.path().join("notes.md"), "canonical").unwrap();
+        let service = service(directory.path());
+
+        let listed = service.list().unwrap();
+        let paths: Vec<_> = listed.iter().map(|entry| entry.path.as_str()).collect();
+        assert_eq!(paths, vec!["notes.md"]);
+    }
+
+    #[test]
+    fn wiki_write_preserves_managed_regions_without_audit_metadata() {
+        let directory = tempdir().unwrap();
+        fs::create_dir_all(directory.path().join("wiki")).unwrap();
+        let service = service(directory.path());
+
+        let body = "<!-- RMS-WIKI:BEGIN managed -->\ncontent\n<!-- RMS-WIKI:END managed -->\n";
+        service
+            .create_wiki(DocumentWriteRequest {
+                path: "wiki/index.md".into(),
+                content: body.into(),
+                expected_etag: None,
+                confidence: None,
+                source: None,
+            })
+            .unwrap();
+
+        let on_disk = fs::read_to_string(directory.path().join("wiki/index.md")).unwrap();
+        assert_eq!(on_disk, body, "audit metadata must not be injected");
+
+        let read = service.read_wiki("wiki/index.md").unwrap();
+        assert_eq!(read.content, body);
+        assert!(
+            !read.content.contains("last_modified_by"),
+            "audit must not be injected"
+        );
+
+        let updated = "<!-- RMS-WIKI:BEGIN managed -->\nnew\n<!-- RMS-WIKI:END managed -->\n";
+        service
+            .write_wiki(DocumentWriteRequest {
+                path: "wiki/index.md".into(),
+                content: updated.into(),
+                expected_etag: Some(read.etag),
+                confidence: None,
+                source: None,
+            })
+            .unwrap();
+        let after = fs::read_to_string(directory.path().join("wiki/index.md")).unwrap();
+        assert_eq!(after, updated);
+    }
+
+    #[test]
+    fn wiki_methods_reject_non_wiki_paths() {
+        let directory = tempdir().unwrap();
+        let service = service(directory.path());
+
+        assert!(
+            service
+                .create_wiki(DocumentWriteRequest {
+                    path: "notes/a.md".into(),
+                    content: "x".into(),
+                    expected_etag: None,
+                    confidence: None,
+                    source: None,
+                })
+                .unwrap_err()
+                .to_string()
+                .contains("Wiki")
+        );
+        assert!(
+            service
+                .write_wiki(DocumentWriteRequest {
+                    path: "notes/a.md".into(),
+                    content: "x".into(),
+                    expected_etag: None,
+                    confidence: None,
+                    source: None,
+                })
+                .unwrap_err()
+                .to_string()
+                .contains("Wiki")
+        );
+        assert!(
+            service
+                .read_wiki("notes/a.md")
+                .unwrap_err()
+                .to_string()
+                .contains("Wiki")
+        );
     }
 }

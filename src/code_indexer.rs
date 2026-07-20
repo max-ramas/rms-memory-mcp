@@ -4,7 +4,7 @@ use std::collections::{HashMap, HashSet};
 use std::path::Path;
 
 const MAX_CODE_FILE_BYTES: u64 = 512 * 1024;
-const EMBEDDING_BATCH_SIZE: usize = 8;
+const EMBEDDING_BATCH_SIZE: usize = 32;
 /// A deterministic projection that makes the code graph navigable at every
 /// scale: project -> folder -> file -> parsed symbol.  This stays independent
 /// from language extractors, which own only syntactic relation hints.

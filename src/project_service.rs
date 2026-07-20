@@ -89,6 +89,25 @@ impl ProjectService {
         Ok(outcome)
     }
 
+    pub fn migrate(
+        &self,
+        project: &str,
+        new_code_dir: &Path,
+        options: crate::project_migrate::ProjectMigrateOptions,
+    ) -> Result<crate::project_migrate::ProjectMigrateOutcome> {
+        crate::project_migrate::migrate(&self.manager, project, new_code_dir, options)
+    }
+
+    pub fn migrate_plan(
+        &self,
+        project: &str,
+        new_code_dir: &Path,
+        options: &crate::project_migrate::ProjectMigrateOptions,
+    ) -> Result<crate::project_migrate::ProjectMigratePlan> {
+        let snapshot = self.manager.snapshot();
+        crate::project_migrate::build_plan(&snapshot.registry, project, new_code_dir, options)
+    }
+
     fn validate_deletion(
         &self,
         registry: &Registry,

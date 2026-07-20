@@ -420,7 +420,25 @@ impl DoctorArgs {
             }
             if !found {
                 println!("  ⚠️  Project not found in registry — may be orphaned");
+                println!("     Run `rms-memory projects migrate` if the repository was moved or renamed.");
                 issues += 1;
+            }
+
+            if let Some(key) = workspace.project_key() {
+                let basename = workspace
+                    .code_path
+                    .file_name()
+                    .and_then(|name| name.to_str())
+                    .unwrap_or_default();
+                if !crate::workspace::Registry::keys_equivalent(basename, &key) {
+                    println!(
+                        "  ⚠️  Folder basename '{basename}' differs from project key '{key}'"
+                    );
+                    println!(
+                        "     This is informational only. Use `rms-memory projects migrate` to realign paths/keys; do not recreate .git."
+                    );
+                    issues += 1;
+                }
             }
         } else {
             println!("  ⚠️  Cannot read registry.toml");

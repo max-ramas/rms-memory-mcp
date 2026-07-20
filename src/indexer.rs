@@ -292,8 +292,10 @@ async fn sync_vault_inner(
             .to_string_lossy()
             .to_string();
 
-        // Read file mtime
-        let resolved_path = crate::link::resolve_link(&file_path);
+        // Read file mtime; a link that escapes the vault falls back to the
+        // linker's own mtime rather than reaching outside.
+        let resolved_path =
+            crate::link::resolve_link_in_vault_or_self(&file_path, &workspace.root);
         let mtime = std::fs::metadata(&resolved_path)
             .and_then(|m| m.modified())
             .map(|t| chrono::DateTime::<chrono::Utc>::from(t).to_rfc3339())
@@ -320,8 +322,11 @@ async fn sync_vault_inner(
         };
         let doc_id = doc.index_id(Path::new(&rel_path));
 
-        // If it's a linked document, swap the content with the source file content
-        if let Some(linked_content) = crate::link::get_linked_content(&file_path) {
+        // If it's a linked document, swap the content with the source file content.
+        // Escaping links are ignored so indexed content stays inside the vault.
+        if let Some(linked_content) =
+            crate::link::get_linked_content_in_vault(&file_path, &workspace.root)
+        {
             doc.content = linked_content;
         }
 
@@ -411,7 +416,7 @@ async fn sync_vault_inner(
 
         let mut embeddings = Vec::with_capacity(chunks.len());
         let chunk_texts: Vec<String> = chunks.iter().map(|c| c.text.clone()).collect();
-        let batch_size = 8;
+        let batch_size = 32;
         let mut failed = false;
 
         for batch in chunk_texts.chunks(batch_size) {
@@ -501,8 +506,11 @@ async fn index_vault_full_inner(
             }
         };
 
-        // If it's a linked document, swap the content with the source file content
-        if let Some(linked_content) = crate::link::get_linked_content(&file_path) {
+        // If it's a linked document, swap the content with the source file content.
+        // Escaping links are ignored so indexed content stays inside the vault.
+        if let Some(linked_content) =
+            crate::link::get_linked_content_in_vault(&file_path, &workspace.root)
+        {
             doc.content = linked_content;
         }
 
@@ -551,7 +559,7 @@ async fn index_vault_full_inner(
 
         let mut embeddings = Vec::with_capacity(chunks.len());
         let chunk_texts: Vec<String> = chunks.iter().map(|c| c.text.clone()).collect();
-        let batch_size = 8;
+        let batch_size = 32;
         let mut failed = false;
 
         for batch in chunk_texts.chunks(batch_size) {

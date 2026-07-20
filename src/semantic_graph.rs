@@ -128,23 +128,30 @@ pub async fn build_semantic_edges(
         .collect::<BTreeMap<_, _>>();
 
     let mut deduped = BTreeMap::<(String, String), f32>::new();
-    for source in &selected {
+    let queries: Vec<String> = selected.iter().map(semantic_query).collect();
+    // Batch embed once instead of one ONNX call per selected node.
+    let vectors = if queries.is_empty() {
+        Vec::new()
+    } else {
+        indexer.embed(&queries)?
+    };
+    if vectors.len() != selected.len() {
+        anyhow::bail!(
+            "semantic embed returned {} vectors for {} queries",
+            vectors.len(),
+            selected.len()
+        );
+    }
+
+    for (source, (query, vector)) in selected.iter().zip(queries.into_iter().zip(vectors)) {
         check_cancelled(cancelled)?;
-        let query = semantic_query(source);
-        let Some(vector) = indexer
-            .embed(std::slice::from_ref(&query))?
-            .into_iter()
-            .next()
-        else {
-            continue;
-        };
 
         // Both corpora are queried so semantic links can cross vault/code
         // boundaries. Each query and each per-source candidate set is bounded.
         let vault_results = match store
             .search(
                 vector.clone(),
-                query.clone(),
+                query,
                 options.neighbors_per_node + 1,
                 None,
             )

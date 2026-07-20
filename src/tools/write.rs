@@ -144,6 +144,7 @@ pub async fn execute(
         .as_ref()
         .ok_or_else(|| anyhow::anyhow!("Workspace root not initialized"))?;
     let path_str = args.get("path").and_then(|v| v.as_str()).unwrap_or("");
+    super::validation::reject_wiki_write(path_str)?;
     let initial_file_path = super::validation::resolve_vault_path(workspace_root, path_str)?;
     let content = args.get("content").and_then(|v| v.as_str()).unwrap_or("");
     let mode = args
@@ -151,7 +152,22 @@ pub async fn execute(
         .and_then(|v| v.as_str())
         .unwrap_or("replace");
 
-    let file_path = crate::link::resolve_link(&initial_file_path);
+    // Resolve `link:` frontmatter to the source document, then verify the
+    // resolved path (after any symlinks) is still inside the vault, and is
+    // still outside the Wiki namespace.
+    let file_path = if initial_file_path.exists() {
+        let resolved =
+            crate::link::resolve_link_in_vault(&initial_file_path, workspace_root)?;
+        if crate::path_policy::is_vault_wiki_path(workspace_root, &resolved) {
+            return Err(anyhow::anyhow!(
+                "Resolved link target '{}' is inside the generated Wiki namespace and cannot be written through the canonical memory tools.",
+                resolved.display()
+            ));
+        }
+        resolved
+    } else {
+        initial_file_path.clone()
+    };
 
     if mode == "create" && file_path.exists() {
         return Err(anyhow::anyhow!(
@@ -235,6 +251,10 @@ pub async fn execute(
 
 #[cfg(test)]
 mod tests {
+    use super::*;
+    use crate::tools::AppContext;
+    use tempfile::tempdir;
+
     #[test]
     fn repeated_metadata_injection_keeps_one_id_and_the_complete_body() {
         let args = serde_json::Map::new();
@@ -249,5 +269,75 @@ mod tests {
             super::inject_audit_metadata(&first, "writer-b", Some("p"), &args).expect("second");
         assert_eq!(second.matches("\nid:").count(), 1);
         assert!(second.ends_with("# Complete body\n\nDo not truncate."));
+    }
+
+    fn make_ctx(root: std::path::PathBuf) -> AppContext {
+        AppContext {
+            store: None,
+            indexer: None,
+            workspace_root: Some(root),
+            max_backups: 0,
+            scope: None,
+            caller_id: "test".to_string(),
+            project_key: None,
+        }
+    }
+
+    #[tokio::test]
+    async fn rejects_wiki_write_path() {
+        let dir = tempdir().unwrap();
+        let ctx = make_ctx(dir.path().to_path_buf());
+        let mut args = serde_json::Map::new();
+        args.insert("path".into(), serde_json::json!("wiki/index.md"));
+        args.insert("mode".into(), serde_json::json!("create"));
+        args.insert("content".into(), serde_json::json!("hi"));
+        let error = execute(&ctx, &args).await.unwrap_err().to_string();
+        assert!(
+            error.contains("Wiki") || error.contains("wiki"),
+            "got: {error}"
+        );
+    }
+
+    #[tokio::test]
+    async fn rejects_non_markdown_write_path() {
+        let dir = tempdir().unwrap();
+        let ctx = make_ctx(dir.path().to_path_buf());
+        let mut args = serde_json::Map::new();
+        args.insert("path".into(), serde_json::json!("notes/api.txt"));
+        args.insert("mode".into(), serde_json::json!("create"));
+        args.insert("content".into(), serde_json::json!("hi"));
+        let error = execute(&ctx, &args).await.unwrap_err().to_string();
+        assert!(error.contains("Markdown"), "got: {error}");
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn rejects_write_through_link_that_escapes_vault() {
+        let vault = tempdir().unwrap();
+        let outside = tempdir().unwrap();
+        let outside_target = outside.path().join("target.md");
+        std::fs::write(&outside_target, "external content").unwrap();
+
+        // Create a symlink inside the vault pointing outside, then a link file
+        // that references it via a `link:` frontmatter.
+        let escape_link = vault.path().join("escape.md");
+        std::os::unix::fs::symlink(&outside_target, &escape_link).unwrap();
+        let doc = vault.path().join("doc.md");
+        std::fs::write(&doc, "---\nlink: escape.md\n---\n").unwrap();
+
+        let ctx = make_ctx(vault.path().to_path_buf());
+        let mut args = serde_json::Map::new();
+        args.insert("path".into(), serde_json::json!("doc.md"));
+        args.insert("mode".into(), serde_json::json!("replace"));
+        args.insert("content".into(), serde_json::json!("clobber"));
+        let error = execute(&ctx, &args).await.unwrap_err().to_string();
+        assert!(
+            error.contains("escapes vault") || error.contains("Failed to canonicalize"),
+            "got: {error}"
+        );
+
+        // The outside target must be untouched.
+        let disk = std::fs::read_to_string(&outside_target).unwrap();
+        assert_eq!(disk, "external content");
     }
 }
