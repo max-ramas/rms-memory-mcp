@@ -24,7 +24,8 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - os: ubuntu-latest
+          # Registered self-hosted runner: Linux X64 (same as test.yml / GUI quality).
+          - os: [self-hosted, linux, x64]
             target: x86_64-unknown-linux-gnu
             archive_ext: tar.gz
             use_cross: false
@@ -141,7 +142,7 @@ jobs:
     # Binary release is independent from crates.io publication. A registry
     # verification failure must not hide successfully built release assets.
     needs: build
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, linux, x64]
     permissions:
       contents: write
     steps:
@@ -179,7 +180,7 @@ jobs:
   publish-crates:
     name: Publish to crates.io
     needs: build
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, linux, x64]
     # Tags publish automatically. A manual dispatch must opt in explicitly and
     # name the exact package version it expects to release.
     if: startsWith(github.ref, 'refs/tags/v') || inputs.publish_crates == true
