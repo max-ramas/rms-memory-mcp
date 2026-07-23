@@ -6,6 +6,18 @@ on:
       - 'v*'
   workflow_dispatch:
     inputs:
+      platforms:
+        description: "Which targets to build (saves GH macOS/Windows minutes). Tag pushes always build all."
+        required: false
+        default: all
+        type: choice
+        options:
+          - all
+          - linux-x64
+          - linux-arm
+          - linux
+          - macos
+          - windows
       publish_crates:
         description: Publish the package to crates.io after successful builds
         required: false
@@ -16,41 +28,101 @@ on:
         required: false
         type: string
 
+concurrency:
+  group: release-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
 jobs:
+  plan:
+    name: Plan matrix
+    runs-on: [self-hosted, linux, x64]
+    outputs:
+      include: ${{ steps.select.outputs.include }}
+    steps:
+      - name: Select platforms
+        id: select
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          PLATFORMS: ${{ inputs.platforms || 'all' }}
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json, os
+          all_rows = [
+            {
+              "id": "linux-x64",
+              "os": ["self-hosted", "linux", "x64"],
+              "target": "x86_64-unknown-linux-gnu",
+              "archive_ext": "tar.gz",
+              "use_cross": False,
+              "apt": False,
+              "persist_target": True,
+            },
+            {
+              "id": "linux-arm",
+              "os": "ubuntu-24.04-arm",
+              "target": "aarch64-unknown-linux-gnu",
+              "archive_ext": "tar.gz",
+              "use_cross": False,
+              "apt": True,
+              "persist_target": False,
+            },
+            {
+              "id": "macos",
+              "os": "macos-latest",
+              "target": "aarch64-apple-darwin",
+              "archive_ext": "tar.gz",
+              "use_cross": False,
+              "apt": False,
+              "persist_target": False,
+            },
+            {
+              "id": "windows",
+              "os": "windows-latest",
+              "target": "x86_64-pc-windows-msvc",
+              "archive_ext": "zip",
+              "use_cross": False,
+              "apt": False,
+              "persist_target": False,
+            },
+          ]
+          event = os.environ["EVENT_NAME"]
+          platforms = os.environ.get("PLATFORMS") or "all"
+          if event == "push" or platforms == "all":
+            selected = all_rows
+          elif platforms == "linux":
+            selected = [r for r in all_rows if r["id"].startswith("linux")]
+          else:
+            wanted = {p.strip() for p in platforms.split(",") if p.strip()}
+            selected = [r for r in all_rows if r["id"] in wanted]
+          if not selected:
+            raise SystemExit(f"no platforms matched: {platforms!r}")
+          print("Selected:", ", ".join(r["id"] for r in selected))
+          include = json.dumps(selected)
+          with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as fh:
+              fh.write(f"include={include}\n")
+          PY
+
   build:
     name: Build ${{ matrix.target }}
+    needs: plan
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
-        include:
-          # Registered self-hosted runner: Linux X64 (same as test.yml / GUI quality).
-          # No sudo apt — deps are preinstalled on the host (see rules/ci-self-hosted-tests).
-          - os: [self-hosted, linux, x64]
-            target: x86_64-unknown-linux-gnu
-            archive_ext: tar.gz
-            use_cross: false
-            apt: false
-          - os: ubuntu-24.04-arm
-            target: aarch64-unknown-linux-gnu
-            archive_ext: tar.gz
-            use_cross: false
-            apt: true
-
-          - os: macos-latest
-            target: aarch64-apple-darwin
-            archive_ext: tar.gz
-            use_cross: false
-            apt: false
-          - os: windows-latest
-            target: x86_64-pc-windows-msvc
-            archive_ext: zip
-            use_cross: false
-            apt: false
-
+        include: ${{ fromJson(needs.plan.outputs.include) }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+
+      - name: Persistent cargo target (self-hosted)
+        if: matrix.persist_target == true
+        run: |
+          set -euo pipefail
+          dir="${HOME}/.cache/rms-ci/rms-memory-mcp-release/target"
+          mkdir -p "$dir"
+          echo "CARGO_TARGET_DIR=$dir" >> "$GITHUB_ENV"
+          echo "Using CARGO_TARGET_DIR=$dir"
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
@@ -64,7 +136,6 @@ jobs:
 
       - name: Install System Dependencies (GitHub-hosted Linux)
         # Self-hosted has no passwordless sudo; deps are preinstalled on the host.
-        # Require explicit matrix.apt == true (boolean false must not run apt).
         if: runner.os == 'Linux' && matrix.apt == true
         run: sudo apt-get update && sudo apt-get install -y pkg-config libssl-dev
 
@@ -76,16 +147,24 @@ jobs:
           pkg-config --exists openssl
           echo "openssl $(pkg-config --modversion openssl)"
 
+      - name: Restore Rust registry cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: mcp-release-${{ matrix.target }}
+          cache-targets: false
+
       - name: Install Cross
         if: matrix.use_cross
         run: cargo install cross --git https://github.com/cross-rs/cross
 
       - name: Build Unix / Windows
         run: |
+          set -euo pipefail
+          TD="${CARGO_TARGET_DIR:-target}"
           if [ "${{ runner.os }}" == "macOS" ]; then
             cargo build --release --target ${{ matrix.target }}
-            mkdir -p target/release
-            cp target/${{ matrix.target }}/release/rms-memory target/release/
+            mkdir -p "$TD/release"
+            cp "$TD/${{ matrix.target }}/release/rms-memory" "$TD/release/"
           else
             cargo build --release
           fi
@@ -105,31 +184,31 @@ jobs:
           cargo generate-rpm
         shell: bash
 
-
-
       - name: Strip Binary (Unix)
         if: runner.os != 'Windows'
-        run: strip target/release/rms-memory
-
-
+        run: |
+          set -euo pipefail
+          TD="${CARGO_TARGET_DIR:-target}"
+          strip "$TD/release/rms-memory"
 
       - name: Package (Unix / macOS)
         if: runner.os != 'Windows'
         run: |
+          set -euo pipefail
+          TD="${CARGO_TARGET_DIR:-target}"
           mkdir -p staging
-          cp target/release/rms-memory staging/rms-memory
+          cp "$TD/release/rms-memory" staging/rms-memory
 
-          # Copy deb and rpm to staging if Linux
           if [ "${{ runner.os }}" == "Linux" ]; then
-            cp target/debian/*.deb staging/ || true
-            cp target/generate-rpm/*.rpm staging/ || true
+            cp "$TD/debian"/*.deb staging/ 2>/dev/null || cp target/debian/*.deb staging/ || true
+            cp "$TD/generate-rpm"/*.rpm staging/ 2>/dev/null || cp target/generate-rpm/*.rpm staging/ || true
           fi
 
           cd staging
           tar -czf ../rms-memory-${{ matrix.target }}.${{ matrix.archive_ext }} rms-memory
           if [ "${{ runner.os }}" == "Linux" ]; then
-            mv *.deb ../ || true
-            mv *.rpm ../ || true
+            mv *.deb ../ 2>/dev/null || true
+            mv *.rpm ../ 2>/dev/null || true
           fi
         shell: bash
 

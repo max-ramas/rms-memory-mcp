@@ -13,14 +13,27 @@ on:
 env:
   CARGO_TERM_COLOR: always
 
+# Finishing a warm build beats canceling mid-Lance and paying for a cold rebuild.
+concurrency:
+  group: test-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
 jobs:
   test:
     name: Test Suite
     runs-on: [self-hosted, linux, x64]
-    
+    timeout-minutes: 60
     steps:
     - uses: actions/checkout@v4
-    
+
+    - name: Persistent cargo target (self-hosted)
+      run: |
+        set -euo pipefail
+        dir="${HOME}/.cache/rms-ci/rms-memory-mcp/target"
+        mkdir -p "$dir"
+        echo "CARGO_TARGET_DIR=$dir" >> "$GITHUB_ENV"
+        echo "Using CARGO_TARGET_DIR=$dir"
+
     - name: Cache cargo registry
       uses: actions/cache@v4
       with:
@@ -29,10 +42,9 @@ jobs:
           ~/.cargo/registry/index/
           ~/.cargo/registry/cache/
           ~/.cargo/git/db/
-          target/
-        key: ${{ runner.os }}-cargo-test-${{ hashFiles('**/Cargo.lock') }}
+        key: ${{ runner.os }}-cargo-registry-${{ hashFiles('**/Cargo.lock') }}
         restore-keys: |
-          ${{ runner.os }}-cargo-test-
+          ${{ runner.os }}-cargo-registry-
 
     - name: Install Rust toolchain
       uses: dtolnay/rust-toolchain@stable
