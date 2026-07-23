@@ -57,6 +57,7 @@ You're developing a single project but switching between different agents — Cu
 | 🔒 **Security Hardened** | Panic-free database layer, symlink traversal blocked, JSON-RPC error responses, request size limits. See [SECURITY.md](./SECURITY.md) and [NOTICE](./NOTICE). |
 | 🧠 **Audit Metadata** | Every record auto-receives `last_modified_by`, `timestamp`, `confidence`, `source` — agents can filter by reliability. |
 | 🔀 **Multi-Scope** | `--scope` flag supports arbitrary identifiers beyond filesystem paths (thread IDs, lead IDs, etc.). |
+| 🖥️ **Optional Companion GUI** | Paid Tauri desktop app: visual Markdown/graph editor, Git & Vault sync, Doctor dashboard, AI-assisted organizer/Wiki (BYOK), and cross-tool spend tracking — layered on top of the same vault, never required. See [GUI-README.md](./GUI-README.md). |
 
 ## 📦 Installation
 
@@ -103,11 +104,14 @@ cp target/release/rms-memory ~/.cargo/bin/
 
 ### Optional RMS Memory GUI installers
 
-The companion **RMS Memory GUI** is a paid, optional Tauri desktop control plane.
+The companion **RMS Memory GUI** is a paid, optional Tauri desktop control plane:
+a visual Markdown/graph editor, per-project and Vault-wide Git/GitHub sync, a
+Doctor dashboard with one-click repair, an AI-assisted organizer and Wiki
+generator (bring your own key, proposal-only), and cross-tool spend tracking.
 The MCP server remains fully standalone: it does not require the GUI, an AI provider,
 or a GUI license to index, search, sync or serve MCP clients.
 
-See [GUI-README.md](./GUI-README.md) for the desktop feature boundary, supported
+See [GUI-README.md](./GUI-README.md) for the full feature breakdown, supported
 platforms, installer verification and release-distribution policy.
 
 GUI source is private, but desktop installers are published as binary assets

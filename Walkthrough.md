@@ -2,15 +2,7 @@
 
 Updated: 2026-07-23 · MCP `1.0.6` / GUI `1.0.0`
 
-## Generated Wiki isolation
-
-`src/path_policy.rs` is the single authority for deciding whether a path belongs to the generated Vault Wiki namespace. The policy is relative to the canonical Vault root, case-insensitive for the first `wiki` component, rejects path escape, and therefore covers `.generation`, archives and future Wiki subdirectories without duplicating checks across subsystems. The companion GUI reuses the same library policy for Wiki path checks so AI apply/generation cannot invent a second exclusion rule.
-
-Write isolation matches index isolation for MCP tools: `rms_write` rejects `wiki/**` and non-`.md` paths. Canonical `DocumentService` list/read/write APIs also exclude or reject wiki; Wiki page mutations go through wiki-safe methods that preserve managed regions without injecting memory audit frontmatter. Linked-document `link:` resolution always re-checks that the canonical target stays inside the vault.
-
-Wiki Markdown remains on disk and participates in the user's normal Git/GitHub workflow. It is excluded from Vault discovery, vector/FTS retrieval, Markdown and code watchers, the code corpus, the durable hybrid graph and Wiki context-pack inputs. Incremental/full sync and code reindex remove pre-policy derived data by normalized path, including incident graph edges and overrides, while preserving the source files. Doctor exposes the condition as a separate check so migration is observable instead of silently claiming a clean store. LLM clients, API keys and organizer/Wiki prompts remain exclusively in the GUI — this MCP binary stays AI-free.
-
-RMS Memory is a specialized Model Context Protocol (MCP) server that acts as localized persistent memory for LLM agents. It keeps human-authored knowledge in centralized Markdown Vaults and can optionally maintain a separate derived semantic index for Rust code, solving context fragmentation across multiple IDEs (Cursor, Zed, VS Code, Claude Code, Codex).
+RMS Memory is a specialized Model Context Protocol (MCP) server that acts as localized persistent memory for LLM agents. It keeps human-authored knowledge in centralized Markdown Vaults and can optionally maintain a separate derived semantic index for source code, solving context fragmentation across multiple IDEs (Cursor, Zed, VS Code, Claude Code, Codex).
 
 ## Core Architecture Highlights
 
@@ -38,7 +30,7 @@ RMS Memory is a specialized Model Context Protocol (MCP) server that acts as loc
 - **AST Markdown Chunker:** Raw token truncation destroys structured knowledge. This server uses `pulldown-cmark` to parse the Markdown Abstract Syntax Tree (AST) directly.
 - **Heading-Preservation:** Code blocks, paragraphs, and list elements are recursively accumulated under their direct parent `Heading` to generate perfectly contextualized vector chunks.
 - **Sliding-Window Fallback:** Enforces a strict 1500-character boundary to protect context windows. Monolithic code blocks are split sequentially with an overlapping ~200-character window.
-- **Batched Semantic Indexing:** To prevent Out-Of-Memory (OOM) crashes and CPU starvation on large files, the indexer pipelines all text chunks into strictly controlled batches of eight. This maintains a flat memory footprint and avoids starving concurrent IDE processes.
+- **Batched Semantic Indexing:** To prevent Out-Of-Memory (OOM) crashes and CPU starvation on large files, the indexer pipelines all text chunks into strictly controlled batches (32 for vault/code embeddings in 1.0.6; intra-threads remain 1). This maintains a flat memory footprint and avoids starving concurrent IDE processes.
 
 ### 5. Semantic Code Memory & Relationship Graph (v1.0.5)
 - **Separate corpora:** Markdown and derived source live in independent LanceDB tables. `reindex --vault` (the default), `reindex --code`, and `reindex --all` make the refresh target explicit; code indexing never modifies repository sources.
@@ -141,7 +133,7 @@ source: "SEC filing 10-K, p.42"   # optional citation
 - **Caller Identity:** The MCP `initialize` handler extracts `clientInfo.name` (e.g., "Cursor", "Claude Code", "OpenCode") and stores it as `caller_id` in `AppContext`. Falls back to `"unknown"` if not provided.
 - **Automatic Injection:** `tools/write.rs` applies audit fields automatically — agents don't need to pass `last_modified_by` or `timestamp` explicitly. `confidence` and `source` are written only if the agent provides them.
 - **Backward Compatibility:** Documents without audit fields parse normally — all fields are `Option`, missing values are `None`.
-- **LanceDB Schema Migration:** `Store::open_table()` auto-adds the `confidence` column via `NewColumnTransform::SqlExpressions("CAST(NULL AS FLOAT)")` if missing. FTS index is recreated afterwards. Race-condition safe. Zero-downtime upgrade.
+- **LanceDB Schema Migration:** `Store::open_table()` auto-adds the `confidence` column via `NewColumnTransform::AllNulls(ArrowSchema)` if missing (replacing the earlier `SqlExpressions("CAST(NULL AS FLOAT)")` path). FTS index is recreated afterwards. Race-condition safe. Zero-downtime upgrade.
 - **Confidence-Aware Search:** `rms_search` accepts `min_confidence` (float 0.0–1.0). Filter is `confidence IS NULL OR confidence >= X` — pre-migration records without confidence are always included, never silently excluded.
 - **Two-Level Vaults:** Combine scope + audit for multi-context agents: project-level vault stores high-confidence canon; thread-level vault stores session episodes.
 
@@ -180,10 +172,18 @@ The Wiki Generator assembles deterministic context packs from multiple sources f
 - **RRF Dedup + Semantic Truncation:** Reciprocal Rank Fusion merges multiple queries per section. Stable ID-based dedup removes duplicates. UTF-8 boundary-safe semantic truncation prevents mid-word cuts.
 - **Atomic Output:** Context pack, agent task, sources JSON, diagnostics JSON, and manifest YAML written to `wiki/.generation/` via temp-file + rename.
 - **Reproducible:** `pack_id` computed from schema version, scope, Git revision, and ordered source hashes.
-- **MCP Tool:** `rms_wiki_pack` — agents trigger generation directly from any IDE.
+- **MCP Tool:** `rms_wiki_pack` — agents trigger generation directly from any IDE; manifests must resolve under the vault (no absolute/`..`/symlink escape).
 - **CLI:** `rms-memory wiki generate/init/clean` + `rms-memory wiki generate --stdout`.
 
-### 18. Project Label Provenance (v1.0.6)
+### 18. Generated Wiki isolation (v1.0.6)
+
+`src/path_policy.rs` is the single authority for deciding whether a path belongs to the generated Vault Wiki namespace. The policy is relative to the canonical Vault root, case-insensitive for the first `wiki` component, rejects path escape, and therefore covers `.generation`, archives and future Wiki subdirectories without duplicating checks across subsystems. The companion GUI reuses the same library policy for Wiki path checks so AI apply/generation cannot invent a second exclusion rule.
+
+Write isolation matches index isolation for MCP tools: `rms_write` rejects `wiki/**` and non-`.md` paths. Canonical `DocumentService` list/read/write APIs also exclude or reject wiki; Wiki page mutations go through wiki-safe methods (`read_wiki` / `write_wiki` / `create_wiki` / `delete_wiki`) that preserve managed regions without injecting memory audit frontmatter. Linked-document `link:` resolution always re-checks that the canonical target stays inside the vault (symlink escape rejected).
+
+Wiki Markdown remains on disk and participates in the user's normal Git/GitHub workflow. It is excluded from Vault discovery, vector/FTS retrieval, Markdown and code watchers, the code corpus, the durable hybrid graph and Wiki context-pack inputs. Incremental/full sync and code reindex remove pre-policy derived data by normalized path, including incident graph edges and overrides, while preserving the source files. Doctor exposes **Wiki index isolation** so migration is observable. LLM clients, API keys and organizer/Wiki prompts remain exclusively in the GUI — this MCP binary stays AI-free.
+
+### 19. Project Label Provenance (v1.0.6)
 
 Every document now carries its originating project identity.
 
@@ -196,7 +196,7 @@ Every document now carries its originating project identity.
 - **Global Vault Fallback Removed:** Bad `rootUri` returns error with client/project/vault logging — no more orphaned files in global vault root.
 - **ChatGPT / Codex TOML:** `inject_toml()` patcher for `~/.codex/config.toml` `[mcp_servers]` section.
 
-### 19. Rootless MCP Routing & Deployment Verification (v1.0.6)
+### 20. Rootless MCP Routing & Deployment Verification (v1.0.6)
 
 Antigravity exposed a protocol edge case: a globally configured MCP process may start with `cwd=/` and omit legacy `rootUri`, even though the project already exists in the RMS registry.
 

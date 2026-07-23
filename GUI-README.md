@@ -7,6 +7,24 @@ RMS Memory GUI is the optional commercial desktop application for
 application for macOS, Windows and Linux that provides a local control plane for
 the same vaults and projects served by MCP.
 
+## What it does
+
+| Area | Capability |
+| --- | --- |
+| Dashboard | Project health, document/store status, grouped Doctor findings, one-click repair for missing IDs |
+| Editor | Visual (Milkdown) and Raw (Monaco) Markdown editing, create/rename/delete files and folders, dirty-state protection |
+| Hybrid graph | Full WebGL Markdown + code + semantic graph, independent filters, search and deep zoom, no sampling or node cap |
+| Source control | Per-project Git status/diff/history plus a separate global Vault Git/GitHub sync (safe commit → pull → push) |
+| Doctor & Setup | Init, MCP client installation, indexing, sync, GC, doctor and Wiki generation from one screen |
+| AI & Wiki (optional) | Bring-your-own-key organizer across 12 providers; proposal-only workflow — every change is reviewed with sources and a before/after diff before it touches the vault |
+| Spend | Local token/cost ledger across your AI coding tools, with optional cloud sync |
+| Other | Backup history with restore, `llms.txt`/Graphviz export, live log viewer, light/dark themes, 7 UI languages |
+
+AI, Spend cloud sync and Vault GitHub sync are the only features gated behind
+the GUI's own license after the trial period — everything above still starts
+from the same Markdown vault and index the MCP server produces, so nothing in
+this table implies a change to the MCP server itself.
+
 ## What remains independent
 
 The public `rms-memory-mcp` repository and its CLI/MCP binary work without the

@@ -2,105 +2,66 @@
 
 All notable changes to this project will be documented in this file.
 
-## [Unreleased] - 2026-07-23
+## [1.0.6] - 2026-07-23
 
-### Docs
-- `GUI-README.md` / `README.md`: macOS notarization deferred (no Apple Developer account yet); document unsigned/manual distribution and Gatekeeper workaround. Companion GUI has `RMS_LICENSE_PUBLIC_KEY` + `RMS_MEMORY_MCP_TOKEN` configured in its repo secrets.
-
-## [Unreleased] - 2026-07-22
-
-### Added
-- Path-scoped code watcher reindex (`try_index_code_paths`): dirty-path set from notify events; segment + graph patch without full generation prune; full-walk fallback when cold / empty / >200 paths / channel overflow.
-- `Store::upsert_derived_graph_patch` for incremental graph upserts.
-- `SECURITY.md`, `NOTICE`, and `scripts/bench_large_vault.sh` large-fixture perf smoke.
-
-### Fixed
-- Clippy `collapsible_if` in `project_migrate.rs` rollback path.
-
-### Verification
-- `cargo test --lib`: 122 passed (incl. `path_scoped_*`).
-- `cargo clippy -- -D warnings`: clean.
-
-## [Unreleased] - 2026-07-20
-
-### Security
-- Vault-aware `link:` resolution: after resolving frontmatter links, paths must canonicalize inside the vault; symlink targets outside the vault are rejected on read and write.
-- MCP `rms_write` requires `.md` and rejects writes into the generated `wiki/**` namespace (write isolation, not only index isolation).
-- `rms_wiki_pack` manifests must resolve under the vault (no absolute escape, `..`, or symlink escape).
-
-### Added
-- DocumentService wiki-safe channel (`read_wiki` / `write_wiki` / `create_wiki` / `delete_wiki`): containment + ETag without audit-frontmatter injection for managed Wiki pages.
-- Canonical DocumentService list/read/write/create/rename/delete exclude or reject `wiki/**` via `path_policy`.
-
-### Changed
-- Embedding batch size raised 8→32 for vault and code indexing (intra-threads remain 1).
-- Semantic graph embeds selected node queries in one batch instead of one ONNX call per node.
-
-### Verification
-- `cargo test --lib`: 114 passed (containment, wiki-safe writers, path_policy, semantic batch embed).
-- Embedding batch size 32; semantic graph one-shot embed for selected nodes.
-
-## [Unreleased] - 2026-07-19
-
-### Added
-- A centralized, case-insensitive Vault path policy (`src/path_policy.rs`) for the generated `wiki/**` namespace, shared with the companion GUI for consistent Wiki path checks.
-- Doctor check **Wiki index isolation**, including remediation guidance.
-- Regression coverage proving Wiki files remain on disk while legacy Vault chunks, code records, graph nodes, incident edges and overrides are removed.
-
-### Changed
-- Vault Markdown discovery, incremental/full indexing, Markdown/code watchers, code walking, federated search, graph reconciliation and Wiki context-pack input now exclude `<vault>/wiki/**` consistently.
-- The code walker applies the exclusion only when `wiki/` belongs to the active Vault; an unrelated source-code directory named `wiki` under a separate project root remains indexable.
-- Legacy Wiki-derived records are purged by normalized path during sync/reindex, including records that share an erroneous duplicate frontmatter ID.
-- MCP remains AI-free: organizer/Wiki LLM orchestration lives only in the GUI; this crate supplies deterministic isolation and context-pack data.
-
-### Verification
-- `cargo check --all-targets` passes.
-- Complete Rust suite passes: 93 library tests plus main/doc targets.
-- `git diff --check` passes.
-
-## [1.0.6] - 2026-07-13
+Line closed 2026-07-23. Includes everything shipped after **1.0.5** (wiki generator through path-scoped watcher, write isolation, and docs).
 
 ### Added
 - **Reliable MCP project routing:** clients that omit legacy `rootUri` are resolved through MCP `roots/list`; every vault/code tool also accepts an explicit short `project` key, and the unbound `rms_projects` tool lists valid keys.
 - **Safe registry removal:** `rms-memory projects remove <key>` removes an erroneous project mapping without implicitly deleting its vault files.
 - **Transport-neutral project lifecycle API:** `ProjectService` keeps unregister and permanent data deletion as separate operations. Destructive deletion requires the exact project key, is restricted to a dedicated child of the configured master vault, removes only the vault and derived index, and never touches source code.
 - **Companion GUI lifecycle controls:** project settings expose separate unregister and permanent-delete actions, exact-key confirmation, an unsaved-settings guard, non-blocking Tauri execution, and safe scope refresh after removal.
-- **Navigable code structure graph:** every code reindex derives a deterministic `project → folder → file → symbol` hierarchy using resolved `contains` edges under the versioned `code-structure-v1` extractor. This gives GUI/graph clients a useful baseline even when language-specific call hints remain unresolved.
-- **Wiki Context Pack Generator (`rms-memory wiki`):** New core service that assembles verified context packs from vault documents, code index, project files, and CLI help output. Produces deterministic `context-pack.md` + `agent-task.md` for LLM agents to create human-readable wiki documentation. Supports custom YAML manifests with budget controls, RRF dedup, and semantic truncation.
-- **`rms_wiki_pack` MCP tool:** JSON-RPC wrapper over `WikiService::generate()`. Agents can trigger wiki generation directly from any MCP-compatible IDE.
-- **`RetrievalService`:** Public facade over `Store` — decouples wiki generation and future consumers from the database layer. Used by both MCP tools and `WikiService`.
-- **`rms-memory projects`:** CLI commands `list` and `locate --vault/--project` for diagnostic project registry inspection.
-- **Project Label Provenance:** `project: <key>` field in YAML frontmatter — set automatically on first write from registry key, preserved on updates, rejected on conflict. Custom user YAML keys preserved via `serde_yaml::Mapping` (no data loss on `replace`).
-- **Codex / ChatGPT IDE support:** TOML-aware installer patcher (`inject_toml`) for `~/.codex/config.toml` with `[mcp_servers]` section.
+- **Navigable code structure graph:** every code reindex derives a deterministic `project → folder → file → symbol` hierarchy using resolved `contains` edges under the versioned `code-structure-v1` extractor.
+- **Wiki Context Pack Generator (`rms-memory wiki`):** assembles verified context packs from vault documents, code index, project files, and CLI help. Produces deterministic `context-pack.md` + `agent-task.md`. Supports custom YAML manifests with budget controls, RRF dedup, and semantic truncation.
+- **`rms_wiki_pack` MCP tool:** JSON-RPC wrapper over `WikiService::generate()`.
+- **`RetrievalService`:** public facade over `Store` — used by MCP tools and `WikiService`.
+- **`rms-memory projects`:** CLI `list` / `locate --vault/--project` for registry diagnostics.
+- **Project Label Provenance:** `project: <key>` in YAML frontmatter — set on first write, preserved on updates, rejected on conflict. Custom keys preserved via `serde_yaml::Mapping`.
+- **Codex / ChatGPT IDE support:** TOML-aware installer patcher (`inject_toml`) for `~/.codex/config.toml` `[mcp_servers]`.
+- **Centralized Wiki path policy** (`src/path_policy.rs`): case-insensitive `<vault>/wiki/**` exclusion shared with the companion GUI; Doctor check **Wiki index isolation**.
+- **DocumentService wiki-safe channel** (`read_wiki` / `write_wiki` / `create_wiki` / `delete_wiki`): containment + ETag without audit-frontmatter injection for managed Wiki pages.
+- **Path-scoped code watcher reindex** (`try_index_code_paths`): dirty-path set from notify events; segment + graph patch without full generation prune; full-walk fallback when cold / empty / >200 paths / channel overflow.
+- **`Store::upsert_derived_graph_patch`** for incremental graph upserts.
+- **`SECURITY.md`**, **`NOTICE`**, and **`scripts/bench_large_vault.sh`** large-fixture perf smoke.
 
 ### Security
-- **Path traversal hardening (wiki):** `resolve_files` now canonicalizes paths, validates workspace containment, and hard-excludes `.env*`, `*secret*`, `*.pem`, `*.key`.
-- **Global vault fallback removed:** Bad or missing `rootUri` no longer falls back to global vault path — returns error with diagnostic logging (client, rootUri, project key).
-- **Panic-free write tool:** `inject_audit_metadata` returns `Result` — project conflict is a recoverable error, not silent data corruption.
+- **Path traversal hardening (wiki):** `resolve_files` canonicalizes paths, validates workspace containment, and hard-excludes `.env*`, `*secret*`, `*.pem`, `*.key`.
+- **Global vault fallback removed:** bad or missing `rootUri` returns an error with diagnostic logging.
+- **Panic-free write tool:** `inject_audit_metadata` returns `Result` — project conflict is recoverable.
+- **Vault-aware `link:` resolution:** after resolving frontmatter links, paths must canonicalize inside the vault; symlink targets outside the vault are rejected on read and write.
+- **Wiki write isolation:** `rms_write` requires `.md` and rejects `wiki/**`; canonical DocumentService list/read/write/create/rename/delete exclude or reject `wiki/**` via `path_policy`.
+- **`rms_wiki_pack` manifests** must resolve under the vault (no absolute escape, `..`, or symlink escape).
 
 ### Fixed
-- **Antigravity workspace initialization:** globally launched MCP processes no longer depend on process CWD (`/`). Injected agent rules carry the repository's concrete registry key as a fail-closed fallback.
-- **Plain Markdown frontmatter repair:** `doctor --repair-frontmatter` now backs up legacy Markdown files that have no YAML block, adds one stable UUID, and preserves the complete original body.
-- **Thread pool reduction:** ONNX `with_intra_threads(1)` + tokio `worker_threads=2`. Runtime verified: load avg 648 → 8.31, CPU 380% → 0%.
-- **Fast-path skip fix:** `get_file_timestamps()` returns `(doc_id, timestamp)` — no more silent vector deletion for unchanged files.
-- **Single `Arc<Mutex<Indexer>>`:** Shared between search handler and background sync — eliminates N model reloads per process.
+- **Antigravity workspace initialization:** globally launched MCP processes no longer depend on process CWD (`/`). Injected agent rules carry the repository's concrete registry key.
+- **Plain Markdown frontmatter repair:** `doctor --repair-frontmatter` backs up legacy Markdown without YAML, adds one stable UUID, preserves the body.
+- **Thread pool reduction:** ONNX `with_intra_threads(1)` + tokio `worker_threads=2`.
+- **Fast-path skip fix:** `get_file_timestamps()` returns `(doc_id, timestamp)`.
+- **Single `Arc<Mutex<Indexer>>`:** shared between search handler and background sync.
 - **`--refresh-code` works:** `WikiGenerateRequest.refresh_code` triggers `code_indexer::index_code_full()`.
-- **Per-command `self_cli_help`:** Uses `find_subcommand().render_help()` instead of identical root help for all.
+- **Per-command `self_cli_help`:** uses `find_subcommand().render_help()`.
+- Clippy `collapsible_if` in `project_migrate.rs` rollback path.
 
 ### Changed
-- **Fail-closed resolution order:** MCP connections resolve explicit scope or legacy `rootUri`, then negotiated `roots/list`, then an explicit tool-level `project` key. Process CWD is considered only for clients without Roots support and is never accepted when it is `/`; an established connection cannot silently switch projects.
-- **Project-aware agent rules:** injected Cursor, Claude, Zed, Gemini, and general rules include the concrete registry key and instruct rootless clients to pass it to memory tools.
-- **`inject_audit_metadata` rewritten:** Uses `serde_yaml::Mapping` instead of typed `Frontmatter` struct — preserves all custom user YAML keys.
-- **`WikiService` uses `RetrievalService`** instead of direct `Store` calls — clean separation for GUI.
-- **`ignore::WalkBuilder` in `resolve_files`:** Replaced `glob::glob` with `ignore::WalkBuilder(.git_ignore(true), .parents(true))` for proper nested `.gitignore` support.
-- **`pack_id` includes Git revision:** `git rev-parse HEAD` added to hash for reproducible builds.
-- **CLI commands unified:** `rms-memory projects`, `rms-memory wiki` added alongside existing commands.
-- **Graph Store Query API:** Added `Store::query_graph_nodes()`, `Store::query_graph_edges()` public methods. Added `from_string()`/`into_string()` on `GraphNodeKey`, `into_string()` on `EdgeRelation`.
+- **Fail-closed resolution order:** explicit scope / legacy `rootUri` → negotiated `roots/list` → tool-level `project` key. Process CWD only for clients without Roots and never when it is `/`.
+- **Project-aware agent rules:** injected Cursor, Claude, Zed, Gemini, and general rules include the concrete registry key.
+- **`inject_audit_metadata` rewritten:** `serde_yaml::Mapping` preserves custom user YAML keys.
+- **`WikiService` uses `RetrievalService`** instead of direct `Store` calls.
+- **`ignore::WalkBuilder` in `resolve_files`:** nested `.gitignore` support.
+- **`pack_id` includes Git revision** for reproducible builds.
+- **CLI commands unified:** `rms-memory projects`, `rms-memory wiki`.
+- **Graph Store Query API:** `Store::query_graph_nodes()` / `query_graph_edges()`; `from_string()` / `into_string()` on graph keys.
+- Vault Markdown discovery, incremental/full indexing, Markdown/code watchers, code walking, federated search, graph reconciliation and Wiki context-pack input exclude `<vault>/wiki/**` consistently.
+- Legacy Wiki-derived records are purged by normalized path during sync/reindex while files stay on disk.
+- MCP remains AI-free: organizer/Wiki LLM orchestration lives only in the GUI.
+- Embedding batch size raised 8→32 for vault and code indexing (intra-threads remain 1).
+- Semantic graph embeds selected node queries in one batch instead of one ONNX call per node.
+- Docs: unsigned/manual macOS GUI distribution and Gatekeeper workaround documented until Apple notarization; companion GUI secrets `RMS_LICENSE_PUBLIC_KEY` + `RMS_MEMORY_MCP_TOKEN` noted.
 
 ### Verification
-- **Installed-binary routing gate:** a clean `build.sh` release build was copied to `/usr/local/bin/rms-memory` and ad-hoc signed. A live JSON-RPC session launched with `cwd=/` confirmed that the installed binary exposes `project` plus `rms_projects`, and successfully wrote an architecture record to the `rms-threads-assistant` vault.
-- **Regression suite:** 87 library tests and `cargo clippy --all-targets -- -D warnings` pass, including project unregister/deletion safety coverage.
-- **Companion GUI gate:** TypeScript, production Vite build, bundle budget, strict Rust Clippy, and React Doctor 100/100 all pass for the lifecycle UI.
+- Installed-binary routing gate from `cwd=/` with short project key.
+- `cargo test --lib`: 122 passed (incl. `path_scoped_*`, wiki isolation, containment).
+- `cargo clippy --all-targets -- -D warnings`: clean.
 
 ## [1.0.5] - 2026-07-13
 

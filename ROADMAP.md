@@ -68,9 +68,9 @@ This document outlines the strategic direction and upcoming milestones for RMS M
 - [x] Independent Rust and mixed Rust/Tauri dogfood: `rms-threads-assistant` (19 files / 101 items / 133 reused segments) and `rms-monitoring` (114 / 846 / 976 reused) completed on the final binary.
 - [ ] Optional scale-up: a separate larger Rust workspace remains unavailable locally. One unrelated invalid-YAML vault record remains intentionally manual-only.
 
-## v1.0.6 — Wiki Generator + Project Provenance (Released 2026-07-13; current line as of 2026-07-23)
+## v1.0.6 — Wiki Generator + Project Provenance + Isolation + Path-Scoped Watch (Released / line closed 2026-07-23)
 
-**Goal:** Deterministic context pack assembly, project identity tracking, and ChatGPT/Codex integration.
+**Goal:** Deterministic context pack assembly, project identity tracking, ChatGPT/Codex integration, Wiki write/index isolation, and incremental code watcher reindex.
 
 - [x] Wiki Context Pack Generator: `rms-memory wiki generate` with YAML manifests, budget controls.
 - [x] `rms_wiki_pack` MCP tool — agents trigger wiki generation from any IDE.
@@ -89,7 +89,10 @@ This document outlines the strategic direction and upcoming milestones for RMS M
 - [x] `ignore::WalkBuilder` for wiki file walking (nested `.gitignore`).
 - [x] `pack_id` with Git revision for reproducible builds.
 - [x] Security: wiki path containment, symlink validation, secrets exclusion.
-- [x] Final lifecycle verification: 87 core tests, strict core/GUI Clippy, production GUI build and bundle budget, React Doctor 100/100.
+- [x] Final lifecycle verification: core tests, strict core Clippy, companion GUI build gates.
+- [x] Wiki path policy + write isolation (`path_policy`, wiki-safe DocumentService, Doctor Wiki isolation).
+- [x] Path-scoped code watcher reindex (`try_index_code_paths`) and `upsert_derived_graph_patch`.
+- [x] Vault-aware `link:` containment; `rms_wiki_pack` manifest jail.
 
 ## v1.1 — Workspace Split & Ecosystem (Next)
 
@@ -105,9 +108,9 @@ This enables downstream consumers to use just `rms-memory-index` without the MCP
 
 The companion GUI already consumes the core library through human-oriented Tauri commands for graph, configuration, jobs, and project lifecycle operations. MCP remains the IDE/agent protocol; v1.1 focuses on extracting stable crate boundaries rather than inventing a second application core.
 
-**Not a v1.0.x release blocker.** Ship 1.0.x with path-scoped code watch, graph layout worker, and GUI entitlement guards first.
+**Not a v1.0.x release blocker.** Path-scoped code watch, graph layout worker (GUI), and GUI entitlement guards are already landed in the 1.0.6 / GUI 1.0.0 line.
 
-## Multilanguage Code Memory — 1.0.5 extension in progress
+## Multilanguage Code Memory — 1.0.5 extension (complete)
 
 - [x] Language-neutral registry/dispatcher with project-scoped `code_languages`, preserving Rust item IDs and extractor identity.
 - [x] Go adapter and real-project dogfood on the user's heavy Go/Next projects.
