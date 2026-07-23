@@ -1,0 +1,16 @@
+# NOTICE
+
+RMS Memory (`rms-memory-mcp`)  
+Copyright (c) 2026 Max Ramas / RMS
+
+Licensed under the MIT License. See `LICENSE`.
+
+This product includes third-party open source software. Notable runtime dependencies include (non-exhaustive):
+
+- LanceDB / Apache Arrow / Apache Lance — Apache-2.0
+- Tantivy — MIT
+- fastembed / ONNX Runtime — Apache-2.0 / MIT (as applicable)
+- Tree-sitter and language grammars — MIT
+- Tokio, Serde, Clap, and other Rust crates — MIT / Apache-2.0
+
+Full license texts for crates are available via `cargo license` / crates.io for each dependency version pinned in `Cargo.lock`.

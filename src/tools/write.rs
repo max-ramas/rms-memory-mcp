@@ -156,8 +156,7 @@ pub async fn execute(
     // resolved path (after any symlinks) is still inside the vault, and is
     // still outside the Wiki namespace.
     let file_path = if initial_file_path.exists() {
-        let resolved =
-            crate::link::resolve_link_in_vault(&initial_file_path, workspace_root)?;
+        let resolved = crate::link::resolve_link_in_vault(&initial_file_path, workspace_root)?;
         if crate::path_policy::is_vault_wiki_path(workspace_root, &resolved) {
             return Err(anyhow::anyhow!(
                 "Resolved link target '{}' is inside the generated Wiki namespace and cannot be written through the canonical memory tools.",

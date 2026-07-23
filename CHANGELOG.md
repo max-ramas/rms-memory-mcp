@@ -2,6 +2,25 @@
 
 All notable changes to this project will be documented in this file.
 
+## [Unreleased] - 2026-07-23
+
+### Docs
+- `GUI-README.md` / `README.md`: macOS notarization deferred (no Apple Developer account yet); document unsigned/manual distribution and Gatekeeper workaround. Companion GUI has `RMS_LICENSE_PUBLIC_KEY` + `RMS_MEMORY_MCP_TOKEN` configured in its repo secrets.
+
+## [Unreleased] - 2026-07-22
+
+### Added
+- Path-scoped code watcher reindex (`try_index_code_paths`): dirty-path set from notify events; segment + graph patch without full generation prune; full-walk fallback when cold / empty / >200 paths / channel overflow.
+- `Store::upsert_derived_graph_patch` for incremental graph upserts.
+- `SECURITY.md`, `NOTICE`, and `scripts/bench_large_vault.sh` large-fixture perf smoke.
+
+### Fixed
+- Clippy `collapsible_if` in `project_migrate.rs` rollback path.
+
+### Verification
+- `cargo test --lib`: 122 passed (incl. `path_scoped_*`).
+- `cargo clippy -- -D warnings`: clean.
+
 ## [Unreleased] - 2026-07-20
 
 ### Security

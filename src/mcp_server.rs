@@ -66,17 +66,14 @@ fn resolve_manifest_path(
     } else {
         for component in candidate_path.components() {
             if component == std::path::Component::ParentDir {
-                anyhow::bail!(
-                    "Wiki manifest path must not contain '..': {}",
-                    manifest_arg
-                );
+                anyhow::bail!("Wiki manifest path must not contain '..': {}", manifest_arg);
             }
         }
         workspace_root.join(candidate_path)
     };
 
-    let canonical_root = std::fs::canonicalize(workspace_root)
-        .unwrap_or_else(|_| workspace_root.to_path_buf());
+    let canonical_root =
+        std::fs::canonicalize(workspace_root).unwrap_or_else(|_| workspace_root.to_path_buf());
     let canonical = std::fs::canonicalize(&candidate).map_err(|error| {
         anyhow::anyhow!(
             "Wiki manifest not found at {}: {error}",
@@ -230,7 +227,10 @@ fn spawn_code_watcher(
     mut shutdown_rx: tokio::sync::watch::Receiver<bool>,
 ) {
     tokio::spawn(async move {
-        let (tx, mut rx) = tokio::sync::mpsc::channel::<std::time::SystemTime>(100);
+        let (tx, mut rx) =
+            tokio::sync::mpsc::channel::<(std::path::PathBuf, std::time::SystemTime)>(100);
+        let force_full = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let force_full_flag = force_full.clone();
         let watched_languages = workspace.code_languages.clone();
         let watched_vault_root = workspace.root.clone();
         let mut watcher = match notify::RecommendedWatcher::new(
@@ -242,11 +242,19 @@ fn spawn_code_watcher(
                             | notify::EventKind::Create(_)
                             | notify::EventKind::Remove(_)
                     )
-                    && event.paths.iter().any(|path| {
-                        is_watched_code_path(&watched_vault_root, path, &watched_languages)
-                    })
                 {
-                    let _ = tx.try_send(std::time::SystemTime::now());
+                    let observed = std::time::SystemTime::now();
+                    for path in event.paths {
+                        if !is_watched_code_path(&watched_vault_root, &path, &watched_languages) {
+                            continue;
+                        }
+                        if tx.try_send((path, observed)).is_err() {
+                            // Channel saturated: fall back to a full walk on the
+                            // next debounce. Best-effort wake with an empty path.
+                            force_full_flag.store(true, std::sync::atomic::Ordering::Relaxed);
+                            let _ = tx.try_send((std::path::PathBuf::new(), observed));
+                        }
+                    }
                 }
             },
             notify::Config::default(),
@@ -263,6 +271,7 @@ fn spawn_code_watcher(
             return;
         }
 
+        let mut dirty_paths = std::collections::HashSet::<std::path::PathBuf>::new();
         let mut dirty_since = if crate::code_indexer::code_index_is_initialized(&store.storage_path)
         {
             None
@@ -279,7 +288,10 @@ fn spawn_code_watcher(
             tokio::select! {
                 _ = shutdown_rx.changed() => break,
                 observed = rx.recv() => {
-                    let Some(observed) = observed else { break; };
+                    let Some((path, observed)) = observed else { break; };
+                    if !path.as_os_str().is_empty() {
+                        dirty_paths.insert(path);
+                    }
                     dirty_since = Some(dirty_since.map_or(observed, |current| current.min(observed)));
                     debounce.as_mut().reset(tokio::time::Instant::now() + tokio::time::Duration::from_secs(3));
                 }
@@ -290,12 +302,33 @@ fn spawn_code_watcher(
                     };
                     if crate::code_indexer::code_index_is_fresh_since(&store.storage_path, observed) {
                         dirty_since = None;
+                        dirty_paths.clear();
+                        force_full.store(false, std::sync::atomic::Ordering::Relaxed);
                         continue;
                     }
                     let mut indexer = indexer.lock().await;
-                    match crate::code_indexer::try_index_code(&workspace, &store, &mut indexer).await {
+                    let overflow = force_full.swap(false, std::sync::atomic::Ordering::Relaxed);
+                    let paths = dirty_paths.drain().collect::<Vec<_>>();
+                    let result = if overflow {
+                        crate::code_indexer::try_index_code(&workspace, &store, &mut indexer).await
+                    } else {
+                        crate::code_indexer::try_index_code_paths(
+                            &workspace,
+                            &store,
+                            &mut indexer,
+                            &paths,
+                        )
+                        .await
+                    };
+                    match result {
                         Ok(crate::code_indexer::CodeIndexStatus::Completed) => dirty_since = None,
                         Ok(crate::code_indexer::CodeIndexStatus::Busy) => {
+                            for path in paths {
+                                dirty_paths.insert(path);
+                            }
+                            if overflow {
+                                force_full.store(true, std::sync::atomic::Ordering::Relaxed);
+                            }
                             debounce.as_mut().reset(tokio::time::Instant::now() + tokio::time::Duration::from_secs(3));
                         }
                         Err(error) => {
@@ -541,8 +574,10 @@ impl McpServer {
         })?;
         let registry = crate::workspace::Registry::load()?;
         if let Some(config) = registry.locate_by_project(requested) {
-            let workspace =
-                crate::workspace::Workspace::discover(std::path::Path::new(&config.code_path), None)?;
+            let workspace = crate::workspace::Workspace::discover(
+                std::path::Path::new(&config.code_path),
+                None,
+            )?;
             return self.bind_workspace(workspace).await;
         }
         if let Some(message) = registry.migration_redirect_message(requested) {
@@ -849,7 +884,11 @@ mod tests {
     #[test]
     fn resolve_manifest_path_accepts_vault_relative() {
         let dir = tempdir().unwrap();
-        std::fs::write(dir.path().join("m.yaml"), "schema_version: 1\nsections: []\n").unwrap();
+        std::fs::write(
+            dir.path().join("m.yaml"),
+            "schema_version: 1\nsections: []\n",
+        )
+        .unwrap();
         let resolved = super::resolve_manifest_path(dir.path(), "m.yaml").unwrap();
         assert!(resolved.starts_with(std::fs::canonicalize(dir.path()).unwrap()));
     }

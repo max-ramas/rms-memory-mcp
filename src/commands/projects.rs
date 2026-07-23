@@ -87,11 +87,7 @@ fn migrate(args: &MigrateArgs) -> Result<()> {
         update_project_stamps: true,
         strict_git: args.strict_git,
     };
-    let outcome = service.migrate(
-        &args.project,
-        std::path::Path::new(&args.to),
-        options,
-    )?;
+    let outcome = service.migrate(&args.project, std::path::Path::new(&args.to), options)?;
     print_outcome(&outcome, args.dry_run);
     Ok(())
 }
@@ -130,7 +126,10 @@ fn print_outcome(outcome: &ProjectMigrateOutcome, dry_run: bool) {
         println!("Index directory moved.");
     }
     if outcome.redirect_created {
-        println!("Migration redirect created for legacy key '{}'.", outcome.old_key);
+        println!(
+            "Migration redirect created for legacy key '{}'.",
+            outcome.old_key
+        );
     }
     if !outcome.warnings.is_empty() {
         println!("Warnings:");

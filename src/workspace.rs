@@ -438,7 +438,8 @@ impl Registry {
     }
 
     pub fn resolve_project_key(&self, key: &str) -> Option<&str> {
-        self.locate_by_project_key(key).map(|(resolved, _)| resolved)
+        self.locate_by_project_key(key)
+            .map(|(resolved, _)| resolved)
     }
 
     pub fn migration_redirect_message(&self, requested: &str) -> Option<String> {

@@ -43,7 +43,7 @@ You're developing a single project but switching between different agents — Cu
 | 🔍 **Hybrid Retrieval (LanceDB)** | Embedded Vector Search + Tantivy Full-Text Search for zero-fail context hits. |
 | 🌐 **Multilingual Semantic Parsing** | `fastembed-rs` + `multilingual-e5-small` — native Russian & English understanding. |
 | 🌳 **AST Markdown Chunker** | `pulldown-cmark`-based chunking keeps code blocks and lists bound to their parent heading. |
-| 🧩 **Semantic Code Memory** | Optional Tree-sitter indexing for Rust, Go, JS/JSX, TS/TSX, Python, C/C++, Java, Ruby, Swift, and Vue `<script>` blocks; stable segment identities and repeated preambles preserve context when large implementations split. |
+| 🧩 **Semantic Code Memory** | Optional Tree-sitter indexing for Rust, Go, JS/JSX, TS/TSX, Python, C/C++, Java, Ruby, Swift, and Vue `<script>` blocks; stable segment identities and repeated preambles preserve context when large implementations split. Opt-in `watch` mode reindexes **only dirty paths** (with full-walk fallback). |
 | 🕸️ **Knowledge Graph Foundation** | Derived Markdown/code relationships and durable user overrides are stored separately from retrieval chunks and consumed by the companion GUI graph. |
 | 🧹 **Safe Project Lifecycle** | Unregistering preserves vault/index data; permanent GUI deletion requires the exact project key, is confined to the master vault, and never touches source code. |
 | 🔀 **Federated Corpus Search** | Search `vault`, `code`, or `all`; mixed results use Reciprocal Rank Fusion rather than incompatible raw vector distances. |
@@ -52,7 +52,7 @@ You're developing a single project but switching between different agents — Cu
 | 🧪 **Durable Vault Writes** | `rms_write` creates rolling `.bak` backups and atomically replaces `create`/`replace` targets after fsync, so interrupted writes never expose a truncated Markdown file. |
 | 📚 **Canonical Wiki Isolation** | Generated `<vault>/wiki/**` stay Git-synchronized but are excluded from indexes/search/watchers/graph/packs; MCP write and canonical DocumentService also reject wiki paths (wiki-safe writers only). |
 | 🛡️ **Ten-Point Resiliency** | GC, background sync, write-guard snapshots, macOS sandbox bypass, `llms.txt` export, path traversal + injection protection, zombie prevention, graceful shutdown. |
-| 🔒 **Security Hardened** | Panic-free database layer, symlink traversal blocked, JSON-RPC error responses, request size limits. 3-agent audit completed with 14 critical/high bugs resolved. |
+| 🔒 **Security Hardened** | Panic-free database layer, symlink traversal blocked, JSON-RPC error responses, request size limits. See [SECURITY.md](./SECURITY.md) and [NOTICE](./NOTICE). |
 | 🧠 **Audit Metadata** | Every record auto-receives `last_modified_by`, `timestamp`, `confidence`, `source` — agents can filter by reliability. |
 | 🔀 **Multi-Scope** | `--scope` flag supports arbitrary identifiers beyond filesystem paths (thread IDs, lead IDs, etc.). |
 
@@ -98,6 +98,26 @@ cp target/release/rms-memory ~/.cargo/bin/
 > [release](https://github.com/max-ramas/rms-memory-mcp/releases), along with
 > `.deb`/`.rpm` packages for Linux. One-line installers (`install.sh` / `install.ps1`)
 > auto-detect your architecture.
+
+### Optional RMS Memory GUI installers
+
+The companion **RMS Memory GUI** is a paid, optional Tauri desktop control plane.
+The MCP server remains fully standalone: it does not require the GUI, an AI provider,
+or a GUI license to index, search, sync or serve MCP clients.
+
+See [GUI-README.md](./GUI-README.md) for the desktop feature boundary, supported
+platforms, installer verification and release-distribution policy.
+
+GUI source is private, but desktop installers are published as binary assets
+on this repository's [GitHub Releases](https://github.com/max-ramas/rms-memory-mcp/releases)
+under the matching `v<version>` tag. Until Apple/Windows signing certificates
+exist, macOS builds may be unsigned — see [GUI-README.md](./GUI-README.md) for
+Gatekeeper notes. The private GUI workflow transfers only the completed
+`.dmg`, `.msi`/`.exe`, `.AppImage`, `.deb`, and `.rpm` installer files (plus
+`SHA256SUMS.txt` when present); it never mirrors GUI source, build logs,
+updater metadata, credentials, or other release archives. The same publication
+flow runs for a `v*` GUI tag and for a manually dispatched, version-validated
+GUI release.
 
 ## 🚀 Quick Start
 
@@ -173,7 +193,9 @@ rms-memory reindex --code  # build/update only derived code memory
 rms-memory reindex --all   # refresh Markdown vault + code memory
 ```
 
-Registered projects support `code_index_mode = "off" | "manual" | "watch"`; the default is `off`. Set it from the project root with `rms-memory config --code-index-mode watch` (or add `--scope <project-path>`). `watch` is explicitly opt-in, coalesces supported source saves for three seconds, and coordinates concurrent IDE processes so an unchanged workspace stays idle. Code search results include their source language.
+Registered projects support `code_index_mode = "off" | "manual" | "watch"`; the default is `off`. Set it from the project root with `rms-memory config --code-index-mode watch` (or add `--scope <project-path>`). `watch` is explicitly opt-in, coalesces supported source saves for three seconds, and **reindexes only the dirty paths** (`try_index_code_paths`) with a full-walk fallback when the index is cold, the dirty set is empty/oversized (>200), or the watcher channel overflows. Concurrent IDE processes share a completion marker so an unchanged workspace stays idle. Code search results include their source language.
+
+Perf smoke for large fixtures: `./scripts/bench_large_vault.sh [notes] [code_files]`.
 
 Language selection is project-scoped and defaults to every bundled adapter:
 
@@ -308,7 +330,7 @@ Graph nodes and edges are deliberately independent of retrieval chunk boundaries
 4. macOS sandbox bypass for `fastembed` model downloads
 5. `rms-memory gc` — orphaned vector store pruning
 6. PID-aware per-project writer lock and read-only background synchronization across IDE processes
-7. Markdown watcher plus an explicitly opt-in, 3s-debounced Rust code watcher with shared-generation suppression
+7. Markdown watcher plus an explicitly opt-in, 3s-debounced code watcher with **path-scoped** reindex and shared-generation suppression
 8. Write-guard snapshotting with rolling `.bak` backups (default: 5)
 9. Isolated telemetry logging (`~/.rms-memory/rms.log`)
 10. `llms.txt` export for flat, decoupled LLM ingestion

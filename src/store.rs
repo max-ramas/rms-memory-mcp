@@ -325,6 +325,7 @@ impl Store {
             .query()
             .select(lancedb::query::Select::Columns(vec![
                 "id".to_string(),
+                "file_path".to_string(),
                 "content_hash".to_string(),
                 "vector".to_string(),
             ]))
@@ -337,6 +338,10 @@ impl Store {
                 .column_by_name("id")
                 .and_then(|column| column.as_any().downcast_ref::<StringArray>())
                 .context("code id column is not a StringArray")?;
+            let file_paths = batch
+                .column_by_name("file_path")
+                .and_then(|column| column.as_any().downcast_ref::<StringArray>())
+                .context("code file_path column is not a StringArray")?;
             let hashes = batch
                 .column_by_name("content_hash")
                 .and_then(|column| column.as_any().downcast_ref::<StringArray>())
@@ -358,6 +363,7 @@ impl Store {
                 segments.insert(
                     ids.value(index).to_string(),
                     StoredCodeSegment {
+                        file_path: file_paths.value(index).to_string(),
                         content_hash: hashes.value(index).to_string(),
                         vector: values.values()[start..start + VECTOR_DIMENSION].to_vec(),
                     },
@@ -653,6 +659,7 @@ pub struct CodeChunkRecord {
 
 #[derive(Debug, Clone)]
 pub struct StoredCodeSegment {
+    pub file_path: String,
     pub content_hash: String,
     pub vector: Vec<f32>,
 }

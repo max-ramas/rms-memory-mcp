@@ -149,12 +149,7 @@ pub async fn build_semantic_edges(
         // Both corpora are queried so semantic links can cross vault/code
         // boundaries. Each query and each per-source candidate set is bounded.
         let vault_results = match store
-            .search(
-                vector.clone(),
-                query,
-                options.neighbors_per_node + 1,
-                None,
-            )
+            .search(vector.clone(), query, options.neighbors_per_node + 1, None)
             .await
         {
             Ok(results) => results,

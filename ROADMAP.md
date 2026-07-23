@@ -103,6 +103,8 @@ This enables downstream consumers to use just `rms-memory-index` without the MCP
 
 The companion GUI already consumes the core library through human-oriented Tauri commands for graph, configuration, jobs, and project lifecycle operations. MCP remains the IDE/agent protocol; v1.1 focuses on extracting stable crate boundaries rather than inventing a second application core.
 
+**Not a v1.0.x release blocker.** Ship 1.0.x with path-scoped code watch, graph layout worker, and GUI entitlement guards first.
+
 ## Multilanguage Code Memory — 1.0.5 extension in progress
 
 - [x] Language-neutral registry/dispatcher with project-scoped `code_languages`, preserving Rust item IDs and extractor identity.

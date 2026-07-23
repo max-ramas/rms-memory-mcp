@@ -424,6 +424,21 @@ impl Store {
         Ok(records)
     }
 
+    /// Upsert derived graph nodes/edges for a path-scoped code patch.
+    ///
+    /// Unlike [`Self::reconcile_derived_graph`], this never prunes by
+    /// generation. Callers must delete stale path-scoped nodes beforehand.
+    pub async fn upsert_derived_graph_patch(
+        &self,
+        nodes: Vec<GraphNodeRecord>,
+        edges: Vec<GraphEdgeRecord>,
+    ) -> Result<()> {
+        let tables = self.open_or_create_graph_tables().await?;
+        self.upsert_graph_nodes(&tables.nodes, nodes).await?;
+        self.upsert_graph_edges(&tables.edges, edges).await?;
+        Ok(())
+    }
+
     /// Delete graph nodes and every edge/override incident to them.
     ///
     /// This is deliberately separate from extractor reconciliation because a

@@ -391,14 +391,13 @@ impl DocumentService {
         // Vault-aware link resolution: if the requested document is a link,
         // the returned target is guaranteed to be inside the vault (both by
         // parsing and by canonicalisation-plus-symlink check).
-        let target = crate::link::resolve_link_in_vault(requested, &self.root).with_context(
-            || {
+        let target =
+            crate::link::resolve_link_in_vault(requested, &self.root).with_context(|| {
                 format!(
                     "Linked document target does not exist or escapes vault for {}",
                     requested.display()
                 )
-            },
-        )?;
+            })?;
         // `resolve_link_in_vault` returns a canonicalised path when it followed
         // a link, or the original path (which is already canonical because the
         // caller went through `resolve_existing`) when there was no link.

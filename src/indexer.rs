@@ -294,8 +294,7 @@ async fn sync_vault_inner(
 
         // Read file mtime; a link that escapes the vault falls back to the
         // linker's own mtime rather than reaching outside.
-        let resolved_path =
-            crate::link::resolve_link_in_vault_or_self(&file_path, &workspace.root);
+        let resolved_path = crate::link::resolve_link_in_vault_or_self(&file_path, &workspace.root);
         let mtime = std::fs::metadata(&resolved_path)
             .and_then(|m| m.modified())
             .map(|t| chrono::DateTime::<chrono::Utc>::from(t).to_rfc3339())

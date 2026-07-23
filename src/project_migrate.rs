@@ -135,10 +135,7 @@ pub fn build_plan(
         if rename_key && keys_equivalent(key, &new_key) {
             bail!("Project key '{new_key}' is already registered as '{key}'");
         }
-        if paths_equivalent(
-            Path::new(&project.code_path),
-            &new_code_path,
-        ) {
+        if paths_equivalent(Path::new(&project.code_path), &new_code_path) {
             bail!(
                 "Code path '{}' is already registered under project '{key}'",
                 new_code_path.display()
@@ -146,7 +143,12 @@ pub fn build_plan(
         }
     }
 
-    compare_git_remotes(&old_code_path, &new_code_path, options.strict_git, &mut warnings)?;
+    compare_git_remotes(
+        &old_code_path,
+        &new_code_path,
+        options.strict_git,
+        &mut warnings,
+    )?;
 
     let master_vault = registry
         .global
@@ -293,9 +295,7 @@ pub fn migrate(
     updated.vault_path = plan.new_vault_path.clone();
 
     registry.projects.remove(old_key);
-    if registry.projects.contains_key(&plan.new_key)
-        && !keys_equivalent(old_key, &plan.new_key)
-    {
+    if registry.projects.contains_key(&plan.new_key) && !keys_equivalent(old_key, &plan.new_key) {
         rollback_filesystem(&rollback)?;
         bail!("Project key '{}' is already registered", plan.new_key);
     }
@@ -347,14 +347,15 @@ fn outcome_from_plan(plan: &ProjectMigratePlan) -> ProjectMigrateOutcome {
 fn rollback_filesystem(moves: &[(PathBuf, PathBuf)]) -> Result<()> {
     let mut errors = Vec::new();
     for (from, to) in moves.iter().rev() {
-        if from.exists() && !to.exists() {
-            if let Err(error) = std::fs::rename(from, to) {
-                errors.push(format!(
-                    "Failed to rollback '{}' -> '{}': {error}",
-                    from.display(),
-                    to.display()
-                ));
-            }
+        if from.exists()
+            && !to.exists()
+            && let Err(error) = std::fs::rename(from, to)
+        {
+            errors.push(format!(
+                "Failed to rollback '{}' -> '{}': {error}",
+                from.display(),
+                to.display()
+            ));
         }
     }
     if errors.is_empty() {
@@ -378,13 +379,7 @@ fn index_path_for_vault(vault: &Path) -> PathBuf {
 
 fn git_remote_url(dir: &Path) -> Option<String> {
     let output = Command::new("git")
-        .args([
-            "-C",
-            &dir.to_string_lossy(),
-            "remote",
-            "get-url",
-            "origin",
-        ])
+        .args(["-C", &dir.to_string_lossy(), "remote", "get-url", "origin"])
         .output()
         .ok()?;
     if !output.status.success() {
@@ -404,18 +399,16 @@ fn compare_git_remotes(
     let new_remote = git_remote_url(new_code);
     match (old_remote, new_remote) {
         (Some(old_url), Some(new_url)) if old_url != new_url => {
-            let message = format!(
-                "Git remote mismatch: old origin '{old_url}' vs new origin '{new_url}'"
-            );
+            let message =
+                format!("Git remote mismatch: old origin '{old_url}' vs new origin '{new_url}'");
             if strict {
                 bail!(message);
             }
             warnings.push(message);
         }
         (Some(_), None) | (None, Some(_)) => {
-            warnings.push(
-                "Git remote could not be verified on one side of the migration".to_string(),
-            );
+            warnings
+                .push("Git remote could not be verified on one side of the migration".to_string());
         }
         _ => {}
     }

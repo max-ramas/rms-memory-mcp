@@ -1,6 +1,6 @@
 # RMS Memory MCP Server — Walkthrough
 
-Updated: 2026-07-20
+Updated: 2026-07-22
 
 ## Generated Wiki isolation
 
@@ -47,8 +47,8 @@ RMS Memory is a specialized Model Context Protocol (MCP) server that acts as loc
 - **Federated retrieval:** `rms_search` accepts `corpus: vault|code|all`; `rms_code_search` is the code-only shortcut. `all` independently ranks both corpora, then merges with Reciprocal Rank Fusion (RRF), never raw cross-table distances. Code results include file, symbol, kind, line range, and segment index.
 - **Graph contract:** Nodes and edges never point to retrieval chunks, whose boundaries may change. Every reindex emits a deterministic `project → folder → file → symbol` structural projection with resolved `contains` edges. Markdown links plus language-level imports/includes and lexical calls are stored as versioned derived edges; user edges and suppress/restore overrides survive reconciliation. All call edges are intentionally syntax-level hints, not a compiler-accurate call graph.
 - **Shared GUI core:** A revisioned `ConfigManager` owns validated, atomic configuration updates and change subscriptions. Transport-neutral services and bounded job events are consumed by the companion GUI through human-oriented Tauri commands without repurposing MCP.
-- **Safe activation:** `code_index_mode = off|manual|watch` defaults to `off`; set it with `rms-memory config --code-index-mode watch` from the registered project root. `code_languages = ["auto"]` selects all bundled adapters, or use `rms-memory config --code-languages go,typescript,vue`. Watch mode is opt-in, coalesces enabled source events for three seconds, and uses a shared completion marker so concurrent IDE servers do not repeat the same completed generation.
-- **Live validation:** An unchanged reindex on this repository processed 43 Rust files, 298 items, and 438 segments with all vectors reused. A real-project stress gate completed concurrent GeoMail, License Server, RMS Monitoring, and GeoTax Site indexing; after four IDE restarts, seven MCP servers remained at 0.0% CPU with no background reindex.
+- **Safe activation:** `code_index_mode = off|manual|watch` defaults to `off`; set it with `rms-memory config --code-index-mode watch` from the registered project root. `code_languages = ["auto"]` selects all bundled adapters, or use `rms-memory config --code-languages go,typescript,vue`. Watch mode is opt-in, coalesces enabled source events for three seconds, accumulates dirty absolute paths, and calls `try_index_code_paths` so only changed files are re-embedded and graph-patched (no full generation prune). Cold start, empty/oversized dirty sets (>200), or watcher overflow fall back to a full walk. A shared completion marker keeps concurrent IDE servers from repeating a completed generation.
+- **Live validation:** An unchanged reindex on this repository processed 43 Rust files, 298 items, and 438 segments with all vectors reused. A real-project stress gate completed concurrent GeoMail, License Server, RMS Monitoring, and GeoTax Site indexing; after four IDE restarts, seven MCP servers remained at 0.0% CPU with no background reindex. Path-scoped unit tests cover dirty-file hash updates and delete-without-wiping siblings. Large-fixture timing: `./scripts/bench_large_vault.sh`.
 
 ### 6. Dynamic MCP Auto-Installer (`rms-memory install`)
 - Eradicates manual configuration. Run `rms-memory install` and a strict bounding crawler scans `~/.config/` and `~/Library/Application Support/` across your OS.

@@ -12,8 +12,8 @@ fn is_safe_link(link: &str) -> bool {
 /// Canonicalize `path` (which may point at a symlink) and require the
 /// resulting real path to remain inside `vault_root`.
 fn canonicalize_inside(path: &Path, vault_root: &Path) -> Result<PathBuf> {
-    let canonical_root = std::fs::canonicalize(vault_root)
-        .unwrap_or_else(|_| vault_root.to_path_buf());
+    let canonical_root =
+        std::fs::canonicalize(vault_root).unwrap_or_else(|_| vault_root.to_path_buf());
     let canonical = std::fs::canonicalize(path)
         .map_err(|error| anyhow::anyhow!("Failed to canonicalize link target: {error}"))?;
     if !canonical.starts_with(&canonical_root) {
@@ -84,10 +84,7 @@ mod tests {
         fs::write(&file_path, "# Just content").unwrap();
 
         let resolved = resolve_link_in_vault(&file_path, dir.path()).unwrap();
-        assert_eq!(
-            resolved.file_name(),
-            file_path.file_name()
-        );
+        assert_eq!(resolved.file_name(), file_path.file_name());
     }
 
     #[test]
