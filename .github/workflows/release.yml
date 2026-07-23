@@ -63,7 +63,9 @@ jobs:
           repo-token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Install System Dependencies (GitHub-hosted Linux)
-        if: runner.os == 'Linux' && matrix.apt
+        # Self-hosted has no passwordless sudo; deps are preinstalled on the host.
+        # Require explicit matrix.apt == true (boolean false must not run apt).
+        if: runner.os == 'Linux' && matrix.apt == true
         run: sudo apt-get update && sudo apt-get install -y pkg-config libssl-dev
 
       - name: Verify System Dependencies (Linux)
