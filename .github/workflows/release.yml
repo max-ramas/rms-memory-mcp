@@ -18,18 +18,22 @@ on:
           - linux
           - macos
           - windows
+      release_tag:
+        description: "GitHub release tag to attach assets to (e.g. v1.0.6). Required for manual runs."
+        required: true
+        type: string
       publish_crates:
-        description: Publish the package to crates.io after successful builds
+        description: Publish the package to crates.io after successful build + release upload
         required: false
         default: false
         type: boolean
       expected_version:
-        description: Package version to publish for a manual run (for example 1.0.6)
+        description: "Cargo version without v (e.g. 1.0.6). Defaults from release_tag."
         required: false
         type: string
 
 concurrency:
-  group: release-${{ github.workflow }}-${{ github.ref }}
+  group: release-${{ github.workflow }}-${{ github.ref }}-${{ inputs.release_tag || github.ref_name }}
   cancel-in-progress: false
 
 jobs:
@@ -38,16 +42,22 @@ jobs:
     runs-on: [self-hosted, linux, x64]
     outputs:
       include: ${{ steps.select.outputs.include }}
+      release_tag: ${{ steps.select.outputs.release_tag }}
+      expected_version: ${{ steps.select.outputs.expected_version }}
     steps:
-      - name: Select platforms
+      - name: Select platforms and release tag
         id: select
         env:
           EVENT_NAME: ${{ github.event_name }}
           PLATFORMS: ${{ inputs.platforms || 'all' }}
+          INPUT_RELEASE_TAG: ${{ inputs.release_tag || '' }}
+          INPUT_EXPECTED_VERSION: ${{ inputs.expected_version || '' }}
+          REF_NAME: ${{ github.ref_name }}
         run: |
           set -euo pipefail
           python3 - <<'PY'
-          import json, os
+          import json, os, re
+
           all_rows = [
             {
               "id": "linux-x64",
@@ -97,10 +107,30 @@ jobs:
             selected = [r for r in all_rows if r["id"] in wanted]
           if not selected:
             raise SystemExit(f"no platforms matched: {platforms!r}")
+
+          if event == "push":
+            release_tag = os.environ["REF_NAME"]
+          else:
+            release_tag = (os.environ.get("INPUT_RELEASE_TAG") or "").strip()
+            if not release_tag:
+              raise SystemExit("release_tag is required for workflow_dispatch")
+          if not re.fullmatch(r"v\d+\.\d+\.\d+", release_tag):
+            raise SystemExit(f"release_tag must look like v1.0.6, got {release_tag!r}")
+
+          expected = (os.environ.get("INPUT_EXPECTED_VERSION") or "").strip()
+          if not expected:
+              expected = release_tag[1:]  # strip leading v
+          if expected.startswith("v"):
+              expected = expected[1:]
+
           print("Selected:", ", ".join(r["id"] for r in selected))
-          include = json.dumps(selected)
-          with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as fh:
-              fh.write(f"include={include}\n")
+          print("Release tag:", release_tag)
+          print("Expected cargo version:", expected)
+          out = os.environ["GITHUB_OUTPUT"]
+          with open(out, "a", encoding="utf-8") as fh:
+              fh.write(f"include={json.dumps(selected)}\n")
+              fh.write(f"release_tag={release_tag}\n")
+              fh.write(f"expected_version={expected}\n")
           PY
 
   build:
@@ -232,10 +262,9 @@ jobs:
           retention-days: 1
 
   release:
-    name: Create GitHub Release
-    # Binary release is independent from crates.io publication. A registry
-    # verification failure must not hide successfully built release assets.
-    needs: build
+    name: GitHub Release + Homebrew
+    # Uploads built assets onto the release tag (tag push or manual release_tag).
+    needs: [plan, build]
     runs-on: [self-hosted, linux, x64]
     permissions:
       contents: write
@@ -251,16 +280,17 @@ jobs:
       - name: Display structure of downloaded files
         run: ls -R artifacts/
 
-      - name: Create Release and Upload Assets
+      - name: Create or update GitHub Release
         uses: softprops/action-gh-release@v1
-        if: startsWith(github.ref, 'refs/tags/')
         with:
+          tag_name: ${{ needs.plan.outputs.release_tag }}
+          name: ${{ needs.plan.outputs.release_tag }}
           files: artifacts/**/*
+          fail_on_unmatched_files: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Notify homebrew tap
-        if: startsWith(github.ref, 'refs/tags/')
         env:
           GH_TOKEN: ${{ secrets.TAP_DISPATCH_TOKEN }}
         run: |
@@ -269,14 +299,13 @@ jobs:
             -f "client_payload[repo]=max-ramas/rms-memory-mcp" \
             -f "client_payload[formula]=rms-memory-mcp" \
             -f "client_payload[bin_name]=rms-memory-mcp" \
-            -f "client_payload[tag]=${{ github.ref_name }}"
+            -f "client_payload[tag]=${{ needs.plan.outputs.release_tag }}"
 
   publish-crates:
     name: Publish to crates.io
-    needs: build
+    needs: [plan, build, release]
     runs-on: [self-hosted, linux, x64]
-    # Tags publish automatically. A manual dispatch must opt in explicitly and
-    # name the exact package version it expects to release.
+    # Tags publish automatically. Manual dispatch must opt in explicitly.
     if: startsWith(github.ref, 'refs/tags/v') || inputs.publish_crates == true
     environment: crates.io
     permissions:
@@ -295,7 +324,7 @@ jobs:
 
       - name: Verify requested version
         env:
-          EXPECTED_VERSION: ${{ startsWith(github.ref, 'refs/tags/v') && github.ref_name || inputs.expected_version }}
+          EXPECTED_VERSION: ${{ needs.plan.outputs.expected_version }}
         run: |
           package_version="$(cargo metadata --no-deps --format-version 1 | jq -r '.packages[] | select(.name == "rms-memory-mcp") | .version')"
           expected_version="${EXPECTED_VERSION#v}"
