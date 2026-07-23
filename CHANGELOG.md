@@ -33,6 +33,7 @@ Line closed 2026-07-23. Includes everything shipped after **1.0.5** (wiki genera
 - **`rms_wiki_pack` manifests** must resolve under the vault (no absolute escape, `..`, or symlink escape).
 
 ### Fixed
+- **Fastembed init under parallel tests/CI:** `Indexer::new` serializes model load, retries hf-hub blob lock / ONNX retrieve failures, skips process CWD changes, and only overrides `TMPDIR` when system temp is not writable (avoids tempfile+gitignore flakes).
 - **Antigravity workspace initialization:** globally launched MCP processes no longer depend on process CWD (`/`). Injected agent rules carry the repository's concrete registry key.
 - **Plain Markdown frontmatter repair:** `doctor --repair-frontmatter` backs up legacy Markdown without YAML, adds one stable UUID, preserves the body.
 - **Thread pool reduction:** ONNX `with_intra_threads(1)` + tokio `worker_threads=2`.

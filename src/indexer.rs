@@ -2,6 +2,8 @@ use anyhow::{Context, Result};
 use fastembed::{EmbeddingModel, InitOptions, TextEmbedding};
 use pulldown_cmark::{Event, Options, Parser, Tag};
 use std::path::Path;
+use std::sync::Mutex;
+use std::time::Duration;
 
 pub struct Indexer {
     pub model: TextEmbedding,
@@ -19,8 +21,61 @@ pub enum SyncStatus {
     Busy,
 }
 
+/// Serializes process-local model init: concurrent `Indexer::new` races with
+/// hf-hub blob locks, and TMPDIR overrides must not interleave.
+static MODEL_INIT_LOCK: Mutex<()> = Mutex::new(());
+
+fn system_temp_is_writable() -> bool {
+    let probe = std::env::temp_dir().join(format!(
+        "rms-memory-tmp-probe-{}-{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_nanos())
+            .unwrap_or(0)
+    ));
+    match std::fs::write(&probe, b"ok") {
+        Ok(()) => {
+            let _ = std::fs::remove_file(&probe);
+            true
+        }
+        Err(_) => false,
+    }
+}
+
 impl Indexer {
     pub fn new() -> Result<Self> {
+        let _guard = MODEL_INIT_LOCK
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+
+        const ATTEMPTS: u32 = 5;
+        let mut last_error = None;
+        for attempt in 0..ATTEMPTS {
+            match Self::try_load_model() {
+                Ok(indexer) => return Ok(indexer),
+                Err(error) => {
+                    let message = format!("{error:#}");
+                    let transient = message.contains("Lock acquisition failed")
+                        || message.contains("Failed to retrieve onnx");
+                    if !transient || attempt + 1 == ATTEMPTS {
+                        return Err(error);
+                    }
+                    eprintln!(
+                        "Retrying embedding model init after cache lock contention (attempt {}/{}): {}",
+                        attempt + 1,
+                        ATTEMPTS,
+                        message
+                    );
+                    std::thread::sleep(Duration::from_millis(200 * u64::from(attempt + 1)));
+                    last_error = Some(error);
+                }
+            }
+        }
+        Err(last_error.unwrap_or_else(|| anyhow::anyhow!("embedding model init exhausted retries")))
+    }
+
+    fn try_load_model() -> Result<Self> {
         let mut cache_dir = crate::workspace::base_dir().join("cache").join("fastembed");
 
         // If we cannot create the primary cache dir (e.g. HOME is read-only or sandboxed), fallback to temp dir
@@ -37,23 +92,20 @@ impl Indexer {
                 .context("Failed to create fallback cache directory")?;
         }
 
-        // Workaround: Claude Desktop sandbox might make the system temp_dir read-only.
-        // fastembed (via hf-hub and tempfile) uses the system temp directory for atomic downloads.
-        // We override TMPDIR to our cache directory which we know is writable.
-        let tmp_dir = cache_dir.join("tmp");
-        std::fs::create_dir_all(&tmp_dir).ok();
+        // Sandboxed hosts (Claude Desktop) may make system temp read-only; fastembed/hf-hub
+        // use TMPDIR for atomic downloads. Override only then — always rewriting process
+        // TMPDIR races with parallel tests (tempfile under cache/.../tmp + gitignore skips).
+        let override_tmpdir = !system_temp_is_writable();
         let original_tmp = std::env::var_os("TMPDIR");
-        // SAFETY: We temporarily override TMPDIR to a user-writable directory because
-        // fastembed (via hf-hub and tempfile) uses the system /tmp for atomic downloads.
-        // In sandboxed environments (Claude Desktop, macOS sandbox), /tmp may be read-only.
-        // We save and restore the original value immediately after model initialization,
-        // so this mutation is bounded to the Indexer constructor scope.
-        unsafe {
-            std::env::set_var("TMPDIR", &tmp_dir);
+        if override_tmpdir {
+            let tmp_dir = cache_dir.join("tmp");
+            std::fs::create_dir_all(&tmp_dir).ok();
+            // SAFETY: Bounded to this constructor; restored below. Concurrent callers are
+            // serialized by MODEL_INIT_LOCK so TMPDIR mutations do not interleave.
+            unsafe {
+                std::env::set_var("TMPDIR", &tmp_dir);
+            }
         }
-
-        let original_dir = std::env::current_dir().ok();
-        std::env::set_current_dir(&cache_dir).ok();
 
         eprintln!("Loading embedding model (Cache: {:?})...", cache_dir);
         let result = TextEmbedding::try_new(
@@ -63,15 +115,13 @@ impl Indexer {
                 .with_show_download_progress(false),
         );
 
-        if let Some(orig) = original_dir {
-            std::env::set_current_dir(orig).ok();
-        }
-
-        unsafe {
-            if let Some(orig_tmp) = original_tmp {
-                std::env::set_var("TMPDIR", orig_tmp);
-            } else {
-                std::env::remove_var("TMPDIR");
+        if override_tmpdir {
+            unsafe {
+                if let Some(orig_tmp) = original_tmp {
+                    std::env::set_var("TMPDIR", orig_tmp);
+                } else {
+                    std::env::remove_var("TMPDIR");
+                }
             }
         }
 
