@@ -2,6 +2,8 @@
 
 # 🧠 RMS Memory MCP
 
+**Version:** `1.0.6` (2026-07-23) · companion GUI `1.0.0`
+
 **Persistent, local-first memory for your AI coding agents.**
 
 Stop re-explaining your architecture to Cursor, Zed, and Claude Code and other IDEs every single session.

@@ -12,7 +12,7 @@ on:
         default: false
         type: boolean
       expected_version:
-        description: Package version to publish for a manual run (for example 1.0.5)
+        description: Package version to publish for a manual run (for example 1.0.6)
         required: false
         type: string
 

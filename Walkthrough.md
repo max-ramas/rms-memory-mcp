@@ -1,6 +1,6 @@
 # RMS Memory MCP Server — Walkthrough
 
-Updated: 2026-07-22
+Updated: 2026-07-23 · MCP `1.0.6` / GUI `1.0.0`
 
 ## Generated Wiki isolation
 

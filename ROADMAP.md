@@ -2,6 +2,8 @@
 
 This document outlines the strategic direction and upcoming milestones for RMS Memory.
 
+**Current (2026-07-23):** MCP **`1.0.6`** · companion GUI **`1.0.0`**.
+
 ## v1.0 — Foundation & Open Source ✅ (Released)
 
 **Goal:** Deliver a stable, easy-to-install product with maximum reach.
@@ -66,7 +68,7 @@ This document outlines the strategic direction and upcoming milestones for RMS M
 - [x] Independent Rust and mixed Rust/Tauri dogfood: `rms-threads-assistant` (19 files / 101 items / 133 reused segments) and `rms-monitoring` (114 / 846 / 976 reused) completed on the final binary.
 - [ ] Optional scale-up: a separate larger Rust workspace remains unavailable locally. One unrelated invalid-YAML vault record remains intentionally manual-only.
 
-## v1.0.6 — Wiki Generator + Project Provenance (Released 2026-07-13)
+## v1.0.6 — Wiki Generator + Project Provenance (Released 2026-07-13; current line as of 2026-07-23)
 
 **Goal:** Deterministic context pack assembly, project identity tracking, and ChatGPT/Codex integration.
 
