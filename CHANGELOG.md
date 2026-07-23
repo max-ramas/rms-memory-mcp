@@ -33,6 +33,7 @@ Line closed 2026-07-23. Includes everything shipped after **1.0.5** (wiki genera
 - **`rms_wiki_pack` manifests** must resolve under the vault (no absolute escape, `..`, or symlink escape).
 
 ### Fixed
+- **Release Linux self-hosted:** skip `sudo apt-get` (no passwordless sudo); verify `pkg-config`/`openssl` instead. Apt install remains only on GitHub-hosted Linux matrix rows.
 - **Fastembed init under parallel tests/CI:** `Indexer::new` serializes model load, retries hf-hub blob lock / ONNX retrieve failures, skips process CWD changes, and only overrides `TMPDIR` when system temp is not writable (avoids tempfile+gitignore flakes).
 - **Antigravity workspace initialization:** globally launched MCP processes no longer depend on process CWD (`/`). Injected agent rules carry the repository's concrete registry key.
 - **Plain Markdown frontmatter repair:** `doctor --repair-frontmatter` backs up legacy Markdown without YAML, adds one stable UUID, preserves the body.

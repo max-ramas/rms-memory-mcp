@@ -25,23 +25,28 @@ jobs:
       matrix:
         include:
           # Registered self-hosted runner: Linux X64 (same as test.yml / GUI quality).
+          # No sudo apt — deps are preinstalled on the host (see rules/ci-self-hosted-tests).
           - os: [self-hosted, linux, x64]
             target: x86_64-unknown-linux-gnu
             archive_ext: tar.gz
             use_cross: false
+            apt: false
           - os: ubuntu-24.04-arm
             target: aarch64-unknown-linux-gnu
             archive_ext: tar.gz
             use_cross: false
+            apt: true
 
           - os: macos-latest
             target: aarch64-apple-darwin
             archive_ext: tar.gz
             use_cross: false
+            apt: false
           - os: windows-latest
             target: x86_64-pc-windows-msvc
             archive_ext: zip
             use_cross: false
+            apt: false
 
     steps:
       - name: Checkout repository
@@ -57,9 +62,17 @@ jobs:
         with:
           repo-token: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Install System Dependencies (Linux)
-        if: runner.os == 'Linux'
+      - name: Install System Dependencies (GitHub-hosted Linux)
+        if: runner.os == 'Linux' && matrix.apt
         run: sudo apt-get update && sudo apt-get install -y pkg-config libssl-dev
+
+      - name: Verify System Dependencies (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          set -euo pipefail
+          command -v pkg-config
+          pkg-config --exists openssl
+          echo "openssl $(pkg-config --modversion openssl)"
 
       - name: Install Cross
         if: matrix.use_cross
