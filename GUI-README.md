@@ -1,6 +1,6 @@
 # RMS Memory GUI
 
-**Current release:** GUI `1.0.7` (2026-07-25) with MCP `1.0.7` (unified numbering).
+**Current release:** GUI `1.0.8` (2026-07-26) with MCP `1.0.8` (unified numbering).
 
 RMS Memory GUI is the optional commercial desktop application for
 [RMS Memory MCP](https://github.com/max-ramas/rms-memory-mcp). It is a Tauri
@@ -53,7 +53,7 @@ the asset whose platform and architecture match your machine:
 | Linux x64 | `.AppImage`, `.deb`, or `.rpm` |
 
 The public release uses the same `v<version>` tag as the GUI build (unified with MCP:
-**`v1.0.7`**). Installer assets are named `rms_memory_gui_*` and checksums live in
+**`v1.0.8`**). Installer assets are named `rms_memory_gui_*` and checksums live in
 `rms_memory_gui_SHA256SUMS.txt`. The GUI pipeline runs both for a pushed `v*` tag
 and for a manual dispatch that supplies the same version tag as
 `src-tauri/tauri.conf.json`.

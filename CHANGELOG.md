@@ -2,6 +2,30 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.0.8] - 2026-07-26
+
+Multi-project MCP routing fix. Companion GUI adopts the **same `1.0.8` product version**.
+
+**Why not 1.0.7:** `1.0.7` already shipped with sticky single-vault binding (`already bound to project 'X', not 'Y'`). Agents in other registered repos could not write their own vaults. That contract is superseded here.
+
+### Fixed
+- **MCP multi-project rebind:** explicit `project` on any tool call switches the active vault (cancels previous watchers, opens the target store). Sticky “already bound… refusing to switch” is removed — one Cursor MCP process can serve all registered projects. Ambiguity without `project` remains fail-closed (no silent pick-first / no global-vault fallback).
+- **Empty `roots/list` → process cwd:** when Cursor advertises roots but returns no registered project, MCP tries `Workspace::discover(cwd)` before staying unbound. Same fallback on the first tool call without `project` while unbound.
+
+### Added
+- **`rms-memory inject-rules [--all]`:** re-injects managed IDE rule blocks with the concrete registry key without re-running `init` registration. Templates now **require** `project: "<key>"` on every memory tool call (not only when unbound).
+- **Full CLI config coverage:** `rms-memory config` gains `--max-backups N` (global) and per-project `--include` / `--exclude` (validated globs); `--auto-import` validated; any flag is fully non-interactive; flagless run prints global **and** matched-project settings.
+
+### Changed
+- `rms_system_instructions` describes an *active* project and states that explicit `project` rebinds.
+- ADR: `decisions/mcp-explicit-project-rebind.md` supersedes the refuse-to-switch clause of `mcp-workspace-routing-roots-and-project-fallback-2026-07-16`; follow-up `decisions/mcp-cwd-fallback-and-mandatory-project-key.md`.
+
+### Verification
+- Unit: sticky refuse strings gone; rule templates require `Always pass project:`; empty-roots cwd fallback path present; inject basename fallback; config flag/glob/strategy tests; 153 lib tests green.
+- Manual: `inject-rules --all` updated 14/14 registered projects; `rms-ds.com` rules contain `project: "rms-ds.com"`.
+- Release binary installed via `build.sh` → `/usr/local/bin/rms-memory` **1.0.8** (restart IDE MCP processes to pick up).
+- Companion GUI **1.0.8** (unified tag / numbering).
+
 ## [1.0.7] - 2026-07-25
 
 Bounded recall, vault-native knowledge lifecycle, and session continuity (second-brain mapping onto Markdown + LanceDB, not a SQL memories table). Companion GUI adopts the **same `1.0.7` product version** (shared GitHub Releases tag / numbering).
@@ -25,7 +49,6 @@ Bounded recall, vault-native knowledge lifecycle, and session continuity (second
 - **Frontmatter:** `goal`, `pending`, `links`, `done_at` fields for checkpoint/session notes; **`pinned`** bypasses temporal/`min_confidence` recall gates (status still applies); indexed as Lance `pinned='true'`.
 - **`rms_read` `noPromote`:** accepted for explicit read-without-side-effects contracts (vault reads were already side-effect free).
 - **L3 installer adapters:** `rms-memory install` writes thin Cursor `hooks.json` entries + shared/Claude/Neovim scripts that call `rms-memory hook`; uninstall strips managed hooks only.
-- **Full CLI config coverage:** `rms-memory config` gains `--max-backups N` (global) and per-project `--include` / `--exclude` glob lists (validated `glob::Pattern`, comma-separated, targeted via cwd or `--scope`); `--auto-import` values are now validated (`skip|link|import_organize|import`). Flagless run prints global **and** matched-project settings; any flag runs fully non-interactively (no stray prompts in scripts/CI).
 - ADR: vault `architecture/bounded-recall.md`.
 
 ### Changed
@@ -36,8 +59,11 @@ Bounded recall, vault-native knowledge lifecycle, and session continuity (second
 - **L3 hook script path escaping:** installer embeds the executable path as a single-quoted bash literal (neutralizes `$`, backticks, spaces, and quotes from `current_exe` / CLI install paths).
 - **Invalid Cursor `hooks.json`:** parse failures now `tracing::warn!` + print the path before backing up and rewriting managed hooks (same visibility pattern as Zed JSONC skip).
 
+### Known issue (fixed in 1.0.8)
+- Sticky MCP bind refused `project` switches after the first vault — broke multi-repo Cursor/global MCP use. See **1.0.8**.
+
 ### Verification
-- Unit/integration: search abstain/budget/RRF; soft supersede; vault recall filters; freshness datetime parse; `prefers_fts_query`; **real Lance FTS search excludes `status=done`/`superseded` while keeping `active`**; **NULL confidence passes `min_confidence` but weak score still abstains under `min_score`**; checkpoint save→update→load→done; hook project resolution refusals; config flag application (glob validation, strategy validation, no-op detection, most-specific project match); full suite green.
+- Unit/integration: search abstain/budget/RRF; soft supersede; vault recall filters; freshness datetime parse; `prefers_fts_query`; **real Lance FTS search excludes `status=done`/`superseded` while keeping `active`**; **NULL confidence passes `min_confidence` but weak score still abstains under `min_score`**; checkpoint save→update→load→done; hook project resolution refusals; full suite green.
 - Manual: `hook --event session_start --project rms-memory-mcp` returns the live overview JSON; unregistered `--cwd` exits 1.
 - `cargo check` / targeted `--lib` filters clean.
 - Companion GUI **1.0.7**: Search + Continuity tabs; `serde_gui` camelCase boundary; About Pro UX (`licenseExpiresAt`, no leftover trial chrome); entry JS budget **152 KiB**; docs/CHANGELOG aligned.

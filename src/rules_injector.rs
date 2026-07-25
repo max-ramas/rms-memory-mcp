@@ -333,6 +333,30 @@ mod tests {
     }
 
     #[test]
+    fn substitutes_folder_basename_when_project_unregistered() {
+        let directory = tempdir().unwrap();
+        let code = directory.path().join("demo-app");
+        fs::create_dir_all(&code).unwrap();
+        inject_rules(
+            &code,
+            InjectOptions {
+                dry_run: false,
+                force: true,
+                full: true,
+                interactive: false,
+            },
+        )
+        .unwrap();
+        let agents = fs::read_to_string(code.join("AGENTS.md")).unwrap();
+        assert!(
+            agents.contains("project: \"demo-app\""),
+            "expected basename fallback key, got:\n{agents}"
+        );
+        assert!(agents.contains("Always pass `project:"));
+        assert!(!agents.contains("{{RMS_MEMORY_PROJECT}}"));
+    }
+
+    #[test]
     fn replacement_is_byte_idempotent_for_one_hundred_runs() {
         let directory = tempdir().unwrap();
         let path = directory.path().join("AGENTS.md");

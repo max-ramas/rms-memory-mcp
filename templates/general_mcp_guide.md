@@ -4,7 +4,7 @@
 You are currently connected to the **RMS Memory MCP Server**. This is your persistent memory for the repository. 
 
 **Core Directives:**
-0. **Project Routing:** This repository's registered key is `{{RMS_MEMORY_PROJECT}}`. If the MCP client did not initialize a workspace root, pass `project: "{{RMS_MEMORY_PROJECT}}"` to RMS Memory tools. Use `rms_projects` to list valid keys. Never guess another project's vault.
+0. **Project Routing (MANDATORY):** This repository's registered key is `{{RMS_MEMORY_PROJECT}}`. Always pass `project: "{{RMS_MEMORY_PROJECT}}"` on every RMS Memory tool call (`rms_search`, `rms_read`, `rms_write`, checkpoints, overview). Do not rely on session binding alone — one IDE MCP process may serve many repos. Use `rms_projects` to list keys. Never guess another project's vault.
 1. **Search First:** Use the `rms-memory_rms_search` tool to find past decisions, architecture records, or rules before making substantial changes to the code.
 2. **Read Context:** Use the `rms-memory_rms_read` tool to pull in full context for any documents found during your search.
 3. **Repository moves:** Never run `git init`, delete `.git`, or recreate the repository to fix a folder-name mismatch. If the repository moved or was renamed, tell the user to run `rms-memory projects migrate` (GUI: Settings → Migrate project).

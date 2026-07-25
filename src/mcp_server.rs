@@ -97,7 +97,10 @@ use tokio::sync::Mutex;
 
 pub struct McpServer {
     ctx: AppContext,
+    /// Process lifetime — set on stdin EOF.
     shutdown_tx: tokio::sync::watch::Sender<bool>,
+    /// Per-bind watcher lifetime — replaced on explicit project rebind.
+    watcher_cancel_tx: tokio::sync::watch::Sender<bool>,
     client_supports_roots: bool,
     pending_roots_request_id: Option<Value>,
 }
@@ -106,6 +109,7 @@ fn spawn_sync_watcher(
     workspace: crate::workspace::Workspace,
     store: crate::store::Store,
     indexer: Arc<Mutex<Indexer>>,
+    mut cancel_rx: tokio::sync::watch::Receiver<bool>,
     mut shutdown_rx: tokio::sync::watch::Receiver<bool>,
 ) {
     tokio::spawn(async move {
@@ -188,9 +192,17 @@ fn spawn_sync_watcher(
 
         loop {
             tokio::select! {
+                _ = cancel_rx.changed() => {
+                    if *cancel_rx.borrow() {
+                        tracing::info!("Watcher: rebind cancel received.");
+                        break;
+                    }
+                }
                 _ = shutdown_rx.changed() => {
-                    tracing::info!("Watcher: shutdown signal received.");
-                    break;
+                    if *shutdown_rx.borrow() {
+                        tracing::info!("Watcher: shutdown signal received.");
+                        break;
+                    }
                 }
                 recv = rx.recv() => {
                     if recv.is_none() { break; } // channel closed
@@ -224,6 +236,7 @@ fn spawn_code_watcher(
     workspace: crate::workspace::Workspace,
     store: crate::store::Store,
     indexer: Arc<Mutex<Indexer>>,
+    mut cancel_rx: tokio::sync::watch::Receiver<bool>,
     mut shutdown_rx: tokio::sync::watch::Receiver<bool>,
 ) {
     tokio::spawn(async move {
@@ -286,7 +299,16 @@ fn spawn_code_watcher(
 
         loop {
             tokio::select! {
-                _ = shutdown_rx.changed() => break,
+                _ = cancel_rx.changed() => {
+                    if *cancel_rx.borrow() {
+                        break;
+                    }
+                }
+                _ = shutdown_rx.changed() => {
+                    if *shutdown_rx.borrow() {
+                        break;
+                    }
+                }
                 observed = rx.recv() => {
                     let Some((path, observed)) = observed else { break; };
                     if !path.as_os_str().is_empty() {
@@ -386,6 +408,7 @@ impl McpServer {
         scope: Option<String>,
     ) -> Result<()> {
         let (shutdown_tx, _shutdown_rx) = tokio::sync::watch::channel(false);
+        let (watcher_cancel_tx, _watcher_cancel_rx) = tokio::sync::watch::channel(false);
         let shutdown_tx_for_server = shutdown_tx.clone();
         let shared_indexer = if let Some(idx) = indexer {
             idx
@@ -405,6 +428,7 @@ impl McpServer {
                 project_key: None,
             },
             shutdown_tx: shutdown_tx_for_server,
+            watcher_cancel_tx,
             client_supports_roots: false,
             pending_roots_request_id: None,
         };
@@ -509,11 +533,17 @@ impl McpServer {
             if current_root == &workspace.root {
                 return Ok(());
             }
-            anyhow::bail!(
-                "MCP connection is already bound to project '{}'; refusing to switch to '{}'",
+            // Explicit/roots-driven switch: stop watchers for the previous vault first.
+            tracing::info!(
+                "MCP workspace rebinding: client={} from={} to={} vault_root={}",
+                self.ctx.caller_id,
                 self.ctx.project_key.as_deref().unwrap_or("unknown"),
-                project_key.as_deref().unwrap_or("unknown")
+                project_key.as_deref().unwrap_or("unknown"),
+                workspace.root.display()
             );
+            let _ = self.watcher_cancel_tx.send(true);
+            let (next_cancel_tx, _) = tokio::sync::watch::channel(false);
+            self.watcher_cancel_tx = next_cancel_tx;
         }
 
         let store = workspace.get_store().await?;
@@ -526,6 +556,7 @@ impl McpServer {
             workspace.clone(),
             store.clone(),
             indexer.clone(),
+            self.watcher_cancel_tx.subscribe(),
             self.shutdown_tx.subscribe(),
         );
         if workspace.code_index_mode == crate::workspace::CodeIndexMode::Watch {
@@ -533,6 +564,7 @@ impl McpServer {
                 workspace.clone(),
                 store.clone(),
                 indexer,
+                self.watcher_cancel_tx.subscribe(),
                 self.shutdown_tx.subscribe(),
             );
         }
@@ -550,40 +582,47 @@ impl McpServer {
 
     async fn bind_project_argument(&mut self, args: &serde_json::Map<String, Value>) -> Result<()> {
         let requested = args.get("project").and_then(Value::as_str);
-        if let Some(current_root) = &self.ctx.workspace_root {
-            if let Some(requested) = requested
-                && self.ctx.project_key.as_deref() != Some(requested)
-            {
-                anyhow::bail!(
-                    "MCP connection is already bound to project '{}', not '{}'",
-                    self.ctx.project_key.as_deref().unwrap_or("unknown"),
-                    requested
-                );
+
+        // Explicit `project` always wins — bind or rebind. Sticky single-vault
+        // sessions made multi-project IDE use impossible (one global MCP process
+        // could trap every agent on the first vault they touched).
+        if let Some(requested) = requested {
+            if self.ctx.project_key.as_deref() == Some(requested) {
+                return Ok(());
             }
+            let registry = crate::workspace::Registry::load()?;
+            if let Some(config) = registry.locate_by_project(requested) {
+                let workspace = crate::workspace::Workspace::discover(
+                    std::path::Path::new(&config.code_path),
+                    None,
+                )?;
+                return self.bind_workspace(workspace).await;
+            }
+            if let Some(message) = registry.migration_redirect_message(requested) {
+                anyhow::bail!(message);
+            }
+            anyhow::bail!("Unknown RMS Memory project key: '{requested}'");
+        }
+
+        if self.ctx.workspace_root.is_some() {
             tracing::debug!(
-                "Using initialized MCP workspace at {}",
-                current_root.display()
+                "Using active MCP workspace at {}",
+                self.ctx
+                    .workspace_root
+                    .as_ref()
+                    .map(|p| p.display().to_string())
+                    .unwrap_or_default()
             );
             return Ok(());
         }
 
-        let requested = requested.ok_or_else(|| {
-            anyhow::anyhow!(
-                "Workspace root not initialized. Pass the registered project key in the `project` argument (for example `rms-threads-assistant`), or use `rms_projects` to list keys."
-            )
-        })?;
-        let registry = crate::workspace::Registry::load()?;
-        if let Some(config) = registry.locate_by_project(requested) {
-            let workspace = crate::workspace::Workspace::discover(
-                std::path::Path::new(&config.code_path),
-                None,
-            )?;
-            return self.bind_workspace(workspace).await;
+        if self.try_bind_from_process_cwd().await {
+            return Ok(());
         }
-        if let Some(message) = registry.migration_redirect_message(requested) {
-            anyhow::bail!(message);
-        }
-        anyhow::bail!("Unknown RMS Memory project key: '{requested}'");
+
+        anyhow::bail!(
+            "Workspace root not initialized. Pass the registered project key in the `project` argument (for example `rms-threads-assistant`), or use `rms_projects` to list keys."
+        );
     }
 
     async fn handle_notification(
@@ -651,14 +690,54 @@ impl McpServer {
 
         match candidates.len() {
             1 => self.bind_workspace(candidates.remove(0)).await?,
-            0 => tracing::warn!(
-                "MCP roots/list contained no registered RMS Memory project; tool calls must pass `project`"
-            ),
+            0 => {
+                tracing::warn!(
+                    "MCP roots/list contained no registered RMS Memory project; trying process cwd"
+                );
+                if !self.try_bind_from_process_cwd().await {
+                    tracing::warn!(
+                        "Process cwd did not resolve to a registered project; tool calls must pass `project`"
+                    );
+                }
+            }
             count => tracing::warn!(
                 "MCP roots/list resolved to {count} registered projects; tool calls must pass `project`"
             ),
         }
         Ok(())
+    }
+
+    /// When roots are missing/empty, bind from process CWD if it uniquely maps
+    /// to a registered project (same longest-prefix discover as CLI).
+    async fn try_bind_from_process_cwd(&mut self) -> bool {
+        if self.ctx.workspace_root.is_some() {
+            return true;
+        }
+        let Ok(cwd) = std::env::current_dir() else {
+            return false;
+        };
+        if cwd == std::path::Path::new("/") || cwd == std::path::Path::new("") {
+            return false;
+        }
+        match crate::workspace::Workspace::discover(&cwd, None) {
+            Ok(workspace) => match self.bind_workspace(workspace).await {
+                Ok(()) => true,
+                Err(error) => {
+                    tracing::warn!(
+                        "Failed to bind MCP workspace from cwd {}: {error:#}",
+                        cwd.display()
+                    );
+                    false
+                }
+            },
+            Err(error) => {
+                tracing::debug!(
+                    "Process cwd {} is not a registered RMS Memory project: {error:#}",
+                    cwd.display()
+                );
+                false
+            }
+        }
     }
 
     async fn handle_request(&mut self, method: &str, params: Option<Value>) -> Result<Value> {
@@ -1055,6 +1134,51 @@ mod tests {
     #[test]
     fn non_file_root_uri_is_rejected() {
         assert!(super::file_uri_to_path("https://example.com/repo").is_err());
+    }
+
+    #[test]
+    fn rule_templates_require_explicit_project_key() {
+        for (name, body) in [
+            ("cursor", include_str!("../templates/cursor_rules.md")),
+            ("general", include_str!("../templates/general_mcp_guide.md")),
+            ("claude", include_str!("../templates/claude_code_rules.md")),
+            ("zed", include_str!("../templates/zed_assistant_rules.md")),
+        ] {
+            assert!(
+                body.contains("{{RMS_MEMORY_PROJECT}}"),
+                "{name} template missing project placeholder"
+            );
+            assert!(
+                body.contains("Always pass `project:"),
+                "{name} template must require explicit project on every call"
+            );
+        }
+    }
+
+    #[test]
+    fn sticky_bind_refuse_messages_are_gone() {
+        // Guardrail: multi-project clients must be able to pass `project` and
+        // rebind. Scan production code only (exclude this tests module).
+        let src = include_str!("mcp_server.rs");
+        let production = src.split("mod tests {").next().unwrap_or(src);
+        let forbidden_bound = format!("{} bound to project", "already");
+        let forbidden_switch = format!("{} to switch", "refusing");
+        assert!(
+            !production.contains(&forbidden_bound),
+            "sticky bind refuse must not remain in mcp_server.rs"
+        );
+        assert!(
+            !production.contains(&forbidden_switch),
+            "sticky switch refuse must not remain in mcp_server.rs"
+        );
+        assert!(
+            production.contains("MCP workspace rebinding"),
+            "explicit rebind log path must exist"
+        );
+        assert!(
+            production.contains("trying process cwd"),
+            "empty roots/list must fall back to process cwd"
+        );
     }
 
     #[test]

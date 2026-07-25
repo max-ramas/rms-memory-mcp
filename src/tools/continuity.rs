@@ -508,8 +508,10 @@ pub fn overview(
 /// agents can self-bootstrap without relying on injected rule files.
 pub fn system_instructions(project: Option<&str>) -> String {
     let project_line = match project {
-        Some(key) => format!("This connection is bound to project `{key}`."),
-        None => "No project is bound yet; pass the registered key in the `project` argument (see `rms_projects`).".to_string(),
+        Some(key) => format!(
+            "Active project for this connection: `{key}`. Pass `project: <key>` on any tool call to switch to another registered vault (see `rms_projects`)."
+        ),
+        None => "No project is active yet; pass the registered key in the `project` argument (see `rms_projects`).".to_string(),
     };
     format!(
         r#"# RMS Memory usage protocol
@@ -528,7 +530,8 @@ pub fn system_instructions(project: Option<&str>) -> String {
 - Finished: `rms_checkpoint_done` with a summary of what was done; this closes the checkpoint and writes a durable session summary.
 
 ## Rules
-- All tools are scoped to exactly one project; never mix vaults.
+- Each tool call targets exactly one project vault. Prefer an explicit `project` key when the IDE is multi-root or you may already be on another vault — explicit `project` always wins and rebinds.
+- Never invent a vault or write across projects in one call.
 - Use `supersedes` in `rms_write` to soft-replace outdated notes instead of deleting them.
 - Do not write into the generated `wiki/` namespace.
 "#
@@ -754,10 +757,12 @@ mod tests {
     }
 
     #[test]
-    fn system_instructions_mention_binding_and_tools() {
+    fn system_instructions_mention_active_project_and_switch() {
         let bound = system_instructions(Some("proj-x"));
         assert!(bound.contains("proj-x"));
         assert!(bound.contains("rms_checkpoint_save"));
+        assert!(bound.contains("explicit `project` always wins"));
+        assert!(!bound.contains("This connection is bound to project"));
         let unbound = system_instructions(None);
         assert!(unbound.contains("rms_projects"));
     }
