@@ -1,3 +1,4 @@
+pub mod hooks;
 pub mod macos;
 pub mod patcher;
 pub mod registry;
@@ -229,7 +230,29 @@ pub async fn run_installer_with_executable(
     }
 
     println!("[✅] Installation sweep completed.");
+    if let Err(error) = hooks::install_l3_adapters(home, &executable_str, dry_run) {
+        eprintln!("[⚠️] L3 continuity adapters: {error:#}");
+    }
+    print_capability_matrix(&executable_str);
     Ok(())
+}
+
+/// Honest per-level integration report (Mind-style): what this installer
+/// configured, what is provided elsewhere, and what stays adapter-thin.
+fn print_capability_matrix(executable: &str) {
+    println!();
+    println!("Integration capability matrix:");
+    println!("  L1 MCP transport      supported   — this installer patched IDE MCP configs.");
+    println!(
+        "  L2 rules injection    supported   — provisioned by `rms-memory init` / rules sync (AGENTS.md, CLAUDE.md, .cursorrules)."
+    );
+    println!(
+        "  L3 continuity hooks   supported   — thin adapters call `{exe} hook --event …` (Cursor hooks.json + shared/Claude/Neovim scripts).",
+        exe = executable
+    );
+    println!(
+        "  Architecture stays editor-agnostic: IDEs only invoke the CLI; they never own the hook semantics."
+    );
 }
 
 /// Validate the binary that will be persisted in an IDE MCP configuration.
@@ -335,6 +358,11 @@ pub async fn run_uninstaller(auto_yes: bool, dry_run: bool) -> Result<()> {
             "[✅] Removed rms-memory from {} IDE configuration(s).",
             uninstalled
         );
+    }
+    match hooks::uninstall_l3_adapters(home, dry_run) {
+        Ok(n) if n > 0 => println!("[✅] Removed {n} L3 continuity adapter(s)."),
+        Ok(_) => {}
+        Err(error) => eprintln!("[⚠️] L3 adapter uninstall: {error:#}"),
     }
     Ok(())
 }

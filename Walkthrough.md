@@ -1,6 +1,6 @@
 # RMS Memory MCP Server — Walkthrough
 
-Updated: 2026-07-25 · MCP `1.0.7` / GUI `1.0.0`
+Updated: 2026-07-25 · MCP `1.0.7` / GUI `1.0.7`
 
 RMS Memory is a specialized Model Context Protocol (MCP) server that acts as localized persistent memory for LLM agents. It keeps human-authored knowledge in centralized Markdown Vaults and can optionally maintain a separate derived semantic index for source code, solving context fragmentation across multiple IDEs (Cursor, Zed, VS Code, Claude Code, Codex).
 
@@ -24,6 +24,8 @@ RMS Memory is a specialized Model Context Protocol (MCP) server that acts as loc
 ### 3. Hybrid Search Engine (LanceDB)
 - **Local Embedded DB:** Uses the blazingly fast embedded LanceDB (v0.31.0) stored locally at `~/.rms-memory/dbs/`.
 - **Hybrid Retrieval:** Fully implements combined Vector Search + Tantivy Full-Text Search (FTS). It avoids keyword matching failures by falling back to precise vector similarities.
+- **Query-aware FTS prefer (v1.0.7):** Short keyword/path queries (≤3 tokens, ≤48 chars) try FTS-only first; empty/error falls back to hybrid. The search envelope may report `retrieval_mode: fts_prefer|hybrid`.
+- **Bounded recall (v1.0.7):** Responses are wrapped as inject/abstain with `max_chars` / optional `min_score`; index failures abstain fail-closed instead of inventing weak context.
 - **Multilingual Semantic Parsing:** Driven by `fastembed-rs` utilizing the `multilingual-e5-small` model (384 dimensions) natively handling both English and Russian code documentation contexts.
 
 ### 4. Advanced Context Chunking
@@ -214,4 +216,18 @@ Maps second-brain recall discipline onto the existing Markdown vault + LanceDB s
 - **Budgets / thresholds:** `max_chars` (default 2000) and optional `min_score`; weak or failed retrieval abstains fail-closed.
 - **Supersession:** frontmatter `status` / `supersedes` / `superseded_by`; Lance recall excludes superseded; `rms_write(supersedes=<path>)` soft-replaces a prior note.
 - **Temporal:** `valid_from` / `valid_until` / `learned_at` gate recall; Doctor check 7/7 lints freshness and broken supersession links.
+- **FTS prefer:** short keyword/path queries try Lance FTS-only before hybrid (`retrieval_mode` in the envelope).
 - **Pruning ≠ supersession:** deleting/archiving cold notes remains a future agentic step; supersession is vault-native lifecycle.
+- **GUI Search:** companion app Search tab surfaces inject/abstain + reason + mode for the same envelope.
+
+### 22. Session Continuity (v1.0.7)
+
+Mind-inspired checkpoints/orientation, corrected for the vault-first stack: no SQLite memory store, no access-count tiers, no DB↔file sync engine.
+
+- **Checkpoints as Markdown:** `rms_checkpoint_save/done/load/query` operate on `artifacts/checkpoints/<name>.md` (`type: checkpoint`, `goal`, `pending`, `links`). Closing sets `status: done` (auto-excluded from default recall) and writes a durable session summary to `artifacts/sessions/` that stays recallable.
+- **Orientation:** `rms_overview` returns counts by folder/status, recent notes, active checkpoints, and coverage metadata for exactly one project. Fail-closed scoping — a bound workspace or explicit `project` key is required; there is no global or cross-project view.
+- **Self-bootstrap:** `rms_system_instructions` returns the canonical usage protocol so any MCP client can learn the search-first/persist/continuity loop without rule files.
+- **Structured payloads:** continuity tools return `structuredContent` alongside JSON text; the Tauri GUI consumes the same shapes (Dashboard widgets, "Continue work", "Complete").
+- **Editor-agnostic hooks (L3):** `rms-memory hook --event session_start|pre_compact|session_stop` prints machine-readable JSON; `--apply` creates/updates or closes a checkpoint. `rms-memory install` writes thin adapters: managed Cursor `~/.cursor/hooks.json` entries, plus shared/Claude/Neovim scripts that only invoke the CLI. Uninstall strips managed hooks without touching foreign entries.
+- **Pinned notes:** `pinned: true` in frontmatter (and `rms_write(pinned=true)`) bypasses temporal/`min_confidence` gates while still respecting status; pinned hits are preferred in the `max_chars` budget.
+- **`rms_read(noPromote=true)`:** explicit read-without-side-effects contract (vault reads were already non-mutating).

@@ -1,3 +1,4 @@
+pub mod continuity;
 pub mod read;
 pub mod response;
 pub mod search;

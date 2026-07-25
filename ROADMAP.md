@@ -2,7 +2,7 @@
 
 This document outlines the strategic direction and upcoming milestones for RMS Memory.
 
-**Current (2026-07-25):** MCP **`1.0.7`** · companion GUI **`1.0.0`**.
+**Current (2026-07-25):** MCP **`1.0.7`** · companion GUI **`1.0.7`** (unified numbering).
 
 ## v1.0 — Foundation & Open Source ✅ (Released)
 
@@ -94,16 +94,26 @@ This document outlines the strategic direction and upcoming milestones for RMS M
 - [x] Path-scoped code watcher reindex (`try_index_code_paths`) and `upsert_derived_graph_patch`.
 - [x] Vault-aware `link:` containment; `rms_wiki_pack` manifest jail.
 
-## v1.0.7 — Bounded Recall & Knowledge Lifecycle (2026-07-25)
+## v1.0.7 — Bounded Recall, Knowledge Lifecycle & Session Continuity (2026-07-25)
 
-**Goal:** Fail-closed, budgeted agent recall plus vault-native supersession/temporal gates — without inventing a SQL memories table.
+**Goal:** Fail-closed, budgeted agent recall plus vault-native supersession/temporal gates and Mind-inspired continuity — without inventing a SQL memories table, tiers, or a DB↔file sync engine.
 
 - [x] `rms_search` inject/abstain envelope, `max_chars`, `min_score`, fail-closed errors.
 - [x] Frontmatter `status` / `supersedes` / `superseded_by`; Lance filter excludes superseded.
 - [x] Soft supersede via `rms_write(supersedes=…)`.
 - [x] `valid_from` / `valid_until` / `learned_at` + doctor freshness lint.
 - [x] ADR `architecture/bounded-recall.md`; ROADMAP note: pruning ≠ supersession.
-- [ ] Companion GUI Search abstain badge (optional; not a server contract blocker).
+- [x] Companion GUI Search view with inject/abstain decision badge.
+- [x] Query-aware short-query FTS-preferring vault path (falls back to hybrid).
+- [x] Checkpoint tools `rms_checkpoint_save/done/load/query` on plain Markdown (`artifacts/checkpoints/`, `status: done` auto-drops from recall; session summaries in `artifacts/sessions/`).
+- [x] `rms_overview` — single-project orientation (counts, recent notes, active checkpoints, coverage), fail-closed scoping.
+- [x] `rms_system_instructions` — canonical protocol for agent self-bootstrap.
+- [x] `structuredContent` in continuity MCP responses (one contract for agents and GUI).
+- [x] `rms-memory hook --event session_start|pre_compact|session_stop` CLI; IDE configs are thin adapters (anti vendor lock-in).
+- [x] Installer L1/L2/L3 capability matrix with Cursor `hooks.json` adapter example.
+- [x] Companion GUI Dashboard: active-checkpoint metric + Continuity teaser; dedicated Continuity tab (create/continue/complete + recent notes).
+- [x] `pinned` frontmatter + recall bypass for temporal/`min_confidence`; `rms_read` `noPromote`.
+- [x] Installer L3 adapters: Cursor `hooks.json` + shared/Claude/Neovim thin scripts calling `rms-memory hook`.
 
 ## v1.1 — Workspace Split & Ecosystem (Next)
 
@@ -119,9 +129,9 @@ This enables downstream consumers to use just `rms-memory-index` without the MCP
 
 The companion GUI already consumes the core library through human-oriented Tauri commands for graph, configuration, jobs, and project lifecycle operations. MCP remains the IDE/agent protocol; v1.1 focuses on extracting stable crate boundaries rather than inventing a second application core.
 
-**Not a v1.0.x release blocker.** Path-scoped code watch, graph layout worker (GUI), and GUI entitlement guards are already landed in the 1.0.6 / GUI 1.0.0 line.
+**Not a v1.0.x release blocker.** Path-scoped code watch, graph layout worker (GUI), and GUI entitlement guards are already landed in the 1.0.6 line; GUI/MCP share **1.0.7** unified numbering.
 
-**Recall lifecycle (landed ahead of crate split):** bounded `rms_search` (`max_chars` / `min_score` / inject|abstain envelope), vault-native supersession (`status` / `supersedes`), and temporal validity filters + doctor freshness lint. See vault ADR `architecture/bounded-recall.md`. Agentic stale pruning remains v2.0 and is not the same as supersession.
+**Recall lifecycle (landed in 1.0.7):** bounded `rms_search` (`max_chars` / `min_score` / inject|abstain / `retrieval_mode`), vault-native supersession (`status` / `supersedes`), temporal validity filters + doctor freshness lint, short-query FTS prefer, and companion GUI Search tab. See vault ADR `architecture/bounded-recall.md`. Agentic stale pruning remains v2.0 and is not the same as supersession.
 
 ## Multilanguage Code Memory — 1.0.5 extension (complete)
 

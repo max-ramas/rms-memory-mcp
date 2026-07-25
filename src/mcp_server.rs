@@ -770,7 +770,8 @@ impl McpServer {
                             "properties": {
                                 "id": { "type": "string" },
                                 "project": { "type": "string", "description": "Registered project key, used when the MCP client did not provide a workspace root." },
-                                "path": { "type": "string", "description": "Relative path to the markdown document in the vault." }
+                                "path": { "type": "string", "description": "Relative path to the markdown document in the vault." },
+                                "noPromote": { "type": "boolean", "description": "Read without side effects. Vault reads are already side-effect free; accepted for explicit forward-compatible contracts." }
                             },
                             "required": ["path"]
                         }
@@ -789,6 +790,7 @@ impl McpServer {
                                 "confidence": { "type": "number", "description": "Optional confidence score (0.0–1.0) indicating reliability of this record." },
                                 "source": { "type": "string", "description": "Optional free-text citation or source reference for this record." },
                                 "status": { "type": "string", "description": "Optional lifecycle status: active, draft, or superseded." },
+                                "pinned": { "type": "boolean", "description": "When true, the note bypasses temporal and min_confidence recall gates (status still applies)." },
                                 "supersedes": { "type": "string", "description": "Optional relative vault path of a prior note to soft-supersede (marks it status=superseded and links both sides)." }
                             },
                             "required": ["path", "mode", "content"]
@@ -812,6 +814,78 @@ impl McpServer {
                         "inputSchema": {
                             "type": "object",
                             "properties": {}
+                        }
+                    },
+                    {
+                        "name": "rms_overview",
+                        "description": "Structured orientation summary for exactly one project: document counts by folder and status, recent notes, and active checkpoints. Call this at session start. Fail-closed: requires a bound workspace or an explicit `project` key; never aggregates across projects.",
+                        "inputSchema": {
+                            "type": "object",
+                            "properties": {
+                                "project": { "type": "string", "description": "Registered project key, used when the MCP client did not provide a workspace root." },
+                                "recent_limit": { "type": "integer", "description": "Maximum recent notes to return (default 10, max 50)." }
+                            }
+                        }
+                    },
+                    {
+                        "name": "rms_checkpoint_save",
+                        "description": "Create or update a session checkpoint (artifacts/checkpoints/<name>.md, status=active). Save before context compaction or a long pause so work can be resumed. Updating preserves id/created_at and keeps omitted fields.",
+                        "inputSchema": {
+                            "type": "object",
+                            "properties": {
+                                "name": { "type": "string", "description": "Checkpoint name (letters, digits, '-', '_', '.')." },
+                                "project": { "type": "string", "description": "Registered project key, used when the MCP client did not provide a workspace root." },
+                                "goal": { "type": "string", "description": "What this work is trying to achieve." },
+                                "pending": { "type": "string", "description": "What remains to be done." },
+                                "links": { "type": "array", "items": { "type": "string" }, "description": "Vault-relative paths of related notes." }
+                            },
+                            "required": ["name"]
+                        }
+                    },
+                    {
+                        "name": "rms_checkpoint_done",
+                        "description": "Close a checkpoint: marks it status=done (drops out of recall) and writes a durable session summary note under artifacts/sessions/.",
+                        "inputSchema": {
+                            "type": "object",
+                            "properties": {
+                                "name": { "type": "string", "description": "Checkpoint name to close." },
+                                "project": { "type": "string", "description": "Registered project key, used when the MCP client did not provide a workspace root." },
+                                "summary": { "type": "string", "description": "What was accomplished." }
+                            },
+                            "required": ["name", "summary"]
+                        }
+                    },
+                    {
+                        "name": "rms_checkpoint_load",
+                        "description": "Load one checkpoint with its full body and bounded previews of linked notes. Use rms_checkpoint_query first to find names.",
+                        "inputSchema": {
+                            "type": "object",
+                            "properties": {
+                                "name": { "type": "string", "description": "Checkpoint name to load." },
+                                "project": { "type": "string", "description": "Registered project key, used when the MCP client did not provide a workspace root." }
+                            },
+                            "required": ["name"]
+                        }
+                    },
+                    {
+                        "name": "rms_checkpoint_query",
+                        "description": "List checkpoints for the current project, newest first, with full pending text. Filter with status=active|done|all (default all).",
+                        "inputSchema": {
+                            "type": "object",
+                            "properties": {
+                                "status": { "type": "string", "enum": ["active", "done", "all"], "description": "Status filter; default all." },
+                                "project": { "type": "string", "description": "Registered project key, used when the MCP client did not provide a workspace root." }
+                            }
+                        }
+                    },
+                    {
+                        "name": "rms_system_instructions",
+                        "description": "Return the canonical RMS Memory usage protocol (search-first, persist, session continuity). Lets an agent self-bootstrap without injected rule files.",
+                        "inputSchema": {
+                            "type": "object",
+                            "properties": {
+                                "project": { "type": "string", "description": "Registered project key, used when the MCP client did not provide a workspace root." }
+                            }
                         }
                     }
                 ]
@@ -840,6 +914,25 @@ impl McpServer {
                     "rms_code_search" => crate::tools::search::execute_code(&self.ctx, &args).await,
                     "rms_read" => crate::tools::read::execute(&self.ctx, &args).await,
                     "rms_write" => crate::tools::write::execute(&self.ctx, &args).await,
+                    "rms_overview" => {
+                        crate::tools::continuity::execute_overview(&self.ctx, &args).await
+                    }
+                    "rms_checkpoint_save" => {
+                        crate::tools::continuity::execute_checkpoint_save(&self.ctx, &args).await
+                    }
+                    "rms_checkpoint_done" => {
+                        crate::tools::continuity::execute_checkpoint_done(&self.ctx, &args).await
+                    }
+                    "rms_checkpoint_load" => {
+                        crate::tools::continuity::execute_checkpoint_load(&self.ctx, &args).await
+                    }
+                    "rms_checkpoint_query" => {
+                        crate::tools::continuity::execute_checkpoint_query(&self.ctx, &args).await
+                    }
+                    "rms_system_instructions" => {
+                        crate::tools::continuity::execute_system_instructions(&self.ctx, &args)
+                            .await
+                    }
                     "rms_wiki_pack" => {
                         let refresh = args
                             .get("refresh_code")

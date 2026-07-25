@@ -84,6 +84,12 @@ pub(crate) fn inject_audit_metadata(
                     serde_yaml::Value::String(status.to_string()),
                 );
             }
+            if let Some(pinned) = args.get("pinned").and_then(|v| v.as_bool()) {
+                mapping.insert(
+                    serde_yaml::Value::String("pinned".into()),
+                    serde_yaml::Value::Bool(pinned),
+                );
+            }
             if let Some(supersedes) = args.get("supersedes_id").and_then(|v| v.as_str()) {
                 mapping.insert(
                     serde_yaml::Value::String("supersedes".into()),
@@ -145,6 +151,12 @@ pub(crate) fn inject_audit_metadata(
         mapping.insert(
             serde_yaml::Value::String("status".into()),
             serde_yaml::Value::String(status.to_string()),
+        );
+    }
+    if let Some(pinned) = args.get("pinned").and_then(|v| v.as_bool()) {
+        mapping.insert(
+            serde_yaml::Value::String("pinned".into()),
+            serde_yaml::Value::Bool(pinned),
         );
     }
     if let Some(supersedes) = args.get("supersedes_id").and_then(|v| v.as_str()) {

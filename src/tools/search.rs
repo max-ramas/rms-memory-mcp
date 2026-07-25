@@ -53,6 +53,8 @@ pub struct UnifiedSearchResult {
     pub end_line: Option<u32>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub segment_index: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub pinned: Option<bool>,
 }
 
 impl UnifiedSearchResult {
@@ -71,6 +73,7 @@ impl UnifiedSearchResult {
             start_line: None,
             end_line: None,
             segment_index: None,
+            pinned: result.pinned,
         }
     }
 
@@ -89,6 +92,7 @@ impl UnifiedSearchResult {
             start_line: Some(result.start_line),
             end_line: Some(result.end_line),
             segment_index: Some(result.segment_index),
+            pinned: None,
         }
     }
 
@@ -143,27 +147,39 @@ pub struct SearchEnvelope {
     pub injected_ids: Vec<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub max_relevance: Option<f32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub retrieval_mode: Option<String>,
     pub results: Vec<UnifiedSearchResult>,
 }
 
 impl SearchEnvelope {
-    fn inject(results: Vec<UnifiedSearchResult>, max_relevance: Option<f32>) -> Self {
+    fn inject(
+        results: Vec<UnifiedSearchResult>,
+        max_relevance: Option<f32>,
+        retrieval_mode: Option<String>,
+    ) -> Self {
         let injected_ids = results.iter().map(|r| r.inject_id()).collect();
         Self {
             decision: SearchDecision::Inject,
             reason: "hits_above_threshold".into(),
             injected_ids,
             max_relevance,
+            retrieval_mode,
             results,
         }
     }
 
-    fn abstain(reason: impl Into<String>, max_relevance: Option<f32>) -> Self {
+    fn abstain(
+        reason: impl Into<String>,
+        max_relevance: Option<f32>,
+        retrieval_mode: Option<String>,
+    ) -> Self {
         Self {
             decision: SearchDecision::Abstain,
             reason: reason.into(),
             injected_ids: Vec::new(),
             max_relevance,
+            retrieval_mode,
             results: Vec::new(),
         }
     }
@@ -174,6 +190,25 @@ pub async fn execute(
     args: &serde_json::Map<String, serde_json::Value>,
 ) -> Result<serde_json::Value> {
     execute_with_forced_corpus(ctx, args, None).await
+}
+
+/// Library/GUI entry: same bounded-recall envelope as the MCP tool, without JSON-RPC wrapping.
+pub async fn search_envelope(
+    ctx: &AppContext,
+    args: &serde_json::Map<String, serde_json::Value>,
+) -> Result<SearchEnvelope> {
+    match execute_inner(ctx, args, None).await {
+        Ok(envelope) => {
+            log_decision(&envelope);
+            Ok(envelope)
+        }
+        Err(error) => {
+            tracing::warn!(error = %error, "rms_search failed closed (abstain)");
+            let envelope = SearchEnvelope::abstain(format!("search_error: {error}"), None, None);
+            log_decision(&envelope);
+            Ok(envelope)
+        }
+    }
 }
 
 pub async fn execute_code(
@@ -198,7 +233,7 @@ async fn execute_with_forced_corpus(
         Err(error) => {
             // Fail-closed: never invent weak context for the agent.
             tracing::warn!(error = %error, "rms_search failed closed (abstain)");
-            let envelope = SearchEnvelope::abstain(format!("search_error: {error}"), None);
+            let envelope = SearchEnvelope::abstain(format!("search_error: {error}"), None, None);
             log_decision(&envelope);
             Ok(super::response::json_text_response(&serde_json::to_string(
                 &envelope,
@@ -275,13 +310,17 @@ async fn execute_inner(
             .unwrap_or_default()
     };
 
+    let mut retrieval_mode: Option<String> = None;
     let results = match corpus {
-        Corpus::Vault => store
-            .search(query_vector, query.to_string(), limit, min_confidence)
-            .await?
-            .into_iter()
-            .map(UnifiedSearchResult::vault)
-            .collect(),
+        Corpus::Vault => {
+            let (hits, mode) = store
+                .search_with_mode(query_vector, query.to_string(), limit, min_confidence)
+                .await?;
+            retrieval_mode = Some(mode.as_str().to_string());
+            hits.into_iter()
+                .map(UnifiedSearchResult::vault)
+                .collect()
+        }
         Corpus::Code => store
             .search_code(query_vector, limit)
             .await?
@@ -289,14 +328,16 @@ async fn execute_inner(
             .map(UnifiedSearchResult::code)
             .collect(),
         Corpus::All => {
-            let vault = store
-                .search(
+            let (vault_hits, vault_mode) = store
+                .search_with_mode(
                     query_vector.clone(),
                     query.to_string(),
                     limit,
                     min_confidence,
                 )
-                .await?
+                .await?;
+            retrieval_mode = Some(vault_mode.as_str().to_string());
+            let vault = vault_hits
                 .into_iter()
                 .map(UnifiedSearchResult::vault)
                 .collect::<Vec<_>>();
@@ -315,6 +356,7 @@ async fn execute_inner(
         include_content,
         max_chars,
         min_score,
+        retrieval_mode,
     ))
 }
 
@@ -324,6 +366,7 @@ pub fn apply_bounded_recall(
     include_content: bool,
     max_chars: usize,
     min_score: Option<f32>,
+    retrieval_mode: Option<String>,
 ) -> SearchEnvelope {
     let max_relevance = results.iter().filter_map(|r| r.relevance()).fold(
         None,
@@ -331,7 +374,7 @@ pub fn apply_bounded_recall(
     );
 
     if results.is_empty() {
-        return SearchEnvelope::abstain("no_hits", max_relevance);
+        return SearchEnvelope::abstain("no_hits", max_relevance, retrieval_mode);
     }
 
     if let Some(threshold) = min_score {
@@ -340,6 +383,7 @@ pub fn apply_bounded_recall(
             return SearchEnvelope::abstain(
                 format!("best_relevance_below_min_score:{best:.4}<{threshold:.4}"),
                 max_relevance,
+                retrieval_mode,
             );
         }
     }
@@ -348,37 +392,51 @@ pub fn apply_bounded_recall(
         for result in &mut results {
             result.content = None;
         }
-        return SearchEnvelope::inject(results, max_relevance);
+        return SearchEnvelope::inject(results, max_relevance, retrieval_mode);
     }
 
     results = apply_char_budget(results, max_chars);
     if results.is_empty() {
-        return SearchEnvelope::abstain("char_budget_exhausted", max_relevance);
+        return SearchEnvelope::abstain("char_budget_exhausted", max_relevance, retrieval_mode);
     }
-    SearchEnvelope::inject(results, max_relevance)
+    SearchEnvelope::inject(results, max_relevance, retrieval_mode)
 }
 
 fn apply_char_budget(
     results: Vec<UnifiedSearchResult>,
     max_chars: usize,
 ) -> Vec<UnifiedSearchResult> {
+    // Pinned vault notes survive the budget: pack them first, then fill with the rest.
+    let (pinned, rest): (Vec<_>, Vec<_>) = results
+        .into_iter()
+        .partition(|result| result.pinned == Some(true));
+    let ordered = pinned.into_iter().chain(rest).collect::<Vec<_>>();
+
     let mut total = 0usize;
     let mut kept = Vec::new();
-    for mut result in results {
+    for mut result in ordered {
+        let is_pinned = result.pinned == Some(true);
         let Some(content) = result.content.as_mut() else {
             kept.push(result);
             continue;
         };
         let len = content.chars().count();
-        if total >= max_chars {
+        if total >= max_chars && !is_pinned {
             break;
         }
         if total + len > max_chars {
             let remaining = max_chars.saturating_sub(total);
-            if remaining < 80 {
+            if remaining < 80 && !is_pinned {
                 break;
             }
-            truncate_content(content, remaining);
+            if remaining >= 80 {
+                truncate_content(content, remaining.max(if is_pinned { 80 } else { remaining }));
+            } else if is_pinned {
+                // Always keep a short pinned stub even when the budget is exhausted.
+                truncate_content(content, 80.min(len));
+            } else {
+                break;
+            }
         }
         total += content.chars().count();
         kept.push(result);
@@ -458,6 +516,7 @@ mod tests {
             start_line: None,
             end_line: None,
             segment_index: None,
+            pinned: None,
         }
     }
 
@@ -491,6 +550,7 @@ mod tests {
             true,
             2000,
             Some(0.5),
+            None,
         );
         assert_eq!(envelope.decision, SearchDecision::Abstain);
         assert!(envelope.results.is_empty());
@@ -504,10 +564,12 @@ mod tests {
             true,
             2000,
             Some(0.5),
+            Some("fts_prefer".into()),
         );
         assert_eq!(envelope.decision, SearchDecision::Inject);
         assert_eq!(envelope.results.len(), 1);
         assert_eq!(envelope.injected_ids, vec!["strong".to_string()]);
+        assert_eq!(envelope.retrieval_mode.as_deref(), Some("fts_prefer"));
     }
 
     #[test]
@@ -521,6 +583,7 @@ mod tests {
             true,
             400,
             None,
+            None,
         );
         assert_eq!(envelope.decision, SearchDecision::Inject);
         assert_eq!(envelope.results.len(), 1);
@@ -530,8 +593,31 @@ mod tests {
     }
 
     #[test]
+    fn char_budget_prefers_pinned_notes() {
+        let long = "x".repeat(500);
+        let mut pinned = with_content(result("vault", "pinned-note"), &long);
+        pinned.pinned = Some(true);
+        let envelope = apply_bounded_recall(
+            vec![
+                with_content(result("vault", "first"), &long),
+                pinned,
+            ],
+            true,
+            400,
+            None,
+            None,
+        );
+        assert_eq!(envelope.decision, SearchDecision::Inject);
+        assert!(
+            envelope.results.iter().any(|r| r.path == "pinned-note"),
+            "pinned note must survive char budget: {:?}",
+            envelope.results.iter().map(|r| &r.path).collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
     fn abstains_on_empty_hits() {
-        let envelope = apply_bounded_recall(vec![], true, 2000, None);
+        let envelope = apply_bounded_recall(vec![], true, 2000, None, None);
         assert_eq!(envelope.decision, SearchDecision::Abstain);
         assert_eq!(envelope.reason, "no_hits");
     }
