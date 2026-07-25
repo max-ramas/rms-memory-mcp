@@ -901,7 +901,13 @@ fn extract_results(
             heading: heading_array.value(i).to_string(),
             text: text_array.value(i).to_string(),
             score,
-            confidence: confidence_array.as_ref().map(|ca| ca.value(i)),
+            confidence: confidence_array.as_ref().and_then(|ca| {
+                if ca.is_null(i) {
+                    None
+                } else {
+                    Some(ca.value(i))
+                }
+            }),
             pinned,
         });
     }
@@ -1173,6 +1179,35 @@ impl Store {
 mod tests {
     use super::*;
 
+    fn chunk(
+        path: &str,
+        text: &str,
+        status: Option<&str>,
+        confidence: Option<f32>,
+    ) -> ChunkRecord {
+        ChunkRecord {
+            document_id: path.to_string(),
+            path: path.to_string(),
+            doc_type: "note".into(),
+            title: path.to_string(),
+            content_hash: format!("hash-{path}"),
+            updated_at: "2026-07-25T00:00:00Z".into(),
+            links_raw: "[]".into(),
+            links_resolved: "[]".into(),
+            chunk_index: 0,
+            heading: String::new(),
+            text: text.to_string(),
+            vector: vec![0.01; VECTOR_DIMENSION],
+            confidence,
+            status: status.map(str::to_string),
+            supersedes: None,
+            superseded_by: None,
+            valid_from: None,
+            valid_until: None,
+            pinned: None,
+        }
+    }
+
     #[test]
     fn vault_status_filter_excludes_superseded() {
         let f = vault_status_filter();
@@ -1208,5 +1243,124 @@ mod tests {
             "how does bounded recall decide to abstain when scores are weak?"
         ));
         assert!(!prefers_fts_query(""));
+    }
+
+    /// Closed checkpoints set `status: done` and must drop out of default recall
+    /// via the shared status allowlist — not a separate checkpoint branch.
+    #[tokio::test]
+    async fn status_done_chunks_are_excluded_from_vault_search() {
+        let directory = tempfile::tempdir().unwrap();
+        let store = Store::init(&directory.path().to_string_lossy(), "memory")
+            .await
+            .unwrap();
+        let table = store.create_table().await.unwrap();
+        let token = "checkpointcontinuitytoken";
+        store
+            .insert_batch(
+                &table,
+                vec![
+                    chunk(
+                        "artifacts/checkpoints/active.md",
+                        &format!("{token} still open"),
+                        Some("active"),
+                        Some(0.9),
+                    ),
+                    chunk(
+                        "artifacts/checkpoints/closed.md",
+                        &format!("{token} already closed"),
+                        Some("done"),
+                        Some(0.9),
+                    ),
+                    chunk(
+                        "artifacts/checkpoints/superseded.md",
+                        &format!("{token} was superseded"),
+                        Some("superseded"),
+                        Some(0.9),
+                    ),
+                ],
+            )
+            .await
+            .unwrap();
+        store.create_fts_index(&table).await.unwrap();
+
+        let (results, mode) = store
+            .search_with_mode(vec![0.01; VECTOR_DIMENSION], token.to_string(), 10, None)
+            .await
+            .expect("search");
+
+        assert_eq!(mode, VaultRetrievalMode::FtsPrefer);
+        let paths: Vec<_> = results.iter().map(|r| r.path.as_str()).collect();
+        assert!(
+            paths.contains(&"artifacts/checkpoints/active.md"),
+            "active checkpoint must remain recallable: {paths:?}"
+        );
+        assert!(
+            !paths.contains(&"artifacts/checkpoints/closed.md"),
+            "status=done must drop out of default recall: {paths:?}"
+        );
+        assert!(
+            !paths.contains(&"artifacts/checkpoints/superseded.md"),
+            "superseded must share the same status gate: {paths:?}"
+        );
+    }
+
+    /// First half of the dual-gate contract: NULL confidence passes `min_confidence`
+    /// (fail-open legacy notes). Paired with search.rs min_score abstain test.
+    #[tokio::test]
+    async fn null_confidence_passes_min_confidence_filter() {
+        let directory = tempfile::tempdir().unwrap();
+        let store = Store::init(&directory.path().to_string_lossy(), "memory")
+            .await
+            .unwrap();
+        let table = store.create_table().await.unwrap();
+        let token = "confidencegatelegacy";
+        store
+            .insert_batch(
+                &table,
+                vec![
+                    chunk(
+                        "decisions/legacy-null.md",
+                        &format!("{token} legacy note"),
+                        Some("active"),
+                        None,
+                    ),
+                    chunk(
+                        "decisions/low-conf.md",
+                        &format!("{token} weak metadata"),
+                        Some("active"),
+                        Some(0.2),
+                    ),
+                ],
+            )
+            .await
+            .unwrap();
+        store.create_fts_index(&table).await.unwrap();
+
+        let (results, _) = store
+            .search_with_mode(
+                vec![0.01; VECTOR_DIMENSION],
+                token.to_string(),
+                10,
+                Some(0.8),
+            )
+            .await
+            .expect("search");
+
+        let paths: Vec<_> = results.iter().map(|r| r.path.as_str()).collect();
+        assert!(
+            paths.contains(&"decisions/legacy-null.md"),
+            "NULL confidence must pass min_confidence: {paths:?}"
+        );
+        assert!(
+            !paths.contains(&"decisions/low-conf.md"),
+            "low confidence must be filtered by min_confidence: {paths:?}"
+        );
+        assert!(
+            results
+                .iter()
+                .find(|r| r.path == "decisions/legacy-null.md")
+                .is_some_and(|r| r.confidence.is_none()),
+            "legacy hit should retain NULL confidence for the min_score gate"
+        );
     }
 }
