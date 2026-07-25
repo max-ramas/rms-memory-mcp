@@ -4,7 +4,7 @@ All notable changes to this project will be documented in this file.
 
 ## [1.0.7] - 2026-07-25
 
-Bounded recall and vault-native knowledge lifecycle (second-brain mapping onto Markdown + LanceDB, not a SQL memories table).
+Bounded recall, vault-native knowledge lifecycle, and session continuity (second-brain mapping onto Markdown + LanceDB, not a SQL memories table). Companion GUI adopts the **same `1.0.7` product version** (shared GitHub Releases tag / numbering).
 
 ### Added
 - **`rms_search` decision envelope:** responses include `{ decision: inject|abstain, reason, injected_ids, results }` (additive; existing `results` shape preserved).
@@ -15,14 +15,26 @@ Bounded recall and vault-native knowledge lifecycle (second-brain mapping onto M
 - **Soft supersede on `rms_write`:** optional `supersedes: <relative vault path>` stamps the new note and marks the predecessor superseded with bidirectional ids.
 - **Temporal validity:** optional `valid_from` / `valid_until` / `learned_at` in frontmatter; indexed and applied in `vault_recall_filter`.
 - **Doctor `[7/7] Knowledge freshness`:** expired `valid_until`, broken supersession links (issues); old `learned_at` without `valid_until` (informational).
+- **Query-aware FTS prefer:** short keyword/path queries (≤3 tokens, ≤48 chars) try Lance FTS-only first, then fall back to hybrid; envelope may include `retrieval_mode: fts_prefer|hybrid`.
+- **Checkpoint MCP tools:** `rms_checkpoint_save` / `done` / `load` / `query`. Checkpoints are plain Markdown under `artifacts/checkpoints/` (`type: checkpoint`, `status: active|done`, `goal`, `pending`, `links`); closing writes a durable session summary under `artifacts/sessions/`. `status: done` drops out of the default recall filter automatically — no new storage, no tiers.
+- **`rms_overview`:** structured orientation for exactly one project — document counts by folder/status, recent notes, active checkpoints, coverage metadata. Fail-closed scoping: requires a bound workspace or explicit `project`; never aggregates across projects.
+- **`rms_system_instructions`:** returns the canonical memory-usage protocol so agents can self-bootstrap without injected rule files.
+- **Structured MCP responses:** continuity tools return `structuredContent` alongside pretty-JSON text (one contract for agents and the GUI).
+- **`rms-memory hook` CLI (editor-agnostic L3):** `--event session_start|pre_compact|session_stop [--project <key>] [--cwd <dir>] [--apply --name … --goal … --pending … --summary …]`. Machine-readable JSON on stdout; Cursor/VS Code/Neovim/CI wire thin adapters to this CLI instead of any IDE-specific format. Fail-closed project resolution (explicit key or unique registry match; no global fallback).
+- **Installer capability matrix:** `rms-memory install` prints an honest L1 (MCP config) / L2 (rules injection) / L3 (continuity hooks) report with a ready-to-paste Cursor `hooks.json` adapter example.
+- **Frontmatter:** `goal`, `pending`, `links`, `done_at` fields for checkpoint/session notes; **`pinned`** bypasses temporal/`min_confidence` recall gates (status still applies); indexed as Lance `pinned='true'`.
+- **`rms_read` `noPromote`:** accepted for explicit read-without-side-effects contracts (vault reads were already side-effect free).
+- **L3 installer adapters:** `rms-memory install` writes thin Cursor `hooks.json` entries + shared/Claude/Neovim scripts that call `rms-memory hook`; uninstall strips managed hooks only.
 - ADR: vault `architecture/bounded-recall.md`.
 
 ### Changed
 - ROADMAP: stale **pruning** (future/v2) is distinct from vault-native **supersession** + temporal recall gates.
 
 ### Verification
-- Unit tests: search abstain/budget/RRF, soft supersede, vault recall filters, freshness datetime parse.
+- Unit tests: search abstain/budget/RRF, soft supersede, vault recall filters, freshness datetime parse, `prefers_fts_query`, checkpoint save→update→load→done round-trip, name validation (fail-closed), overview counts/active checkpoints, hook project resolution refusals; full suite green.
+- Manual: `hook --event session_start --project rms-memory-mcp` returns the live overview JSON; unregistered `--cwd` exits 1.
 - `cargo check` / targeted `--lib` filters clean.
+- Companion GUI **1.0.7**: Search tab + opener + Dashboard continuity widgets; docs/CHANGELOG aligned.
 
 ## [1.0.6] - 2026-07-23
 

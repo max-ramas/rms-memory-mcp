@@ -1,6 +1,6 @@
 # RMS Memory GUI
 
-**Current release:** GUI `1.0.0` (2026-07-23) with MCP `1.0.7`.
+**Current release:** GUI `1.0.7` (2026-07-25) with MCP `1.0.7` (unified numbering).
 
 RMS Memory GUI is the optional commercial desktop application for
 [RMS Memory MCP](https://github.com/max-ramas/rms-memory-mcp). It is a Tauri
@@ -11,7 +11,9 @@ the same vaults and projects served by MCP.
 
 | Area | Capability |
 | --- | --- |
-| Dashboard | Project health, document/store status, grouped Doctor findings, one-click repair for missing IDs |
+| Dashboard | Project health, document/store status, grouped Doctor findings, one-click repair for missing IDs, Continuity teaser (active checkpoints → Continuity tab) |
+| Continuity | Create/continue/complete checkpoints, recent notes, overview counts (same JSON as MCP continuity tools) |
+| Search | Bounded memory search (same inject/abstain envelope as `rms_search`), corpus selector, optional `min_score`, retrieval-mode badge |
 | Editor | Visual (Milkdown) and Raw (Monaco) Markdown editing, create/rename/delete files and folders, dirty-state protection |
 | Hybrid graph | Full WebGL Markdown + code + semantic graph, independent filters, search and deep zoom, no sampling or node cap |
 | Source control | Per-project Git status/diff/history plus a separate global Vault Git/GitHub sync (safe commit → pull → push) |
@@ -49,14 +51,11 @@ the asset whose platform and architecture match your machine:
 | Windows x64 | `.msi` or NSIS `.exe` |
 | Linux x64 | `.AppImage`, `.deb`, or `.rpm` |
 
-The public release uses the same `v<version>` tag as the GUI build (current
-target: **`v1.0.0`**). The GUI pipeline runs both for a pushed `v*` tag and for
-a manual dispatch that supplies the same version tag as
+The public release uses the same `v<version>` tag as the GUI build (unified with MCP:
+**`v1.0.7`**). Installer assets are named `rms_memory_gui_*` and checksums live in
+`rms_memory_gui_SHA256SUMS.txt`. The GUI pipeline runs both for a pushed `v*` tag
+and for a manual dispatch that supplies the same version tag as
 `src-tauri/tauri.conf.json`.
-
-Each GUI release includes `SHA256SUMS.txt`. Verify the downloaded installer
-against that file before installation (for example, `shasum -a 256 <file>` on
-macOS or `Get-FileHash <file> -Algorithm SHA256` in PowerShell).
 
 ### Known macOS distribution issue
 
@@ -66,7 +65,7 @@ or accept Gatekeeper warnings on unsigned downloads. macOS may show an
 **“app is damaged”** or unverified-developer dialog on first launch — that is
 Gatekeeper, not a corrupt binary.
 
-Before proceeding, verify the installer checksum against `SHA256SUMS.txt` when
+Before proceeding, verify the installer checksum against `rms_memory_gui_SHA256SUMS.txt` when
 one is published with the release. Then open the app with either method:
 
 1. **System Settings → Privacy & Security** → **Open Anyway** beside RMS Memory.

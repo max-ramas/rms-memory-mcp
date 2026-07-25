@@ -28,17 +28,24 @@ pub fn vault_status_filter() -> &'static str {
     "(status IS NULL OR status = '' OR status = 'active' OR status = 'draft')"
 }
 
+/// Recall gates for vault search.
+///
+/// Status always applies (superseded stays hidden). Notes with `pinned = 'true'`
+/// bypass temporal validity and `min_confidence`; everything else must pass both.
 pub fn vault_recall_filter(min_confidence: Option<f32>) -> Option<String> {
     let now = chrono::Utc::now().to_rfc3339();
-    let mut parts = vec![
-        vault_status_filter().to_string(),
+    let mut freshness = vec![
         format!("(valid_from IS NULL OR valid_from = '' OR valid_from <= '{now}')"),
         format!("(valid_until IS NULL OR valid_until = '' OR valid_until >= '{now}')"),
     ];
     if let Some(min_conf) = min_confidence {
-        parts.push(format!("(confidence IS NULL OR confidence >= {min_conf})"));
+        freshness.push(format!("(confidence IS NULL OR confidence >= {min_conf})"));
     }
-    Some(parts.join(" AND "))
+    Some(format!(
+        "{} AND (pinned = 'true' OR ({}))",
+        vault_status_filter(),
+        freshness.join(" AND ")
+    ))
 }
 
 #[derive(Clone)]
@@ -98,6 +105,7 @@ impl Store {
             Field::new("superseded_by", DataType::Utf8, true),
             Field::new("valid_from", DataType::Utf8, true),
             Field::new("valid_until", DataType::Utf8, true),
+            Field::new("pinned", DataType::Utf8, true),
             // Use VECTOR_DIMENSION
             Field::new(
                 "vector",
@@ -142,6 +150,7 @@ impl Store {
             "superseded_by",
             "valid_from",
             "valid_until",
+            "pinned",
         ] {
             self.ensure_nullable_column(table, name, DataType::Utf8)
                 .await?;
@@ -498,6 +507,7 @@ impl Store {
         let mut superseded_by_b = StringBuilder::new();
         let mut valid_from_b = StringBuilder::new();
         let mut valid_until_b = StringBuilder::new();
+        let mut pinned_b = StringBuilder::new();
 
         let item_builder = Float32Builder::new();
         let mut vector_b = FixedSizeListBuilder::new(item_builder, VECTOR_DIMENSION as i32);
@@ -523,6 +533,10 @@ impl Store {
             append_optional_utf8(&mut superseded_by_b, r.superseded_by.as_deref());
             append_optional_utf8(&mut valid_from_b, r.valid_from.as_deref());
             append_optional_utf8(&mut valid_until_b, r.valid_until.as_deref());
+            append_optional_utf8(
+                &mut pinned_b,
+                r.pinned.and_then(|p| p.then_some("true")),
+            );
 
             vector_b.values().append_slice(&r.vector);
             vector_b.append(true);
@@ -548,6 +562,7 @@ impl Store {
                 Arc::new(superseded_by_b.finish()),
                 Arc::new(valid_from_b.finish()),
                 Arc::new(valid_until_b.finish()),
+                Arc::new(pinned_b.finish()),
                 Arc::new(vector_b.finish()),
             ],
         )?;
@@ -695,6 +710,8 @@ pub struct ChunkRecord {
     pub superseded_by: Option<String>,
     pub valid_from: Option<String>,
     pub valid_until: Option<String>,
+    /// Indexed as Utf8 `"true"` when pinned; null/absent otherwise.
+    pub pinned: Option<bool>,
 }
 
 #[derive(Clone)]
@@ -808,6 +825,8 @@ pub struct SearchResult {
     pub score: Option<f32>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub confidence: Option<f32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub pinned: Option<bool>,
 }
 
 #[derive(serde::Serialize, serde::Deserialize, Debug, Clone)]
@@ -827,7 +846,7 @@ fn extract_results(
     batch: &lancedb::arrow::arrow_array::RecordBatch,
     results: &mut Vec<SearchResult>,
 ) -> Result<()> {
-    use lancedb::arrow::arrow_array::{Float32Array, StringArray};
+    use lancedb::arrow::arrow_array::{Array, Float32Array, StringArray};
 
     let path_array = batch
         .column_by_name("path")
@@ -841,25 +860,92 @@ fn extract_results(
         .column_by_name("text")
         .and_then(|c| c.as_any().downcast_ref::<StringArray>().cloned())
         .context("'text' column is not a StringArray")?;
-    let score_col = batch.column_by_name("_distance");
-    let score_array = score_col.and_then(|c| c.as_any().downcast_ref::<Float32Array>().cloned());
+    // Hybrid/vector emits `_distance` (lower = better). FTS emits BM25 `_score`
+    // (higher = better); convert to a pseudo-distance so callers stay consistent.
+    let distance_array = batch
+        .column_by_name("_distance")
+        .and_then(|c| c.as_any().downcast_ref::<Float32Array>().cloned());
+    let bm25_array = batch
+        .column_by_name("_score")
+        .and_then(|c| c.as_any().downcast_ref::<Float32Array>().cloned());
     let confidence_col = batch.column_by_name("confidence");
     let confidence_array =
         confidence_col.and_then(|c| c.as_any().downcast_ref::<Float32Array>().cloned());
+    let pinned_array = batch
+        .column_by_name("pinned")
+        .and_then(|c| c.as_any().downcast_ref::<StringArray>().cloned());
 
     for i in 0..batch.num_rows() {
         if crate::path_policy::is_vault_wiki_relative_path(path_array.value(i)) {
             continue;
         }
+        let score = if let Some(ref distances) = distance_array {
+            Some(distances.value(i))
+        } else if let Some(ref bm25) = bm25_array {
+            let raw = bm25.value(i).max(0.0);
+            Some(1.0 / (1.0 + raw))
+        } else {
+            None
+        };
+        let pinned = pinned_array.as_ref().and_then(|arr| {
+            if arr.is_null(i) {
+                None
+            } else if arr.value(i) == "true" {
+                Some(true)
+            } else {
+                Some(false)
+            }
+        });
         results.push(SearchResult {
             path: path_array.value(i).to_string(),
             heading: heading_array.value(i).to_string(),
             text: text_array.value(i).to_string(),
-            score: score_array.as_ref().map(|sa| sa.value(i)),
+            score,
             confidence: confidence_array.as_ref().map(|ca| ca.value(i)),
+            pinned,
         });
     }
     Ok(())
+}
+
+/// Short keyword / path / tag queries prefer FTS (names & exact tokens) over dense hybrid.
+pub fn prefers_fts_query(query: &str) -> bool {
+    let q = query.trim();
+    if q.is_empty() {
+        return false;
+    }
+    let char_len = q.chars().count();
+    if char_len > 48 {
+        return false;
+    }
+    let tokens: Vec<_> = q.split_whitespace().collect();
+    if tokens.is_empty() || tokens.len() > 3 {
+        return false;
+    }
+    // Sentence-like / interrogative → keep hybrid.
+    if q.contains('?') || q.contains(',') || q.contains(';') {
+        return false;
+    }
+    tokens.iter().all(|token| {
+        token
+            .chars()
+            .all(|c| c.is_alphanumeric() || matches!(c, '-' | '_' | '.' | '/' | ':' | '#' | '@'))
+    })
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum VaultRetrievalMode {
+    Hybrid,
+    FtsPrefer,
+}
+
+impl VaultRetrievalMode {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Hybrid => "hybrid",
+            Self::FtsPrefer => "fts_prefer",
+        }
+    }
 }
 
 impl Store {
@@ -924,6 +1010,19 @@ impl Store {
         limit: usize,
         min_confidence: Option<f32>,
     ) -> Result<Vec<SearchResult>> {
+        let (results, _mode) = self
+            .search_with_mode(query_vector, query_str, limit, min_confidence)
+            .await?;
+        Ok(results)
+    }
+
+    pub async fn search_with_mode(
+        &self,
+        query_vector: Vec<f32>,
+        query_str: String,
+        limit: usize,
+        min_confidence: Option<f32>,
+    ) -> Result<(Vec<SearchResult>, VaultRetrievalMode)> {
         use futures::stream::StreamExt;
         use lance_index::scalar::FullTextSearchQuery;
         use lancedb::query::{ExecutableQuery, QueryBase};
@@ -932,10 +1031,35 @@ impl Store {
         // Ensure lifecycle columns exist before filtering on them.
         self.migrate_schema(&table).await?;
 
-        let mut results = Vec::new();
-
-        let query_vector_first = query_vector.clone();
         let filter = vault_recall_filter(min_confidence);
+
+        if prefers_fts_query(&query_str) {
+            match self
+                .search_fts_only(&table, &query_str, limit, filter.as_deref())
+                .await
+            {
+                Ok(results) if !results.is_empty() => {
+                    tracing::debug!(
+                        query = %query_str,
+                        hits = results.len(),
+                        "vault search used FTS-prefer path"
+                    );
+                    return Ok((results, VaultRetrievalMode::FtsPrefer));
+                }
+                Ok(_) => tracing::debug!(
+                    query = %query_str,
+                    "FTS-prefer returned empty; falling back to hybrid"
+                ),
+                Err(error) => tracing::warn!(
+                    error = %error,
+                    query = %query_str,
+                    "FTS-prefer failed; falling back to hybrid"
+                ),
+            }
+        }
+
+        let mut results = Vec::new();
+        let query_vector_first = query_vector.clone();
 
         // Build base query builder
         let query_builder = table.vector_search(query_vector_first)?;
@@ -972,6 +1096,33 @@ impl Store {
                     extract_results(&batch, &mut results)?;
                 }
             }
+        }
+        Ok((results, VaultRetrievalMode::Hybrid))
+    }
+
+    async fn search_fts_only(
+        &self,
+        table: &Table,
+        query_str: &str,
+        limit: usize,
+        filter: Option<&str>,
+    ) -> Result<Vec<SearchResult>> {
+        use futures::stream::StreamExt;
+        use lance_index::scalar::FullTextSearchQuery;
+        use lancedb::query::{ExecutableQuery, QueryBase};
+
+        let mut query = table
+            .query()
+            .full_text_search(FullTextSearchQuery::new(query_str.to_string()))
+            .limit(limit);
+        if let Some(filter) = filter {
+            query = query.only_if(filter.to_string());
+        }
+        let mut stream = query.execute().await?;
+        let mut results = Vec::new();
+        while let Some(batch) = stream.next().await {
+            let batch = batch?;
+            extract_results(&batch, &mut results)?;
         }
         Ok(results)
     }
@@ -1037,6 +1188,7 @@ mod tests {
         assert!(f.contains("valid_from"));
         assert!(f.contains("valid_until"));
         assert!(f.contains("confidence >= 0.5"));
+        assert!(f.contains("pinned = 'true'"));
     }
 
     #[test]
@@ -1044,5 +1196,17 @@ mod tests {
         let f = vault_recall_filter(None).expect("filter");
         assert!(f.contains("valid_until"));
         assert!(!f.contains("confidence"));
+        assert!(f.contains("pinned = 'true'"));
+    }
+
+    #[test]
+    fn prefers_fts_for_short_keywords_not_sentences() {
+        assert!(prefers_fts_query("bounded-recall"));
+        assert!(prefers_fts_query("rules/api"));
+        assert!(prefers_fts_query("status superseded"));
+        assert!(!prefers_fts_query(
+            "how does bounded recall decide to abstain when scores are weak?"
+        ));
+        assert!(!prefers_fts_query(""));
     }
 }

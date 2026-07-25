@@ -464,6 +464,7 @@ async fn sync_vault_inner(
             .frontmatter
             .as_ref()
             .and_then(|fm| fm.valid_until.clone());
+        let pinned = doc.frontmatter.as_ref().and_then(|fm| fm.pinned);
 
         let raw_links = doc.extract_links();
         let mut normalized_links = Vec::new();
@@ -523,6 +524,7 @@ async fn sync_vault_inner(
                 superseded_by: superseded_by.clone(),
                 valid_from: valid_from.clone(),
                 valid_until: valid_until.clone(),
+                pinned,
             });
         }
     }
@@ -632,6 +634,7 @@ async fn index_vault_full_inner(
             .frontmatter
             .as_ref()
             .and_then(|fm| fm.valid_until.clone());
+        let pinned = doc.frontmatter.as_ref().and_then(|fm| fm.pinned);
 
         let raw_links = doc.extract_links();
         let mut normalized_links = Vec::new();
@@ -691,6 +694,7 @@ async fn index_vault_full_inner(
                 superseded_by: superseded_by.clone(),
                 valid_from: valid_from.clone(),
                 valid_until: valid_until.clone(),
+                pinned,
             });
         }
     }

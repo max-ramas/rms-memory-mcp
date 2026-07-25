@@ -2,7 +2,7 @@
 
 # 🧠 RMS Memory MCP
 
-**Version:** `1.0.7` (2026-07-25) · companion GUI `1.0.0`
+**Version:** `1.0.7` (2026-07-25) · companion GUI `1.0.7` (unified numbering)
 
 **Persistent, local-first memory for your AI coding agents.**
 
@@ -49,6 +49,10 @@ You're developing a single project but switching between different agents — Cu
 | 🕸️ **Knowledge Graph Foundation** | Derived Markdown/code relationships and durable user overrides are stored separately from retrieval chunks and consumed by the companion GUI graph. |
 | 🧹 **Safe Project Lifecycle** | Unregistering preserves vault/index data; permanent GUI deletion requires the exact project key, is confined to the master vault, and never touches source code. |
 | 🔀 **Federated Corpus Search** | Search `vault`, `code`, or `all`; mixed results use Reciprocal Rank Fusion rather than incompatible raw vector distances. |
+| 🎯 **Bounded Recall (v1.0.7)** | `rms_search` returns an inject/abstain envelope with `max_chars`, optional `min_score`, fail-closed errors, and `retrieval_mode` (`hybrid` or short-query `fts_prefer`). |
+| ♻️ **Knowledge Lifecycle** | Frontmatter `status` / `supersedes` / temporal `valid_*` gate Lance recall; soft supersede via `rms_write`; Doctor freshness lint (7/7). |
+| 🔄 **Session Continuity (v1.0.7)** | Vault-backed checkpoints (`rms_checkpoint_save/done/load/query`), `rms_overview` project orientation, `rms_system_instructions` self-bootstrap, editor-agnostic `rms-memory hook` CLI, installer L3 thin adapters, and `pinned` notes that bypass temporal/`min_confidence` recall gates. |
+| 📦 **Unified Releases** | Public assets use `rms_memory_mcp_*` / `rms_memory_gui_*` on the **same** `vX.Y.Z` tag (MCP + GUI share numbering). |
 | ⚙️ **Dynamic Auto-Installer** | `rms-memory install` scans your system and wires itself into every supported IDE. |
 | 📜 **Rules-as-Code Patching** | Non-destructive AST patching of `.cursorrules`, `.zed/assistant.md`, etc. Opt-in by default. |
 | 🧪 **Durable Vault Writes** | `rms_write` creates rolling `.bak` backups and atomically replaces `create`/`replace` targets after fsync, so interrupted writes never expose a truncated Markdown file. |
@@ -231,6 +235,7 @@ Supported names are `rust`, `go`, `javascript`, `jsx`, `typescript`, `tsx`, `pyt
 | `rms-memory projects list` | Lists registered project keys and their code/vault paths. |
 | `rms-memory projects locate --project <key>` | Resolves one registered project key. |
 | `rms-memory projects remove <key>` | Removes an erroneous project registration while preserving its vault files. |
+| `rms-memory hook --event <e>` | Editor-agnostic continuity hook (`session_start`, `pre_compact`, `session_stop`); JSON on stdout. `--project <key>` or unique cwd resolution (fail-closed); `--apply` creates/updates or closes a checkpoint. |
 | **All commands** | Accept `--scope <id>` to target arbitrary isolated vaults (threads, leads, etc.). |
 
 ## 🔌 MCP Tools Exposed
@@ -241,7 +246,7 @@ Tool descriptions are written to be **action-oriented**, so agents use the vault
 <tr><th>Tool</th><th>Purpose</th><th>Input</th></tr>
 <tr>
 <td><code>rms-memory_rms_search</code></td>
-<td>Searches Markdown memory by default. Set <code>corpus</code> to <code>code</code> or <code>all</code>; <code>all</code> uses Reciprocal Rank Fusion. Returns an inject/abstain decision envelope. Agents are instructed to call this <em>first</em>.</td>
+<td>Searches Markdown memory by default. Set <code>corpus</code> to <code>code</code> or <code>all</code>; <code>all</code> uses Reciprocal Rank Fusion. Returns an inject/abstain decision envelope (<code>decision</code>, <code>reason</code>, <code>injected_ids</code>, optional <code>retrieval_mode</code>). Agents are instructed to call this <em>first</em>.</td>
 <td><code>{ query, project?, corpus: vault|code|all, limit, include_content, min_confidence, max_chars?, min_score? }</code></td>
 </tr>
 <tr>
@@ -263,6 +268,21 @@ Tool descriptions are written to be **action-oriented**, so agents use the vault
 <td><code>rms-memory_rms_projects</code></td>
 <td>Lists registered project keys even when the MCP client did not supply workspace roots.</td>
 <td><code>{}</code></td>
+</tr>
+<tr>
+<td><code>rms-memory_rms_overview</code></td>
+<td>Structured orientation for exactly one project: counts by folder/status, recent notes, active checkpoints, coverage metadata. Fail-closed scoping; never aggregates across projects. Returns <code>structuredContent</code> + JSON text.</td>
+<td><code>{ project?, recent_limit? }</code></td>
+</tr>
+<tr>
+<td><code>rms-memory_rms_checkpoint_save</code> / <code>done</code> / <code>load</code> / <code>query</code></td>
+<td>Session continuity on plain Markdown (<code>artifacts/checkpoints/</code>): save goal/pending/links before context compaction, list or load active checkpoints on resume, close with a summary — closing writes a durable session note under <code>artifacts/sessions/</code> and drops the checkpoint out of default recall.</td>
+<td><code>{ name, project?, goal?, pending?, links?, summary?, status? }</code></td>
+</tr>
+<tr>
+<td><code>rms-memory_rms_system_instructions</code></td>
+<td>Returns the canonical memory-usage protocol (search-first, persist, continuity) so agents can self-bootstrap without injected rule files.</td>
+<td><code>{ project? }</code></td>
 </tr>
 </table>
 

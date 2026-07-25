@@ -32,6 +32,17 @@ pub struct Frontmatter {
     pub valid_until: Option<String>,
     /// When the fact was learned (RFC3339), optional; used by doctor freshness lint.
     pub learned_at: Option<String>,
+    /// Checkpoint goal (docs with `type: checkpoint`).
+    pub goal: Option<String>,
+    /// Checkpoint pending work description (docs with `type: checkpoint`).
+    pub pending: Option<String>,
+    /// Vault-relative paths this checkpoint/session references.
+    pub links: Option<Vec<String>>,
+    /// When a checkpoint was closed (RFC3339), set by checkpoint_done.
+    pub done_at: Option<String>,
+    /// When true, the note stays in recall past temporal/`min_confidence` gates
+    /// (still respects status — superseded notes stay hidden).
+    pub pinned: Option<bool>,
     pub link: Option<String>,
     pub last_modified_by: Option<String>,
     pub timestamp: Option<String>,
