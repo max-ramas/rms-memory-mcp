@@ -317,9 +317,7 @@ async fn execute_inner(
                 .search_with_mode(query_vector, query.to_string(), limit, min_confidence)
                 .await?;
             retrieval_mode = Some(mode.as_str().to_string());
-            hits.into_iter()
-                .map(UnifiedSearchResult::vault)
-                .collect()
+            hits.into_iter().map(UnifiedSearchResult::vault).collect()
         }
         Corpus::Code => store
             .search_code(query_vector, limit)
@@ -368,10 +366,12 @@ pub fn apply_bounded_recall(
     min_score: Option<f32>,
     retrieval_mode: Option<String>,
 ) -> SearchEnvelope {
-    let max_relevance = results.iter().filter_map(|r| r.relevance()).fold(
-        None,
-        |acc: Option<f32>, value| Some(acc.map_or(value, |current| current.max(value))),
-    );
+    let max_relevance = results
+        .iter()
+        .filter_map(|r| r.relevance())
+        .fold(None, |acc: Option<f32>, value| {
+            Some(acc.map_or(value, |current| current.max(value)))
+        });
 
     if results.is_empty() {
         return SearchEnvelope::abstain("no_hits", max_relevance, retrieval_mode);
@@ -430,7 +430,10 @@ fn apply_char_budget(
                 break;
             }
             if remaining >= 80 {
-                truncate_content(content, remaining.max(if is_pinned { 80 } else { remaining }));
+                truncate_content(
+                    content,
+                    remaining.max(if is_pinned { 80 } else { remaining }),
+                );
             } else if is_pinned {
                 // Always keep a short pinned stub even when the budget is exhausted.
                 truncate_content(content, 80.min(len));
@@ -579,13 +582,8 @@ mod tests {
     fn null_confidence_hit_still_abstains_under_min_score() {
         let mut legacy = with_distance(result("vault", "legacy-null-confidence"), 20.0);
         legacy.confidence = None;
-        let envelope = apply_bounded_recall(
-            vec![legacy],
-            true,
-            2000,
-            Some(0.5),
-            Some("hybrid".into()),
-        );
+        let envelope =
+            apply_bounded_recall(vec![legacy], true, 2000, Some(0.5), Some("hybrid".into()));
         assert_eq!(envelope.decision, SearchDecision::Abstain);
         assert!(envelope.results.is_empty());
         assert!(envelope.reason.contains("best_relevance_below_min_score"));
@@ -596,15 +594,13 @@ mod tests {
     fn null_confidence_with_strong_score_still_injects() {
         let mut legacy = with_distance(result("vault", "legacy-null-confidence"), 0.1);
         legacy.confidence = None;
-        let envelope = apply_bounded_recall(
-            vec![legacy],
-            true,
-            2000,
-            Some(0.5),
-            Some("hybrid".into()),
-        );
+        let envelope =
+            apply_bounded_recall(vec![legacy], true, 2000, Some(0.5), Some("hybrid".into()));
         assert_eq!(envelope.decision, SearchDecision::Inject);
-        assert_eq!(envelope.injected_ids, vec!["legacy-null-confidence".to_string()]);
+        assert_eq!(
+            envelope.injected_ids,
+            vec!["legacy-null-confidence".to_string()]
+        );
         assert!(envelope.results[0].confidence.is_none());
     }
 
@@ -634,10 +630,7 @@ mod tests {
         let mut pinned = with_content(result("vault", "pinned-note"), &long);
         pinned.pinned = Some(true);
         let envelope = apply_bounded_recall(
-            vec![
-                with_content(result("vault", "first"), &long),
-                pinned,
-            ],
+            vec![with_content(result("vault", "first"), &long), pinned],
             true,
             400,
             None,

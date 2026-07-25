@@ -25,6 +25,7 @@ Bounded recall, vault-native knowledge lifecycle, and session continuity (second
 - **Frontmatter:** `goal`, `pending`, `links`, `done_at` fields for checkpoint/session notes; **`pinned`** bypasses temporal/`min_confidence` recall gates (status still applies); indexed as Lance `pinned='true'`.
 - **`rms_read` `noPromote`:** accepted for explicit read-without-side-effects contracts (vault reads were already side-effect free).
 - **L3 installer adapters:** `rms-memory install` writes thin Cursor `hooks.json` entries + shared/Claude/Neovim scripts that call `rms-memory hook`; uninstall strips managed hooks only.
+- **Full CLI config coverage:** `rms-memory config` gains `--max-backups N` (global) and per-project `--include` / `--exclude` glob lists (validated `glob::Pattern`, comma-separated, targeted via cwd or `--scope`); `--auto-import` values are now validated (`skip|link|import_organize|import`). Flagless run prints global **and** matched-project settings; any flag runs fully non-interactively (no stray prompts in scripts/CI).
 - ADR: vault `architecture/bounded-recall.md`.
 
 ### Changed
@@ -32,12 +33,14 @@ Bounded recall, vault-native knowledge lifecycle, and session continuity (second
 
 ### Fixed
 - **NULL confidence round-trip:** `extract_results` no longer maps Arrow null `confidence` to `Some(0.0)`; unset confidence stays `None` after search (fail-open `min_confidence` semantics preserved for agents reading hits).
+- **L3 hook script path escaping:** installer embeds the executable path as a single-quoted bash literal (neutralizes `$`, backticks, spaces, and quotes from `current_exe` / CLI install paths).
+- **Invalid Cursor `hooks.json`:** parse failures now `tracing::warn!` + print the path before backing up and rewriting managed hooks (same visibility pattern as Zed JSONC skip).
 
 ### Verification
-- Unit/integration: search abstain/budget/RRF; soft supersede; vault recall filters; freshness datetime parse; `prefers_fts_query`; **real Lance FTS search excludes `status=done`/`superseded` while keeping `active`**; **NULL confidence passes `min_confidence` but weak score still abstains under `min_score`**; checkpoint save→update→load→done; hook project resolution refusals; full suite green.
+- Unit/integration: search abstain/budget/RRF; soft supersede; vault recall filters; freshness datetime parse; `prefers_fts_query`; **real Lance FTS search excludes `status=done`/`superseded` while keeping `active`**; **NULL confidence passes `min_confidence` but weak score still abstains under `min_score`**; checkpoint save→update→load→done; hook project resolution refusals; config flag application (glob validation, strategy validation, no-op detection, most-specific project match); full suite green.
 - Manual: `hook --event session_start --project rms-memory-mcp` returns the live overview JSON; unregistered `--cwd` exits 1.
 - `cargo check` / targeted `--lib` filters clean.
-- Companion GUI **1.0.7**: Search tab + opener + Dashboard continuity widgets; docs/CHANGELOG aligned.
+- Companion GUI **1.0.7**: Search + Continuity tabs; `serde_gui` camelCase boundary; About Pro UX (`licenseExpiresAt`, no leftover trial chrome); entry JS budget **152 KiB**; docs/CHANGELOG aligned.
 
 ## [1.0.6] - 2026-07-23
 

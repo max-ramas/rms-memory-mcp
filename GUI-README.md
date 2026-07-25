@@ -12,8 +12,9 @@ the same vaults and projects served by MCP.
 | Area | Capability |
 | --- | --- |
 | Dashboard | Project health, document/store status, grouped Doctor findings, one-click repair for missing IDs, Continuity teaser (active checkpoints → Continuity tab) |
-| Continuity | Create/continue/complete checkpoints, recent notes, overview counts (same JSON as MCP continuity tools) |
-| Search | Bounded memory search (same inject/abstain envelope as `rms_search`), corpus selector, optional `min_score`, retrieval-mode badge |
+| Continuity | Create/continue/complete checkpoints, recent notes, overview counts (camelCase via GUI `serde_gui`; core remains snake_case) |
+| Search | Bounded memory search (same inject/abstain envelope as `rms_search`), corpus selector, optional `min_score`, retrieval-mode badge, pinned hit badge |
+| About / license | Pro vs trial panel: hide trial chrome + key form when licensed; show license expiry from signed payload when present |
 | Editor | Visual (Milkdown) and Raw (Monaco) Markdown editing, create/rename/delete files and folders, dirty-state protection |
 | Hybrid graph | Full WebGL Markdown + code + semantic graph, independent filters, search and deep zoom, no sampling or node cap |
 | Source control | Per-project Git status/diff/history plus a separate global Vault Git/GitHub sync (safe commit → pull → push) |

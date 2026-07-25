@@ -9,6 +9,17 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 const MANAGED_MARKER: &str = "rms-memory-managed";
+
+/// A hook entry the installer owns: flagged `rmsManaged` or pointing at our script.
+fn is_managed_hook_entry(item: &serde_json::Value) -> bool {
+    item.get("rmsManaged")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false)
+        || item
+            .get("command")
+            .and_then(|v| v.as_str())
+            .is_some_and(|cmd| cmd.contains("rms-memory-session-continuity"))
+}
 const CURSOR_HOOKS_REL: &str = ".cursor/hooks.json";
 const CURSOR_SCRIPT_REL: &str = ".cursor/hooks/rms-memory-session-continuity.sh";
 const CLAUDE_HOOKS_REL: &str = ".claude/hooks/rms-memory-session-continuity.sh";
@@ -16,6 +27,15 @@ const NVIM_SCRIPT_REL: &str = ".config/nvim/rms-memory-hook.sh";
 
 fn shared_script_rel() -> &'static str {
     ".rms-memory/hooks/session-continuity.sh"
+}
+
+/// Escape a path for a single-quoted bash literal.
+///
+/// The installer executable path comes from `current_exe` / CLI arguments and may
+/// contain `$`, backticks, spaces, or quotes (e.g. usernames). Single-quoting is
+/// the safest portable form; only `'` needs special handling.
+fn shell_single_quote(value: &str) -> String {
+    format!("'{}'", value.replace('\'', "'\\''"))
 }
 
 fn continuity_script_body(executable: &str) -> String {
@@ -34,10 +54,38 @@ case "$EVENT" in
     exit 2
     ;;
 esac
-exec "{exe}" hook --event "$EVENT"
+exec {exe} hook --event "$EVENT"
 "#,
-        exe = executable.replace('"', "\\\"")
+        exe = shell_single_quote(executable)
     )
+}
+
+fn warn_invalid_hooks_json(path: &Path, reason: &str) {
+    let message = format!(
+        "[⚠️] Failed to parse Cursor hooks.json {}: {}. Backing up and rewriting managed hooks; foreign entries from this file may be lost.",
+        path.display(),
+        reason
+    );
+    tracing::warn!("{message}");
+    println!("{message}");
+}
+
+/// Parse hooks.json; on invalid / non-object content warn and start from `{{}}`.
+fn parse_cursor_hooks_json(existing: &str, path: &Path) -> serde_json::Value {
+    if existing.trim().is_empty() {
+        return serde_json::json!({});
+    }
+    match serde_json::from_str::<serde_json::Value>(existing) {
+        Ok(value) if value.is_object() => value,
+        Ok(_) => {
+            warn_invalid_hooks_json(path, "root value is not a JSON object");
+            serde_json::json!({})
+        }
+        Err(error) => {
+            warn_invalid_hooks_json(path, &error.to_string());
+            serde_json::json!({})
+        }
+    }
 }
 
 fn write_executable_script(path: &Path, body: &str, dry_run: bool) -> Result<()> {
@@ -61,15 +109,12 @@ fn write_executable_script(path: &Path, body: &str, dry_run: bool) -> Result<()>
 }
 
 /// Merge managed Cursor hook entries without destroying unrelated hooks.
-pub fn merge_cursor_hooks_json(existing: &str, script_path: &str) -> Result<String> {
-    let mut root: serde_json::Value = if existing.trim().is_empty() {
-        serde_json::json!({})
-    } else {
-        serde_json::from_str(existing).unwrap_or_else(|_| serde_json::json!({}))
-    };
-    if !root.is_object() {
-        root = serde_json::json!({});
-    }
+pub fn merge_cursor_hooks_json(
+    existing: &str,
+    script_path: &str,
+    hooks_path: &Path,
+) -> Result<String> {
+    let mut root = parse_cursor_hooks_json(existing, hooks_path);
     let hooks = root
         .as_object_mut()
         .unwrap()
@@ -99,16 +144,7 @@ pub fn merge_cursor_hooks_json(existing: &str, script_path: &str) -> Result<Stri
         }
         let arr = list.as_array_mut().unwrap();
         // Drop previous managed entries; keep user-authored ones.
-        arr.retain(|item| {
-            item.get("rmsManaged")
-                .and_then(|v| v.as_bool())
-                .unwrap_or(false)
-                == false
-                && !item
-                    .get("command")
-                    .and_then(|v| v.as_str())
-                    .is_some_and(|cmd| cmd.contains("rms-memory-session-continuity"))
-        });
+        arr.retain(|item| !is_managed_hook_entry(item));
         arr.push(entry);
     }
 
@@ -130,16 +166,7 @@ pub fn strip_cursor_hooks_json(existing: &str) -> Result<Option<String>> {
             continue;
         };
         let before = list.len();
-        list.retain(|item| {
-            item.get("rmsManaged")
-                .and_then(|v| v.as_bool())
-                .unwrap_or(false)
-                == false
-                && !item
-                    .get("command")
-                    .and_then(|v| v.as_str())
-                    .is_some_and(|cmd| cmd.contains("rms-memory-session-continuity"))
-        });
+        list.retain(|item| !is_managed_hook_entry(item));
         if list.len() != before {
             changed = true;
         }
@@ -170,7 +197,8 @@ pub fn install_l3_adapters(home: &Path, executable: &str, dry_run: bool) -> Resu
         } else {
             String::new()
         };
-        let merged = merge_cursor_hooks_json(&existing, &cursor_script.to_string_lossy())?;
+        let merged =
+            merge_cursor_hooks_json(&existing, &cursor_script.to_string_lossy(), &hooks_path)?;
         if dry_run {
             println!("[DRY-RUN] Would patch {}", hooks_path.display());
         } else {
@@ -217,11 +245,17 @@ pub fn uninstall_l3_adapters(home: &Path, dry_run: bool) -> Result<u32> {
         let existing = fs::read_to_string(&hooks_path)?;
         if let Some(stripped) = strip_cursor_hooks_json(&existing)? {
             if dry_run {
-                println!("[DRY-RUN] Would strip managed Cursor hooks from {}", hooks_path.display());
+                println!(
+                    "[DRY-RUN] Would strip managed Cursor hooks from {}",
+                    hooks_path.display()
+                );
             } else {
                 let _ = fs::copy(&hooks_path, format!("{}.bak", hooks_path.display()));
                 fs::write(&hooks_path, stripped)?;
-                println!("[🗑️] Removed managed Cursor L3 hooks from {}", hooks_path.display());
+                println!(
+                    "[🗑️] Removed managed Cursor L3 hooks from {}",
+                    hooks_path.display()
+                );
             }
             removed += 1;
         }
@@ -268,15 +302,46 @@ mod tests {
     "preCompact": [{ "command": "old rms-memory-session-continuity.sh pre_compact", "rmsManaged": true }]
   }
 }"#;
-        let merged = merge_cursor_hooks_json(existing, "/tmp/rms.sh").unwrap();
+        let path = Path::new("/tmp/hooks.json");
+        let merged = merge_cursor_hooks_json(existing, "/tmp/rms.sh", path).unwrap();
         let value: serde_json::Value = serde_json::from_str(&merged).unwrap();
         let start = value["hooks"]["sessionStart"].as_array().unwrap();
         assert_eq!(start.len(), 2);
         assert_eq!(start[0]["command"], "echo mine");
-        assert!(start[1]["command"].as_str().unwrap().contains("session_start"));
+        assert!(
+            start[1]["command"]
+                .as_str()
+                .unwrap()
+                .contains("session_start")
+        );
         let compact = value["hooks"]["preCompact"].as_array().unwrap();
         assert_eq!(compact.len(), 1);
         assert_eq!(compact[0]["rmsManaged"], true);
+    }
+
+    #[test]
+    fn merge_invalid_hooks_json_starts_fresh_with_managed_entries() {
+        let path = Path::new("/tmp/broken-hooks.json");
+        let merged = merge_cursor_hooks_json("{ not json", "/tmp/rms.sh", path).unwrap();
+        let value: serde_json::Value = serde_json::from_str(&merged).unwrap();
+        assert!(value["hooks"]["sessionStart"].as_array().unwrap().len() == 1);
+        assert_eq!(value["hooks"]["sessionStart"][0]["rmsManaged"], true);
+    }
+
+    #[test]
+    fn shell_single_quote_neutralizes_expansions_and_quotes() {
+        assert_eq!(shell_single_quote("/opt/rms-memory"), "'/opt/rms-memory'");
+        assert_eq!(
+            shell_single_quote("/Users/$USER/bin/rms-memory"),
+            "'/Users/$USER/bin/rms-memory'"
+        );
+        assert_eq!(
+            shell_single_quote("/tmp/weird`name'/rms-memory"),
+            "'/tmp/weird`name'\\''/rms-memory'"
+        );
+        let body = continuity_script_body("/Users/$USER/App Support/rms-memory");
+        assert!(body.contains("exec '/Users/$USER/App Support/rms-memory' hook"));
+        assert!(!body.contains("exec \"/Users/$USER"));
     }
 
     #[test]
@@ -308,5 +373,7 @@ mod tests {
         let hooks = fs::read_to_string(home.join(CURSOR_HOOKS_REL)).unwrap();
         assert!(hooks.contains("session_start"));
         assert!(hooks.contains("rmsManaged"));
+        let script = fs::read_to_string(home.join(CURSOR_SCRIPT_REL)).unwrap();
+        assert!(script.contains("exec '/usr/local/bin/rms-memory' hook"));
     }
 }

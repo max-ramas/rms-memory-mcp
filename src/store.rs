@@ -533,10 +533,7 @@ impl Store {
             append_optional_utf8(&mut superseded_by_b, r.superseded_by.as_deref());
             append_optional_utf8(&mut valid_from_b, r.valid_from.as_deref());
             append_optional_utf8(&mut valid_until_b, r.valid_until.as_deref());
-            append_optional_utf8(
-                &mut pinned_b,
-                r.pinned.and_then(|p| p.then_some("true")),
-            );
+            append_optional_utf8(&mut pinned_b, r.pinned.and_then(|p| p.then_some("true")));
 
             vector_b.values().append_slice(&r.vector);
             vector_b.append(true);
@@ -1122,7 +1119,7 @@ impl Store {
             .full_text_search(FullTextSearchQuery::new(query_str.to_string()))
             .limit(limit);
         if let Some(filter) = filter {
-            query = query.only_if(filter.to_string());
+            query = query.only_if(filter);
         }
         let mut stream = query.execute().await?;
         let mut results = Vec::new();
@@ -1179,12 +1176,7 @@ impl Store {
 mod tests {
     use super::*;
 
-    fn chunk(
-        path: &str,
-        text: &str,
-        status: Option<&str>,
-        confidence: Option<f32>,
-    ) -> ChunkRecord {
+    fn chunk(path: &str, text: &str, status: Option<&str>, confidence: Option<f32>) -> ChunkRecord {
         ChunkRecord {
             document_id: path.to_string(),
             path: path.to_string(),

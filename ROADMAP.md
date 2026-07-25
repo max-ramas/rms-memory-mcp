@@ -114,6 +114,8 @@ This document outlines the strategic direction and upcoming milestones for RMS M
 - [x] Companion GUI Dashboard: active-checkpoint metric + Continuity teaser; dedicated Continuity tab (create/continue/complete + recent notes).
 - [x] `pinned` frontmatter + recall bypass for temporal/`min_confidence`; `rms_read` `noPromote`.
 - [x] Installer L3 adapters: Cursor `hooks.json` + shared/Claude/Neovim thin scripts calling `rms-memory hook`.
+- [x] Dual-gate regressions: real Lance FTS excludes `status=done`; NULL confidence + `min_score` composition fixed by tests; NULL confidence round-trip in `extract_results`.
+- [x] L3 path shell-escaping + warn-on-invalid Cursor `hooks.json`.
 
 ## v1.1 — Workspace Split & Ecosystem (Next)
 

@@ -214,8 +214,7 @@ mod tests {
             .unwrap_err()
             .to_string();
         assert!(
-            error.contains("Unknown RMS Memory project key")
-                || error.contains("was migrated to"),
+            error.contains("Unknown RMS Memory project key") || error.contains("was migrated to"),
             "got: {error}"
         );
     }

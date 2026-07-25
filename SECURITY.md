@@ -43,3 +43,4 @@ Out of scope (unless chained into a higher impact):
 - Production GUI builds verify license payloads with the baked `RMS_LICENSE_PUBLIC_KEY`.
 - MCP remains local-first; cloud sync (Spend) sends metadata only when the user opts in.
 - See `docs/AI_PRIVACY.md` in the GUI repo for AI provider data boundaries.
+- L3 continuity adapters embed the installer executable path as a single-quoted bash literal (no `$`/backtick expansion from `current_exe` or CLI install paths). Invalid Cursor `hooks.json` is warned before backup/rewrite; foreign unmanaged hook entries are preserved.
