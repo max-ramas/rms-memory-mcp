@@ -18,6 +18,8 @@ pub enum Commands {
     Config(crate::commands::config::ConfigArgs),
     /// Initialize local project in the global registry manually
     Init(crate::commands::init::InitArgs),
+    /// Re-inject managed RMS Memory rule blocks (with concrete `project` key)
+    InjectRules(crate::commands::inject_rules::InjectRulesArgs),
     /// Import existing documentation into the Vault
     Import(crate::commands::simple::ImportArgs),
     /// Serve the MCP server via stdio
@@ -59,6 +61,7 @@ impl Cli {
         match &cli.command {
             Commands::Config(args) => args.run(scope).await,
             Commands::Init(args) => args.run(scope).await,
+            Commands::InjectRules(args) => args.run(scope).await,
             Commands::Import(args) => args.run(scope).await,
             Commands::Serve(args) => args.run(scope).await,
             Commands::Reindex(args) => args.run(scope).await,

@@ -1,6 +1,6 @@
 # RMS Memory MCP Server — Walkthrough
 
-Updated: 2026-07-25 · MCP `1.0.7` / GUI `1.0.7`
+Updated: 2026-07-26 · MCP `1.0.8` / GUI `1.0.8`
 
 RMS Memory is a specialized Model Context Protocol (MCP) server that acts as localized persistent memory for LLM agents. It keeps human-authored knowledge in centralized Markdown Vaults and can optionally maintain a separate derived semantic index for source code, solving context fragmentation across multiple IDEs (Cursor, Zed, VS Code, Claude Code, Codex).
 
@@ -9,7 +9,7 @@ RMS Memory is a specialized Model Context Protocol (MCP) server that acts as loc
 ### 1. Unified Configuration & Knowledge Isolation
 - **Global Registry:** No more polluting code repositories with `.mcp` or `RMS.toml` files. The routing logic uses a central `~/.rms-memory/registry.toml`.
 - **Explicit Provisioning, Read-Only Discovery:** `rms-memory init` registers and provisions a project once. Routine CLI/MCP resolution only reads the registry; it never auto-creates a project from an ambiguous path and never treats `/` or a broad home directory as a safe fallback.
-- **Deterministic MCP Routing:** Connections resolve explicit `--scope` or legacy `rootUri`, then negotiated MCP `roots/list`, then an explicit short `project` argument. Process CWD is used only for clients that do not advertise Roots and only when it is not `/`. A connection binds to one project and refuses silent switching.
+- **Deterministic MCP Routing:** Connections resolve explicit `--scope` or legacy `rootUri`, then negotiated MCP `roots/list`, then an explicit short `project` argument. Process CWD is used only for clients that do not advertise Roots and only when it is not `/`, **or** as a fallback when advertised `roots/list` returns zero registered projects. Explicit `project` always rebinds the active vault (multi-project IDEs / global MCP configs). Without `project`, ambiguity stays fail-closed — never silent pick-first or global-vault fallback. Injected rules require `project: "<key>"` on every memory tool call.
 - **Rootless Client Support:** `rms_projects` lists keys before workspace binding. Injected agent rules carry the repository's concrete key, allowing Antigravity and similar globally launched clients to call tools with `project: "<key>"` without exposing full paths.
 
 ### 2. Linked Documents & Documentation Import
@@ -232,3 +232,12 @@ Mind-inspired checkpoints/orientation, corrected for the vault-first stack: no S
 - **Pinned notes:** `pinned: true` in frontmatter (and `rms_write(pinned=true)`) bypasses temporal/`min_confidence` gates while still respecting status; pinned hits are preferred in the `max_chars` budget.
 - **`rms_read(noPromote=true)`:** explicit read-without-side-effects contract (vault reads were already non-mutating).
 - **Dual recall gates:** `min_confidence` is fail-open for NULL confidence at Lance; `min_score` still abstains on weak runtime relevance. Closed checkpoints (`status: done`) share the same `vault_status_filter` allowlist as supersession — verified by real FTS integration tests.
+
+### 23. Multi-project MCP routing (v1.0.8)
+
+`1.0.7` shipped with sticky single-vault bind (`already bound… refusing to switch`). One global Cursor MCP process trapped every agent on the first vault touched — unacceptable with ~15 registered projects.
+
+- **Explicit `project` rebinds:** cancels previous vault watchers, opens the target store, updates active key. Safety is “require an explicit key to change vaults”, not “trap the session forever”.
+- **Empty roots → cwd:** Cursor often advertises `roots` then returns zero registered candidates; MCP falls back to `Workspace::discover(cwd)` (skips `/`). Same on first unbound tool call without `project`.
+- **Mandatory key in rules:** injected templates require `Always pass project: "<key>"` on every memory tool call. `rms-memory inject-rules [--all]` refreshes managed blocks without re-running `init`.
+- **Full config CLI:** `--max-backups`, `--include`/`--exclude`, validated `--auto-import`, non-interactive flags, project section in flagless printout.

@@ -2,7 +2,7 @@
 
 This document outlines the strategic direction and upcoming milestones for RMS Memory.
 
-**Current (2026-07-25):** MCP **`1.0.7`** · companion GUI **`1.0.7`** (unified numbering).
+**Current (2026-07-26):** MCP **`1.0.8`** · companion GUI **`1.0.8`** (unified numbering).
 
 ## v1.0 — Foundation & Open Source ✅ (Released)
 
@@ -117,6 +117,17 @@ This document outlines the strategic direction and upcoming milestones for RMS M
 - [x] Dual-gate regressions: real Lance FTS excludes `status=done`; NULL confidence + `min_score` composition fixed by tests; NULL confidence round-trip in `extract_results`.
 - [x] L3 path shell-escaping + warn-on-invalid Cursor `hooks.json`.
 
+## v1.0.8 — Multi-project MCP routing (2026-07-26)
+
+**Goal:** One long-lived MCP process must serve every registered vault. Explicit `project` always wins.
+
+- [x] Explicit `project` rebinds (cancel previous watchers + open target store); sticky refuse removed.
+- [x] Empty advertised `roots/list` falls back to process cwd discover; same on first unbound tool call.
+- [x] Injected rules **require** `project: "<key>"` on every memory tool call; `rms-memory inject-rules [--all]`.
+- [x] Full `rms-memory config` CLI coverage (`--max-backups`, `--include`/`--exclude`, non-interactive flags, project section in printout).
+- [x] ADRs: `mcp-explicit-project-rebind`, `mcp-cwd-fallback-and-mandatory-project-key`; supersede refuse-to-switch clause of 2026-07-16 routing ADR.
+- [x] Unified product version **1.0.8** with companion GUI.
+
 ## v1.1 — Workspace Split & Ecosystem (Next)
 
 **Goal:** Transition the already shared core/GUI architecture from a monolithic crate into a modular ecosystem of crates.
@@ -131,7 +142,7 @@ This enables downstream consumers to use just `rms-memory-index` without the MCP
 
 The companion GUI already consumes the core library through human-oriented Tauri commands for graph, configuration, jobs, and project lifecycle operations. MCP remains the IDE/agent protocol; v1.1 focuses on extracting stable crate boundaries rather than inventing a second application core.
 
-**Not a v1.0.x release blocker.** Path-scoped code watch, graph layout worker (GUI), and GUI entitlement guards are already landed in the 1.0.6 line; GUI/MCP share **1.0.7** unified numbering.
+**Not a v1.0.x release blocker.** Path-scoped code watch, graph layout worker (GUI), and GUI entitlement guards are already landed in the 1.0.6 line; GUI/MCP share **1.0.8** unified numbering.
 
 **Recall lifecycle (landed in 1.0.7):** bounded `rms_search` (`max_chars` / `min_score` / inject|abstain / `retrieval_mode`), vault-native supersession (`status` / `supersedes`), temporal validity filters + doctor freshness lint, short-query FTS prefer, and companion GUI Search tab. See vault ADR `architecture/bounded-recall.md`. Agentic stale pruning remains v2.0 and is not the same as supersession.
 

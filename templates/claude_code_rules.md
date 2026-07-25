@@ -3,7 +3,7 @@
 You are connected to the RMS Memory MCP Server, your persistent external brain for this repository.
 
 <rules>
-- This repository's registered key is `{{RMS_MEMORY_PROJECT}}`. If the MCP client did not initialize a workspace root, pass `project: "{{RMS_MEMORY_PROJECT}}"` to RMS Memory tools. Use `rms_projects` to list valid keys. Never guess another project's vault.
+- **Project Routing (MANDATORY):** This repository's registered key is `{{RMS_MEMORY_PROJECT}}`. Always pass `project: "{{RMS_MEMORY_PROJECT}}"` on every RMS Memory tool call (`rms_search`, `rms_read`, `rms_write`, checkpoints, overview). Do not rely on session binding alone — one IDE MCP process may serve many repos. Use `rms_projects` to list keys. Never guess another project's vault.
 - NEVER start a major refactor or architectural change without using the `rms-memory_rms_search` tool for relevant context.
 - If memory search reveals an architectural decision record (ADR) or project rule, use the `rms-memory_rms_read` tool to ingest the full context.
 - **Persist Knowledge (MANDATORY TASK-END ROUTINE):** Before completing ANY request, you MUST ask yourself: "Did I discover a new project convention, fix a tricky bug, or learn a user preference?" If YES, you MUST proactively save this knowledge. DO NOT ask for permission.

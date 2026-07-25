@@ -2,7 +2,7 @@
 
 # 🧠 RMS Memory MCP
 
-**Version:** `1.0.7` (2026-07-25) · companion GUI `1.0.7` (unified numbering)
+**Version:** `1.0.8` (2026-07-26) · companion GUI `1.0.8` (unified numbering)
 
 **Persistent, local-first memory for your AI coding agents.**
 
@@ -222,6 +222,7 @@ Supported names are `rust`, `go`, `javascript`, `jsx`, `typescript`, `tsx`, `pyt
 |---|---|
 | `rms-memory serve` | Starts the JSON-RPC stdio server (auto-triggered by your IDE). |
 | `rms-memory init` | Registers a project into the global registry. `--dry-run` supported. `--full` forces creation of all IDE rule templates. |
+| `rms-memory inject-rules [--all]` | Re-injects managed IDE rule blocks with the concrete registry `project` key (existing files only, unless `--full`). Use after template updates. |
 | `rms-memory import` | Scans for existing docs (`README.md`, `docs/`, `ADR/`) and imports them — interactively or via `--auto-import`. |
 | `rms-memory install` | Hooks the server into supported IDEs. `--dry-run` supported. |
 | `rms-memory uninstall` | Removes the server from all discovered IDE configurations. |
@@ -286,7 +287,7 @@ Tool descriptions are written to be **action-oriented**, so agents use the vault
 </tr>
 </table>
 
-The server resolves an explicit scope or legacy `rootUri`, then negotiates MCP `roots/list`. If a client exposes neither (or opens several registered roots), pass the short registry key in `project`; injected agent rules contain the correct key for that repository. `rms_projects` lists valid keys without requiring a bound workspace. Once a connection is bound, it cannot silently switch projects.
+The server resolves an explicit scope or legacy `rootUri`, then negotiates MCP `roots/list`. If a client exposes neither (or opens several registered roots), pass the short registry key in `project`; injected agent rules contain the correct key for that repository. `rms_projects` lists valid keys without requiring a bound workspace. An explicit `project` on any tool call always wins and rebinds the active vault — one long-lived MCP process can serve every registered project. Without `project`, ambiguity stays fail-closed (no silent pick-first).
 
 To remove an accidental registration without deleting its Markdown vault:
 
