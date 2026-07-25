@@ -30,8 +30,11 @@ Bounded recall, vault-native knowledge lifecycle, and session continuity (second
 ### Changed
 - ROADMAP: stale **pruning** (future/v2) is distinct from vault-native **supersession** + temporal recall gates.
 
+### Fixed
+- **NULL confidence round-trip:** `extract_results` no longer maps Arrow null `confidence` to `Some(0.0)`; unset confidence stays `None` after search (fail-open `min_confidence` semantics preserved for agents reading hits).
+
 ### Verification
-- Unit tests: search abstain/budget/RRF, soft supersede, vault recall filters, freshness datetime parse, `prefers_fts_query`, checkpoint save→update→load→done round-trip, name validation (fail-closed), overview counts/active checkpoints, hook project resolution refusals; full suite green.
+- Unit/integration: search abstain/budget/RRF; soft supersede; vault recall filters; freshness datetime parse; `prefers_fts_query`; **real Lance FTS search excludes `status=done`/`superseded` while keeping `active`**; **NULL confidence passes `min_confidence` but weak score still abstains under `min_score`**; checkpoint save→update→load→done; hook project resolution refusals; full suite green.
 - Manual: `hook --event session_start --project rms-memory-mcp` returns the live overview JSON; unregistered `--cwd` exits 1.
 - `cargo check` / targeted `--lib` filters clean.
 - Companion GUI **1.0.7**: Search tab + opener + Dashboard continuity widgets; docs/CHANGELOG aligned.

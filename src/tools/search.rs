@@ -572,6 +572,42 @@ mod tests {
         assert_eq!(envelope.retrieval_mode.as_deref(), Some("fts_prefer"));
     }
 
+    /// Dual-gate contract with `vault_recall_filter`: NULL confidence is
+    /// fail-open at Lance (`min_confidence`), but `min_score` still abstains
+    /// on weak runtime relevance. Do not "fix" this into injecting legacy notes.
+    #[test]
+    fn null_confidence_hit_still_abstains_under_min_score() {
+        let mut legacy = with_distance(result("vault", "legacy-null-confidence"), 20.0);
+        legacy.confidence = None;
+        let envelope = apply_bounded_recall(
+            vec![legacy],
+            true,
+            2000,
+            Some(0.5),
+            Some("hybrid".into()),
+        );
+        assert_eq!(envelope.decision, SearchDecision::Abstain);
+        assert!(envelope.results.is_empty());
+        assert!(envelope.reason.contains("best_relevance_below_min_score"));
+        assert_eq!(envelope.retrieval_mode.as_deref(), Some("hybrid"));
+    }
+
+    #[test]
+    fn null_confidence_with_strong_score_still_injects() {
+        let mut legacy = with_distance(result("vault", "legacy-null-confidence"), 0.1);
+        legacy.confidence = None;
+        let envelope = apply_bounded_recall(
+            vec![legacy],
+            true,
+            2000,
+            Some(0.5),
+            Some("hybrid".into()),
+        );
+        assert_eq!(envelope.decision, SearchDecision::Inject);
+        assert_eq!(envelope.injected_ids, vec!["legacy-null-confidence".to_string()]);
+        assert!(envelope.results[0].confidence.is_none());
+    }
+
     #[test]
     fn char_budget_truncates_and_drops_overflow() {
         let long = "x".repeat(500);
