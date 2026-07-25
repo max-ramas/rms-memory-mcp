@@ -28,7 +28,7 @@ if (-not $tag) {
 
 Write-Host "Latest release: $tag"
 
-$downloadUrl = "https://github.com/$repo/releases/download/$tag/rms-memory-$target.zip"
+$downloadUrl = "https://github.com/$repo/releases/download/$tag/rms_memory_mcp_$target.zip"
 Write-Host "Downloading $downloadUrl..."
 
 $tempZip = Join-Path $env:TEMP "rms-memory.zip"

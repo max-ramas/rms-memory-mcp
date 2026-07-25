@@ -44,3 +44,6 @@ Out of scope (unless chained into a higher impact):
 - MCP remains local-first; cloud sync (Spend) sends metadata only when the user opts in.
 - See `docs/AI_PRIVACY.md` in the GUI repo for AI provider data boundaries.
 - L3 continuity adapters embed the installer executable path as a single-quoted bash literal (no `$`/backtick expansion from `current_exe` or CLI install paths). Invalid Cursor `hooks.json` is warned before backup/rewrite; foreign unmanaged hook entries are preserved.
+- Workspace discovery matches registered projects by whole path components on canonical paths, so a registered `/repo` cannot capture a sibling `/repo-old` or `/repo2` and route reads/writes into the wrong vault (fixed in 1.0.8, where cwd fallback made this reachable automatically).
+- `rms-memory inject-rules` is fail-closed for unregistered directories: it never writes a `project` key that the registry cannot resolve.
+- Release packaging clears the persistent build target's package directories before regenerating, so a published release cannot carry `.deb`/`.rpm` artifacts left over from an older version. Manual release dispatch builds the requested tag and validates the Cargo version before producing artifacts.

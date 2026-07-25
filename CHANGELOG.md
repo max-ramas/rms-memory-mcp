@@ -11,6 +11,12 @@ Multi-project MCP routing fix. Companion GUI adopts the **same `1.0.8` product v
 ### Fixed
 - **MCP multi-project rebind:** explicit `project` on any tool call switches the active vault (cancels previous watchers, opens the target store). Sticky “already bound… refusing to switch” is removed — one Cursor MCP process can serve all registered projects. Ambiguity without `project` remains fail-closed (no silent pick-first / no global-vault fallback).
 - **Empty `roots/list` → process cwd:** when Cursor advertises roots but returns no registered project, MCP tries `Workspace::discover(cwd)` before staying unbound. Same fallback on the first tool call without `project` while unbound.
+- **Wrong-vault binding on sibling paths:** workspace discovery compared a byte-level string prefix, so a registered `/repo` also captured `/repo-old`, `/repo2`, and `/repository`. Combined with the new cwd fallback this could route reads *and writes* into a neighbouring project's vault. Discovery now uses a component-aware `Path::starts_with` on canonical paths and picks the longest match by path-component depth.
+- **Failure-atomic rebind:** `bind_workspace` cancelled the active watchers *before* opening the target store, so a failed open left the previous project bound but watcher-less. The new store is opened and validated first; old watchers are cancelled only after that succeeds.
+- **`inject-rules` fail-closed:** standalone `rms-memory inject-rules` on an unregistered directory fell back to the folder basename and wrote a mandatory `project: "<basename>"` that `rms_projects` cannot resolve. The single-path command now refuses unregistered paths; `--all` (registry-sourced) and `init` (basename fallback for the not-yet-registered case) are unchanged.
+- **Installer 404:** `install.sh` / `install.ps1` requested `rms-memory-<target>.{tar.gz,zip}` while releases publish `rms_memory_mcp_<target>.*`. Both one-line installers now request the published asset names.
+- **Stale packages in published releases:** the persistent self-hosted release target retained `.deb`/`.rpm` from earlier versions — a `1.0.6` RPM shipped inside the `1.0.7` release. Packaging now clears `$CARGO_TARGET_DIR/{debian,generate-rpm}` before regenerating, so only the current version is uploaded.
+- **Manual release dispatch could attach the wrong revision:** `workflow_dispatch` accepted `release_tag` but every job checked out the branch tip, and the Cargo version was validated only in the late crates.io job. `plan` now checks out the requested ref and verifies `Cargo.toml` against the tag *before* any build; `build`, `release`, and `publish-crates` check out that same tag.
 
 ### Added
 - **`rms-memory inject-rules [--all]`:** re-injects managed IDE rule blocks with the concrete registry key without re-running `init` registration. Templates now **require** `project: "<key>"` on every memory tool call (not only when unbound).
@@ -21,7 +27,9 @@ Multi-project MCP routing fix. Companion GUI adopts the **same `1.0.8` product v
 - ADR: `decisions/mcp-explicit-project-rebind.md` supersedes the refuse-to-switch clause of `mcp-workspace-routing-roots-and-project-fallback-2026-07-16`; follow-up `decisions/mcp-cwd-fallback-and-mandatory-project-key.md`.
 
 ### Verification
-- Unit: sticky refuse strings gone; rule templates require `Always pass project:`; empty-roots cwd fallback path present; inject basename fallback; config flag/glob/strategy tests; 153 lib tests green.
+- Unit: sticky refuse strings gone; rule templates require `Always pass project:`; empty-roots cwd fallback path present; inject basename fallback; config flag/glob/strategy tests; sibling-prefix routing regression (`/repo` must not match `/repo-old`, `/repo2`, `/repository`); **154 lib tests green**.
+- Pre-release audit closed six findings (3 × P1, 3 × P2) covering installer asset names, stale release packages, sibling-prefix vault binding, rebind atomicity, `inject-rules` key invention, and manual-dispatch revision pinning.
+- Gates re-run after the fixes: `cargo fmt --all -- --check`, `cargo clippy --all-targets -- -D warnings`, `cargo test --lib`; both release workflows parse as YAML; `bash -n scripts/install.sh`.
 - Manual: `inject-rules --all` updated 14/14 registered projects; `rms-ds.com` rules contain `project: "rms-ds.com"`.
 - Release binary installed via `build.sh` → `/usr/local/bin/rms-memory` **1.0.8** (restart IDE MCP processes to pick up).
 - Companion GUI **1.0.8** (unified tag / numbering).

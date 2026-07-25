@@ -241,3 +241,10 @@ Mind-inspired checkpoints/orientation, corrected for the vault-first stack: no S
 - **Empty roots → cwd:** Cursor often advertises `roots` then returns zero registered candidates; MCP falls back to `Workspace::discover(cwd)` (skips `/`). Same on first unbound tool call without `project`.
 - **Mandatory key in rules:** injected templates require `Always pass project: "<key>"` on every memory tool call. `rms-memory inject-rules [--all]` refreshes managed blocks without re-running `init`.
 - **Full config CLI:** `--max-backups`, `--include`/`--exclude`, validated `--auto-import`, non-interactive flags, project section in flagless printout.
+
+**Pre-release audit hardening.** A pre-release review found that the routing change had sharp edges of its own, all closed in the same version:
+
+- **Component-aware discovery:** matching was a byte-level `starts_with`, so registered `/repo` also swallowed `/repo-old`, `/repo2`, and `/repository`. Because cwd fallback now feeds discovery automatically, that was a silent wrong-vault write, not a cosmetic bug. Discovery compares canonical paths with `Path::starts_with` (whole components) and ranks matches by component depth.
+- **Rebind is failure-atomic:** the target store is opened and validated first; only then are the previous vault's watchers cancelled. A failed switch leaves the old project fully intact instead of bound-but-unwatched.
+- **`inject-rules` refuses to invent keys:** injected rules carry a mandatory `project: "<key>"`, so writing a basename that `rms_projects` cannot resolve is worse than failing. Standalone single-path injection is fail-closed; `--all` walks the registry, and `init` keeps its basename fallback for the pre-registration moment.
+- **Release pipeline:** installers now request the `rms_memory_mcp_*` names that are actually published; packaging wipes the persistent target's `debian`/`generate-rpm` dirs (a `1.0.6` RPM had shipped inside the `1.0.7` release); manual dispatch checks out the requested tag and validates the Cargo version before building anything.

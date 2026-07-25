@@ -48,7 +48,7 @@ fi
 
 echo "Latest release: ${TAG}"
 
-DOWNLOAD_URL="https://github.com/${REPO}/releases/download/${TAG}/rms-memory-${TARGET}.tar.gz"
+DOWNLOAD_URL="https://github.com/${REPO}/releases/download/${TAG}/rms_memory_mcp_${TARGET}.tar.gz"
 echo "Downloading ${DOWNLOAD_URL}..."
 
 TEMP_DIR=$(mktemp -d)

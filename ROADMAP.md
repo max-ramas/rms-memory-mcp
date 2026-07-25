@@ -128,6 +128,15 @@ This document outlines the strategic direction and upcoming milestones for RMS M
 - [x] ADRs: `mcp-explicit-project-rebind`, `mcp-cwd-fallback-and-mandatory-project-key`; supersede refuse-to-switch clause of 2026-07-16 routing ADR.
 - [x] Unified product version **1.0.8** with companion GUI.
 
+**Pre-release audit fixes (same version):**
+
+- [x] Component-aware path matching in `Workspace::discover` — a registered `/repo` no longer captures `/repo-old` / `/repo2`; regression test added.
+- [x] Failure-atomic rebind — target store opens and validates before the previous vault's watchers are cancelled.
+- [x] `inject-rules` fail-closed on unregistered paths (no invented `project` key); `--all` and `init` unchanged.
+- [x] Installers request the published `rms_memory_mcp_<target>.*` assets (were 404 on `rms-memory-<target>.*`).
+- [x] Release packaging clears the persistent target's `debian`/`generate-rpm` dirs, so stale `.deb`/`.rpm` cannot be uploaded again.
+- [x] Manual `workflow_dispatch` checks out the requested tag and validates `Cargo.toml` version before building (MCP and GUI).
+
 ## v1.1 — Workspace Split & Ecosystem (Next)
 
 **Goal:** Transition the already shared core/GUI architecture from a monolithic crate into a modular ecosystem of crates.

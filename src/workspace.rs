@@ -242,20 +242,25 @@ impl Workspace {
             ));
         }
 
-        // Find existing project using longest prefix match
+        // Find existing project using the longest path-component prefix match.
+        // A component-aware comparison prevents a registered `/repo` from
+        // capturing sibling directories such as `/repo-old` or `/repo2`, which a
+        // raw string `starts_with` would wrongly match — a real hazard now that
+        // the MCP server can fall back to the process cwd.
         let mut best_match: Option<(&String, &ProjectConfig)> = None;
+        let mut best_depth = 0usize;
         for (name, project) in &registry.projects {
             // Ignore corrupted root-level catch-all projects
             if project.code_path == "/" {
                 continue;
             }
-            if start_str.starts_with(&project.code_path) {
-                if let Some((_, best_proj)) = best_match {
-                    if project.code_path.len() > best_proj.code_path.len() {
-                        best_match = Some((name, project));
-                    }
-                } else {
+            let project_canon = fs::canonicalize(&project.code_path)
+                .unwrap_or_else(|_| PathBuf::from(&project.code_path));
+            if path_within(&start_canon, &project_canon) {
+                let depth = project_canon.components().count();
+                if best_match.is_none() || depth > best_depth {
                     best_match = Some((name, project));
+                    best_depth = depth;
                 }
             }
         }
@@ -383,6 +388,15 @@ impl Workspace {
     }
 }
 
+/// True when `start` is the project root itself or a descendant of it.
+///
+/// Uses `Path::starts_with`, which compares whole path components, so a
+/// registered `/home/u/repo` never matches sibling `/home/u/repo-old` or
+/// `/home/u/repo2` the way a byte-level `str::starts_with` would.
+fn path_within(start: &Path, project_root: &Path) -> bool {
+    start.starts_with(project_root)
+}
+
 impl Registry {
     pub fn list_projects(&self) -> Vec<(&String, &ProjectConfig)> {
         self.projects.iter().collect()
@@ -474,6 +488,22 @@ impl Registry {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn discover_prefix_is_component_aware_not_string_prefix() {
+        let project = Path::new("/home/user/repo");
+        // The project root and its descendants must match.
+        assert!(path_within(Path::new("/home/user/repo"), project));
+        assert!(path_within(Path::new("/home/user/repo/src"), project));
+        assert!(path_within(Path::new("/home/user/repo/src/mod"), project));
+        // Sibling directories that share a string prefix must NOT match. A raw
+        // `start_str.starts_with(code_path)` returned true for all of these and
+        // could bind reads/writes to the wrong vault.
+        assert!(!path_within(Path::new("/home/user/repo-old"), project));
+        assert!(!path_within(Path::new("/home/user/repo2"), project));
+        assert!(!path_within(Path::new("/home/user/repository"), project));
+        assert!(!path_within(Path::new("/home/user/other"), project));
+    }
 
     #[test]
     fn test_project_hash_regression() {
