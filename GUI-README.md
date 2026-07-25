@@ -58,6 +58,26 @@ Each GUI release includes `SHA256SUMS.txt`. Verify the downloaded installer
 against that file before installation (for example, `shasum -a 256 <file>` on
 macOS or `Get-FileHash <file> -Algorithm SHA256` in PowerShell).
 
+### Known macOS distribution issue
+
+There is **no Apple Developer account yet**, so notarized CI macOS installers are
+deferred. Until then, ship macOS builds **manually** (`pnpm tauri build` locally)
+or accept Gatekeeper warnings on unsigned downloads. macOS may show an
+**“app is damaged”** or unverified-developer dialog on first launch — that is
+Gatekeeper, not a corrupt binary.
+
+Before proceeding, verify the installer checksum against `SHA256SUMS.txt` when
+one is published with the release. Then open the app with either method:
+
+1. **System Settings → Privacy & Security** → **Open Anyway** beside RMS Memory.
+2. Or clear quarantine:
+
+   ```bash
+   xattr -r -d com.apple.quarantine /Applications/RMS\ Memory.app
+   ```
+
+   Replace the path if the app lives elsewhere.
+
 ## Publication and trust boundary
 
 The private GUI Actions workflow builds installers, uploads a short-lived
