@@ -2,7 +2,7 @@
 
 # 🧠 RMS Memory MCP
 
-**Version:** `1.0.6` (2026-07-23) · companion GUI `1.0.0`
+**Version:** `1.0.7` (2026-07-25) · companion GUI `1.0.0`
 
 **Persistent, local-first memory for your AI coding agents.**
 
@@ -241,8 +241,8 @@ Tool descriptions are written to be **action-oriented**, so agents use the vault
 <tr><th>Tool</th><th>Purpose</th><th>Input</th></tr>
 <tr>
 <td><code>rms-memory_rms_search</code></td>
-<td>Searches Markdown memory by default. Set <code>corpus</code> to <code>code</code> or <code>all</code>; <code>all</code> uses Reciprocal Rank Fusion. Agents are instructed to call this <em>first</em>.</td>
-<td><code>{ query, project?, corpus: vault|code|all, limit, include_content, min_confidence }</code></td>
+<td>Searches Markdown memory by default. Set <code>corpus</code> to <code>code</code> or <code>all</code>; <code>all</code> uses Reciprocal Rank Fusion. Returns an inject/abstain decision envelope. Agents are instructed to call this <em>first</em>.</td>
+<td><code>{ query, project?, corpus: vault|code|all, limit, include_content, min_confidence, max_chars?, min_score? }</code></td>
 </tr>
 <tr>
 <td><code>rms-memory_rms_code_search</code></td>
@@ -256,8 +256,8 @@ Tool descriptions are written to be **action-oriented**, so agents use the vault
 </tr>
 <tr>
 <td><code>rms-memory_rms_write</code></td>
-<td>Persists new decisions, constraints, or rules. Agents are prompted to call this <em>proactively</em> after solving a tricky bug or learning a preference. Auto-injects audit metadata.</td>
-<td><code>{ path, project?, content, mode: replace|append|create, confidence, source }</code></td>
+<td>Persists new decisions, constraints, or rules. Agents are prompted to call this <em>proactively</em> after solving a tricky bug or learning a preference. Auto-injects audit metadata. Optional soft supersede of a prior note.</td>
+<td><code>{ path, project?, content, mode: replace|append|create, confidence, source, status?, supersedes? }</code></td>
 </tr>
 <tr>
 <td><code>rms-memory_rms_projects</code></td>

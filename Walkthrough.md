@@ -1,6 +1,6 @@
 # RMS Memory MCP Server — Walkthrough
 
-Updated: 2026-07-23 · MCP `1.0.6` / GUI `1.0.0`
+Updated: 2026-07-25 · MCP `1.0.7` / GUI `1.0.0`
 
 RMS Memory is a specialized Model Context Protocol (MCP) server that acts as localized persistent memory for LLM agents. It keeps human-authored knowledge in centralized Markdown Vaults and can optionally maintain a separate derived semantic index for source code, solving context fragmentation across multiple IDEs (Cursor, Zed, VS Code, Claude Code, Codex).
 
@@ -205,3 +205,13 @@ Antigravity exposed a protocol edge case: a globally configured MCP process may 
 - **Repository-specific rules:** rule templates substitute the registered key during injection, so an agent knows exactly what to pass when its host omits workspace context.
 - **Legacy repair:** `doctor --repair-frontmatter` now handles plain Markdown with no YAML block by creating a backup, inserting one UUID, and leaving the body intact.
 - **Production gate:** `build.sh` completed a clean release build, installed and signed `/usr/local/bin/rms-memory`, and a live session from `cwd=/` successfully wrote `architecture/llm-providers-and-global-key-management.md` into the `rms-threads-assistant` vault using only its short project key.
+
+### 21. Bounded Recall & Knowledge Lifecycle (v1.0.7)
+
+Maps second-brain recall discipline onto the existing Markdown vault + LanceDB stack (not a SQL `memories` table).
+
+- **Decision envelope:** `rms_search` returns `decision: inject|abstain`, `reason`, `injected_ids`, plus `results`.
+- **Budgets / thresholds:** `max_chars` (default 2000) and optional `min_score`; weak or failed retrieval abstains fail-closed.
+- **Supersession:** frontmatter `status` / `supersedes` / `superseded_by`; Lance recall excludes superseded; `rms_write(supersedes=<path>)` soft-replaces a prior note.
+- **Temporal:** `valid_from` / `valid_until` / `learned_at` gate recall; Doctor check 7/7 lints freshness and broken supersession links.
+- **Pruning ≠ supersession:** deleting/archiving cold notes remains a future agentic step; supersession is vault-native lifecycle.

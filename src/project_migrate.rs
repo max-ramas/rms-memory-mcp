@@ -574,20 +574,7 @@ fn plan_project_stamp_updates(
 
 fn update_frontmatter(path: &Path, update: impl FnOnce(&mut Frontmatter)) -> Result<()> {
     let doc = Document::parse(path)?;
-    let mut frontmatter = doc.frontmatter.unwrap_or(Frontmatter {
-        memory_version: None,
-        id: None,
-        alias: None,
-        doc_type: None,
-        status: None,
-        link: None,
-        last_modified_by: None,
-        timestamp: None,
-        created_at: None,
-        confidence: None,
-        source: None,
-        project: None,
-    });
+    let mut frontmatter = doc.frontmatter.unwrap_or_default();
     update(&mut frontmatter);
     let yaml = serde_yaml::to_string(&frontmatter).context("Failed to serialize frontmatter")?;
     let rebuilt = format!("---\n{yaml}---\n{}", doc.content);

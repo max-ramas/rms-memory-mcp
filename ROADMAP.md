@@ -2,7 +2,7 @@
 
 This document outlines the strategic direction and upcoming milestones for RMS Memory.
 
-**Current (2026-07-23):** MCP **`1.0.6`** · companion GUI **`1.0.0`**.
+**Current (2026-07-25):** MCP **`1.0.7`** · companion GUI **`1.0.0`**.
 
 ## v1.0 — Foundation & Open Source ✅ (Released)
 
@@ -94,6 +94,17 @@ This document outlines the strategic direction and upcoming milestones for RMS M
 - [x] Path-scoped code watcher reindex (`try_index_code_paths`) and `upsert_derived_graph_patch`.
 - [x] Vault-aware `link:` containment; `rms_wiki_pack` manifest jail.
 
+## v1.0.7 — Bounded Recall & Knowledge Lifecycle (2026-07-25)
+
+**Goal:** Fail-closed, budgeted agent recall plus vault-native supersession/temporal gates — without inventing a SQL memories table.
+
+- [x] `rms_search` inject/abstain envelope, `max_chars`, `min_score`, fail-closed errors.
+- [x] Frontmatter `status` / `supersedes` / `superseded_by`; Lance filter excludes superseded.
+- [x] Soft supersede via `rms_write(supersedes=…)`.
+- [x] `valid_from` / `valid_until` / `learned_at` + doctor freshness lint.
+- [x] ADR `architecture/bounded-recall.md`; ROADMAP note: pruning ≠ supersession.
+- [ ] Companion GUI Search abstain badge (optional; not a server contract blocker).
+
 ## v1.1 — Workspace Split & Ecosystem (Next)
 
 **Goal:** Transition the already shared core/GUI architecture from a monolithic crate into a modular ecosystem of crates.
@@ -110,6 +121,8 @@ The companion GUI already consumes the core library through human-oriented Tauri
 
 **Not a v1.0.x release blocker.** Path-scoped code watch, graph layout worker (GUI), and GUI entitlement guards are already landed in the 1.0.6 / GUI 1.0.0 line.
 
+**Recall lifecycle (landed ahead of crate split):** bounded `rms_search` (`max_chars` / `min_score` / inject|abstain envelope), vault-native supersession (`status` / `supersedes`), and temporal validity filters + doctor freshness lint. See vault ADR `architecture/bounded-recall.md`. Agentic stale pruning remains v2.0 and is not the same as supersession.
+
 ## Multilanguage Code Memory — 1.0.5 extension (complete)
 
 - [x] Language-neutral registry/dispatcher with project-scoped `code_languages`, preserving Rust item IDs and extractor identity.
@@ -123,5 +136,8 @@ The detailed production contract and delivery slices are maintained privately in
 ## v2.0 — Multi-Vault & Advanced Context (Future)
 
 - Multi-vault routing: one MCP server serving multiple workspaces simultaneously.
-- Agentic memory graphs: autonomous summarization, knowledge consolidation, stale context pruning.
+- Agentic memory graphs: autonomous summarization and knowledge consolidation.
+  Stale **pruning** (delete/archive cold notes) is distinct from vault-native **supersession**
+  (`status` / `supersedes` / `superseded_by`) and temporal validity (`valid_from` / `valid_until`),
+  which already gate recall and doctor freshness lint — pruning remains a later agentic step.
 - Remote backends: cloud-hosted Vector DBs (managed LanceDB, Qdrant) beyond local `.lancedb`.

@@ -156,7 +156,7 @@ impl DoctorArgs {
         let mut issues = 0u32;
 
         // 1. Check vault directory structure
-        println!("\n[1/6] Vault directory structure...");
+        println!("\n[1/7] Vault directory structure...");
         let required_dirs = [
             "rules",
             "decisions",
@@ -176,7 +176,7 @@ impl DoctorArgs {
         }
 
         // 2. Check for files missing document IDs
-        println!("\n[2/6] Document IDs...");
+        println!("\n[2/7] Document IDs...");
         let files = workspace.find_markdown_files().unwrap_or_default();
         let mut missing_ids = Vec::new();
         let mut invalid_frontmatter = Vec::new();
@@ -257,7 +257,7 @@ impl DoctorArgs {
         }
 
         // 3. Check for broken Markdown links
-        println!("\n[3/6] Cross-document links...");
+        println!("\n[3/7] Cross-document links...");
         let mut broken_links = Vec::new();
         let file_set: std::collections::HashSet<_> = files
             .iter()
@@ -295,7 +295,7 @@ impl DoctorArgs {
         }
 
         // 4. Check LanceDB store
-        println!("\n[4/6] LanceDB store...");
+        println!("\n[4/7] LanceDB store...");
         match workspace.get_store().await {
             Ok(store) => {
                 match crate::index_lock::inspect(&store.storage_path) {
@@ -333,7 +333,7 @@ impl DoctorArgs {
         }
 
         // 5. Verify that GUI Wiki output has not leaked into canonical memory.
-        println!("\n[5/6] Wiki index isolation...");
+        println!("\n[5/7] Wiki index isolation...");
         match workspace.get_store().await {
             Ok(store) => {
                 let leaked_vault = match store.open_table().await {
@@ -390,7 +390,7 @@ impl DoctorArgs {
         }
 
         // 6. Check registry coherence
-        println!("\n[6/6] Registry coherence...");
+        println!("\n[6/7] Registry coherence...");
         if let Ok(registry) = crate::config_manager::load_registry() {
             let vault_canon =
                 std::fs::canonicalize(&workspace.root).unwrap_or_else(|_| workspace.root.clone());
@@ -443,6 +443,110 @@ impl DoctorArgs {
         } else {
             println!("  ⚠️  Cannot read registry.toml");
             issues += 1;
+        }
+
+        // 7. Temporal freshness (valid_until / learned_at)
+        println!("\n[7/7] Knowledge freshness...");
+        let now = chrono::Utc::now();
+        let mut expired = Vec::new();
+        let mut stale_learned = Vec::new();
+        let mut broken_supersession = Vec::new();
+        let mut id_to_path: std::collections::HashMap<String, String> =
+            std::collections::HashMap::new();
+        for f in &files {
+            if let Ok(doc) = crate::document::Document::parse(f) {
+                let rel = f
+                    .strip_prefix(&workspace.root)
+                    .unwrap_or(f)
+                    .to_string_lossy()
+                    .to_string();
+                if let Some(fm) = &doc.frontmatter {
+                    if let Some(id) = &fm.id {
+                        id_to_path.insert(id.clone(), rel.clone());
+                    }
+                    if let Some(until) = fm.valid_until.as_deref() {
+                        if let Some(ts) = parse_fm_datetime(until)
+                            && ts < now
+                        {
+                            expired.push(format!("{rel} (valid_until={until})"));
+                        }
+                    }
+                    if fm.valid_until.is_none() {
+                        if let Some(learned) = fm.learned_at.as_deref() {
+                            if let Some(ts) = parse_fm_datetime(learned) {
+                                let age_days = (now - ts).num_days();
+                                if age_days > 365 {
+                                    stale_learned.push(format!(
+                                        "{rel} (learned_at={learned}, {age_days}d old; consider valid_until or supersede)"
+                                    ));
+                                }
+                            }
+                        }
+                    }
+                    if fm
+                        .status
+                        .as_deref()
+                        .is_some_and(|s| s.eq_ignore_ascii_case("superseded"))
+                        && fm.superseded_by.is_none()
+                    {
+                        broken_supersession
+                            .push(format!("{rel} (status=superseded without superseded_by)"));
+                    }
+                }
+            }
+        }
+        for f in &files {
+            if let Ok(doc) = crate::document::Document::parse(f) {
+                let Some(fm) = &doc.frontmatter else {
+                    continue;
+                };
+                let Some(target) = fm.supersedes.as_deref() else {
+                    continue;
+                };
+                if !id_to_path.contains_key(target) && !target.starts_with("path:") {
+                    let rel = f
+                        .strip_prefix(&workspace.root)
+                        .unwrap_or(f)
+                        .to_string_lossy();
+                    broken_supersession.push(format!(
+                        "{rel} (supersedes={target} not found among vault ids)"
+                    ));
+                }
+            }
+        }
+        if expired.is_empty() && stale_learned.is_empty() && broken_supersession.is_empty() {
+            println!("  ✅ No expired valid_until / stale learned_at / broken supersession links");
+        } else {
+            if !expired.is_empty() {
+                println!(
+                    "  ⚠️  {} document(s) past valid_until (excluded from recall, still on disk):",
+                    expired.len()
+                );
+                for line in &expired {
+                    println!("     - {line}");
+                }
+                issues += expired.len() as u32;
+            }
+            if !stale_learned.is_empty() {
+                println!(
+                    "  ℹ️  {} document(s) with learned_at older than 365d and no valid_until:",
+                    stale_learned.len()
+                );
+                for line in &stale_learned {
+                    println!("     - {line}");
+                }
+                // Informational only — do not inflate issue count.
+            }
+            if !broken_supersession.is_empty() {
+                println!(
+                    "  ⚠️  {} supersession link issue(s):",
+                    broken_supersession.len()
+                );
+                for line in &broken_supersession {
+                    println!("     - {line}");
+                }
+                issues += broken_supersession.len() as u32;
+            }
         }
 
         // Summary
@@ -720,5 +824,30 @@ impl ExportLlmsArgs {
         std::fs::write(&out_path, combined)?;
         println!("Exported {} files to {}", file_count, out_path);
         Ok(())
+    }
+}
+
+fn parse_fm_datetime(raw: &str) -> Option<chrono::DateTime<chrono::Utc>> {
+    let trimmed = raw.trim();
+    if let Ok(dt) = chrono::DateTime::parse_from_rfc3339(trimmed) {
+        return Some(dt.with_timezone(&chrono::Utc));
+    }
+    if let Ok(naive) = chrono::NaiveDate::parse_from_str(trimmed, "%Y-%m-%d") {
+        return naive
+            .and_hms_opt(0, 0, 0)
+            .map(|ndt| chrono::DateTime::<chrono::Utc>::from_naive_utc_and_offset(ndt, chrono::Utc));
+    }
+    None
+}
+
+#[cfg(test)]
+mod freshness_tests {
+    use super::parse_fm_datetime;
+
+    #[test]
+    fn parses_rfc3339_and_date_only() {
+        assert!(parse_fm_datetime("2020-01-01T00:00:00Z").is_some());
+        assert!(parse_fm_datetime("2020-01-01").is_some());
+        assert!(parse_fm_datetime("not-a-date").is_none());
     }
 }
