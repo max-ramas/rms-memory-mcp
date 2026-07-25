@@ -226,7 +226,7 @@ Supported names are `rust`, `go`, `javascript`, `jsx`, `typescript`, `tsx`, `pyt
 | `rms-memory install` | Hooks the server into supported IDEs. `--dry-run` supported. |
 | `rms-memory uninstall` | Removes the server from all discovered IDE configurations. |
 | `rms-memory doctor` | Runs 5-point vault health diagnostics. `--repair-frontmatter` safely repairs duplicate, missing, and known attached frontmatter IDs with backups; arbitrary invalid YAML is reported but never rewritten automatically. |
-| `rms-memory config` | Interactive global setup; `--code-index-mode off\|manual\|watch` and `--code-languages auto\|<comma-list>` configure semantic code indexing for the current registered project. |
+| `rms-memory config` | Without flags: prints global + current-project settings, then offers interactive global editing. Any flag runs non-interactively. Global: `--vault-path`, `--auto-add`, `--inject-rules`, `--auto-import skip\|link\|import_organize\|import`, `--max-backups N`. Project (cwd or `--scope <path>`): `--code-index-mode off\|manual\|watch`, `--code-languages auto\|<comma-list>`, `--include <globs>`, `--exclude <globs>`. |
 | `rms-memory reindex [--vault\|--code\|--all]` | Refreshes Markdown memory (default), derived semantic code memory, or both. |
 | `rms-memory sync` | Incremental LanceDB delete-then-insert sync (also runs automatically during `serve`). |
 | `rms-memory gc` | Prunes orphaned LanceDB indices belonging to deleted vaults. |

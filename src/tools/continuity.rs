@@ -230,9 +230,8 @@ pub fn checkpoint_save(
         .or(existing_fm.pending)
         .unwrap_or_default();
     let links = links.or(existing_fm.links).unwrap_or_default();
-    let links_yaml = serde_yaml::Value::Sequence(
-        links.iter().map(|link| yaml_string(link)).collect(),
-    );
+    let links_yaml =
+        serde_yaml::Value::Sequence(links.iter().map(|link| yaml_string(link)).collect());
 
     let text = render_note(
         "checkpoint",
@@ -286,9 +285,8 @@ pub fn checkpoint_done(
     let goal = fm.goal.clone().unwrap_or_default();
     let pending = fm.pending.clone().unwrap_or_default();
     let links = fm.links.clone().unwrap_or_default();
-    let links_yaml = serde_yaml::Value::Sequence(
-        links.iter().map(|link| yaml_string(link)).collect(),
-    );
+    let links_yaml =
+        serde_yaml::Value::Sequence(links.iter().map(|link| yaml_string(link)).collect());
 
     // Rewrite the checkpoint itself as done. `status: done` drops it out of
     // the default recall filter without deleting history.
@@ -711,11 +709,7 @@ mod tests {
         assert!(session.contains("Shipped"));
 
         // Done checkpoints drop out of the active query.
-        assert!(
-            checkpoint_query(root, Some("active"))
-                .unwrap()
-                .is_empty()
-        );
+        assert!(checkpoint_query(root, Some("active")).unwrap().is_empty());
         assert_eq!(checkpoint_query(root, Some("done")).unwrap().len(), 1);
         assert_eq!(checkpoint_query(root, None).unwrap().len(), 1);
     }

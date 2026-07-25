@@ -464,23 +464,21 @@ impl DoctorArgs {
                     if let Some(id) = &fm.id {
                         id_to_path.insert(id.clone(), rel.clone());
                     }
-                    if let Some(until) = fm.valid_until.as_deref() {
-                        if let Some(ts) = parse_fm_datetime(until)
-                            && ts < now
-                        {
-                            expired.push(format!("{rel} (valid_until={until})"));
-                        }
+                    if let Some(until) = fm.valid_until.as_deref()
+                        && let Some(ts) = parse_fm_datetime(until)
+                        && ts < now
+                    {
+                        expired.push(format!("{rel} (valid_until={until})"));
                     }
-                    if fm.valid_until.is_none() {
-                        if let Some(learned) = fm.learned_at.as_deref() {
-                            if let Some(ts) = parse_fm_datetime(learned) {
-                                let age_days = (now - ts).num_days();
-                                if age_days > 365 {
-                                    stale_learned.push(format!(
-                                        "{rel} (learned_at={learned}, {age_days}d old; consider valid_until or supersede)"
-                                    ));
-                                }
-                            }
+                    if fm.valid_until.is_none()
+                        && let Some(learned) = fm.learned_at.as_deref()
+                        && let Some(ts) = parse_fm_datetime(learned)
+                    {
+                        let age_days = (now - ts).num_days();
+                        if age_days > 365 {
+                            stale_learned.push(format!(
+                                "{rel} (learned_at={learned}, {age_days}d old; consider valid_until or supersede)"
+                            ));
                         }
                     }
                     if fm
@@ -833,9 +831,9 @@ fn parse_fm_datetime(raw: &str) -> Option<chrono::DateTime<chrono::Utc>> {
         return Some(dt.with_timezone(&chrono::Utc));
     }
     if let Ok(naive) = chrono::NaiveDate::parse_from_str(trimmed, "%Y-%m-%d") {
-        return naive
-            .and_hms_opt(0, 0, 0)
-            .map(|ndt| chrono::DateTime::<chrono::Utc>::from_naive_utc_and_offset(ndt, chrono::Utc));
+        return naive.and_hms_opt(0, 0, 0).map(|ndt| {
+            chrono::DateTime::<chrono::Utc>::from_naive_utc_and_offset(ndt, chrono::Utc)
+        });
     }
     None
 }

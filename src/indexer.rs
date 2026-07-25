@@ -444,10 +444,7 @@ async fn sync_vault_inner(
             .as_ref()
             .and_then(|fm| fm.confidence)
             .map(|c| c as f32);
-        let status = doc
-            .frontmatter
-            .as_ref()
-            .and_then(|fm| fm.status.clone());
+        let status = doc.frontmatter.as_ref().and_then(|fm| fm.status.clone());
         let supersedes = doc
             .frontmatter
             .as_ref()
@@ -614,10 +611,7 @@ async fn index_vault_full_inner(
             .as_ref()
             .and_then(|fm| fm.confidence)
             .map(|c| c as f32);
-        let status = doc
-            .frontmatter
-            .as_ref()
-            .and_then(|fm| fm.status.clone());
+        let status = doc.frontmatter.as_ref().and_then(|fm| fm.status.clone());
         let supersedes = doc
             .frontmatter
             .as_ref()

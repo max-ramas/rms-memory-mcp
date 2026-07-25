@@ -229,14 +229,10 @@ pub async fn execute(
     let predecessor = if let Some(old_rel) = supersedes_path {
         let old_path = super::validation::resolve_vault_path(workspace_root, old_rel)?;
         if !old_path.exists() {
-            return Err(anyhow::anyhow!(
-                "supersedes path does not exist: {old_rel}"
-            ));
+            return Err(anyhow::anyhow!("supersedes path does not exist: {old_rel}"));
         }
         let old_doc = crate::document::Document::parse(&old_path)?;
-        let old_rel_path = old_path
-            .strip_prefix(workspace_root)
-            .unwrap_or(&old_path);
+        let old_rel_path = old_path.strip_prefix(workspace_root).unwrap_or(&old_path);
         let old_id = old_doc.index_id(old_rel_path);
         write_args.insert("supersedes_id".into(), serde_json::json!(old_id));
         Some((old_path, old_id))
@@ -244,8 +240,12 @@ pub async fn execute(
         None
     };
 
-    let content =
-        inject_audit_metadata(content, &ctx.caller_id, ctx.project_key.as_deref(), &write_args)?;
+    let content = inject_audit_metadata(
+        content,
+        &ctx.caller_id,
+        ctx.project_key.as_deref(),
+        &write_args,
+    )?;
 
     if file_path.exists() && ctx.max_backups > 0 {
         let mut backups = Vec::new();
@@ -314,9 +314,7 @@ pub async fn execute(
 
     if let Some((old_path, _old_id)) = predecessor {
         let new_doc = crate::document::Document::parse(&file_path)?;
-        let new_rel = file_path
-            .strip_prefix(workspace_root)
-            .unwrap_or(&file_path);
+        let new_rel = file_path.strip_prefix(workspace_root).unwrap_or(&file_path);
         let new_id = new_doc.index_id(new_rel);
         mark_document_superseded(&old_path, &new_id)?;
     }
