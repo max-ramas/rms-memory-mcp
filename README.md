@@ -52,6 +52,7 @@ You're developing a single project but switching between different agents — Cu
 | 🎯 **Bounded Recall (v1.0.7)** | `rms_search` returns an inject/abstain envelope with `max_chars`, optional `min_score`, fail-closed errors, and `retrieval_mode` (`hybrid` or short-query `fts_prefer`). |
 | ♻️ **Knowledge Lifecycle** | Frontmatter `status` / `supersedes` / temporal `valid_*` gate Lance recall; soft supersede via `rms_write`; Doctor freshness lint (7/7). |
 | 🔄 **Session Continuity (v1.0.7)** | Vault-backed checkpoints (`rms_checkpoint_save/done/load/query`), `rms_overview` project orientation, `rms_system_instructions` self-bootstrap, editor-agnostic `rms-memory hook` CLI, installer L3 thin adapters, and `pinned` notes that bypass temporal/`min_confidence` recall gates. |
+| 🧭 **Multi-project MCP routing (v1.0.8)** | Explicit `project` always rebinds the active vault; empty Cursor `roots/list` falls back to process cwd; injected rules require `project: "<key>"` on every memory tool call; `rms-memory inject-rules [--all]` refreshes keys. |
 | 📦 **Unified Releases** | Public assets use `rms_memory_mcp_*` / `rms_memory_gui_*` on the **same** `vX.Y.Z` tag (MCP + GUI share numbering). |
 | ⚙️ **Dynamic Auto-Installer** | `rms-memory install` scans your system and wires itself into every supported IDE. |
 | 📜 **Rules-as-Code Patching** | Non-destructive AST patching of `.cursorrules`, `.zed/assistant.md`, etc. Opt-in by default. |
