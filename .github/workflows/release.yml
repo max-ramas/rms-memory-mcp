@@ -45,6 +45,13 @@ jobs:
       release_tag: ${{ steps.select.outputs.release_tag }}
       expected_version: ${{ steps.select.outputs.expected_version }}
     steps:
+      - name: Checkout requested ref
+        uses: actions/checkout@v4
+        with:
+          # Manual dispatch must build the commit the tag points at, not the
+          # current branch tip. For tag pushes this resolves to the same tag.
+          ref: ${{ github.event_name == 'push' && github.ref_name || inputs.release_tag }}
+
       - name: Select platforms and release tag
         id: select
         env:
@@ -133,6 +140,19 @@ jobs:
               fh.write(f"expected_version={expected}\n")
           PY
 
+      - name: Verify Cargo version matches release tag
+        shell: bash
+        env:
+          EXPECTED_VERSION: ${{ steps.select.outputs.expected_version }}
+        run: |
+          set -euo pipefail
+          version="$(grep -m1 '^version = ' Cargo.toml | sed -E 's/^version = "([^"]+)".*/\1/')"
+          echo "Cargo.toml version: ${version}; expected: ${EXPECTED_VERSION}"
+          if [ "${version}" != "${EXPECTED_VERSION}" ]; then
+            echo "Cargo.toml version ${version} does not match release tag version ${EXPECTED_VERSION}; refusing to build." >&2
+            exit 1
+          fi
+
   build:
     name: Build ${{ matrix.target }}
     needs: plan
@@ -144,6 +164,8 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.plan.outputs.release_tag }}
 
       - name: Persistent cargo target (self-hosted)
         if: matrix.persist_target == true
@@ -210,6 +232,13 @@ jobs:
       - name: Generate DEB & RPM (Linux)
         if: runner.os == 'Linux'
         run: |
+          set -euo pipefail
+          TD="${CARGO_TARGET_DIR:-target}"
+          # The self-hosted release target is persistent, so stale packages from
+          # previous versions survive here. Remove them before regenerating so we
+          # only ever upload the current version's DEB/RPM (guards against the
+          # 1.0.6 RPM that leaked into the 1.0.7 release).
+          rm -rf "$TD/debian" "$TD/generate-rpm"
           cargo deb --no-build
           cargo generate-rpm
         shell: bash
@@ -278,6 +307,8 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.plan.outputs.release_tag }}
 
       - name: Download all artifacts
         uses: actions/download-artifact@v4
@@ -320,6 +351,8 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.plan.outputs.release_tag }}
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable

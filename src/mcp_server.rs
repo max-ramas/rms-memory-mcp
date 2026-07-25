@@ -529,11 +529,24 @@ impl McpServer {
 
     async fn bind_workspace(&mut self, workspace: crate::workspace::Workspace) -> Result<()> {
         let project_key = workspace.project_key();
-        if let Some(current_root) = &self.ctx.workspace_root {
-            if current_root == &workspace.root {
-                return Ok(());
-            }
-            // Explicit/roots-driven switch: stop watchers for the previous vault first.
+        let is_rebind = match &self.ctx.workspace_root {
+            Some(current_root) if current_root == &workspace.root => return Ok(()),
+            Some(_) => true,
+            None => false,
+        };
+
+        // Open and validate the new store BEFORE tearing down the current
+        // watchers. If this fails on a rebind, the previous project stays fully
+        // intact (store + live watchers) instead of being left bound but
+        // watcher-less. Rebind is therefore failure-atomic.
+        let store = workspace.get_store().await?;
+        let indexer = self
+            .ctx
+            .indexer
+            .clone()
+            .ok_or_else(|| anyhow::anyhow!("Indexer not initialized"))?;
+
+        if is_rebind {
             tracing::info!(
                 "MCP workspace rebinding: client={} from={} to={} vault_root={}",
                 self.ctx.caller_id,
@@ -541,17 +554,13 @@ impl McpServer {
                 project_key.as_deref().unwrap_or("unknown"),
                 workspace.root.display()
             );
+            // The new store is open; only now is it safe to stop the previous
+            // vault's watchers and swap in a fresh cancellation channel.
             let _ = self.watcher_cancel_tx.send(true);
             let (next_cancel_tx, _) = tokio::sync::watch::channel(false);
             self.watcher_cancel_tx = next_cancel_tx;
         }
 
-        let store = workspace.get_store().await?;
-        let indexer = self
-            .ctx
-            .indexer
-            .clone()
-            .ok_or_else(|| anyhow::anyhow!("Indexer not initialized"))?;
         spawn_sync_watcher(
             workspace.clone(),
             store.clone(),

@@ -223,7 +223,7 @@ Supported names are `rust`, `go`, `javascript`, `jsx`, `typescript`, `tsx`, `pyt
 |---|---|
 | `rms-memory serve` | Starts the JSON-RPC stdio server (auto-triggered by your IDE). |
 | `rms-memory init` | Registers a project into the global registry. `--dry-run` supported. `--full` forces creation of all IDE rule templates. |
-| `rms-memory inject-rules [--all]` | Re-injects managed IDE rule blocks with the concrete registry `project` key (existing files only, unless `--full`). Use after template updates. |
+| `rms-memory inject-rules [--all]` | Re-injects managed IDE rule blocks with the concrete registry `project` key (existing files only, unless `--full`). Use after template updates. Fail-closed: a single unregistered path is refused rather than injected with a guessed key — run `init` there first, or use `--all` to refresh every registered project. |
 | `rms-memory import` | Scans for existing docs (`README.md`, `docs/`, `ADR/`) and imports them — interactively or via `--auto-import`. |
 | `rms-memory install` | Hooks the server into supported IDEs. `--dry-run` supported. |
 | `rms-memory uninstall` | Removes the server from all discovered IDE configurations. |

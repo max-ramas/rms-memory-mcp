@@ -54,6 +54,19 @@ impl InjectRulesArgs {
                 failed += 1;
                 continue;
             }
+            // Standalone injection must be fail-closed: injected rules embed a
+            // mandatory `project: "<key>"` line, so we refuse to write a key that
+            // `rms_projects` cannot resolve. `--all` iterates registered projects,
+            // so those are always resolvable; `init` keeps its own basename
+            // fallback for the not-yet-registered case.
+            if !self.all && crate::rules_injector::registered_project_key(path).is_none() {
+                eprintln!(
+                    "refusing to inject rules for unregistered path: {}\n  run `rms-memory init` here first, or use `rms-memory inject-rules --all` to refresh every registered project.",
+                    path.display()
+                );
+                failed += 1;
+                continue;
+            }
             match crate::rules_injector::inject_rules(path, opts) {
                 Ok(()) => {
                     println!(

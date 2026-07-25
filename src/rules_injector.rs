@@ -18,18 +18,29 @@ pub struct InjectOptions {
     pub interactive: bool,
 }
 
-pub fn inject_rules(project_root: &Path, options: InjectOptions) -> Result<()> {
-    let canonical_root =
-        fs::canonicalize(project_root).unwrap_or_else(|_| project_root.to_path_buf());
-    let project_key = crate::workspace::Registry::load()
+/// Returns the exact registry key whose `code_path` canonically equals `code_path`.
+///
+/// This is the authoritative, fail-closed resolution: it only ever returns a key
+/// that `rms_projects` can resolve. Standalone `inject-rules` uses it to refuse
+/// unregistered directories; `inject_rules` uses it before falling back to the
+/// folder basename (which `init` relies on for a not-yet-registered project).
+pub fn registered_project_key(code_path: &Path) -> Option<String> {
+    let canonical = fs::canonicalize(code_path).unwrap_or_else(|_| code_path.to_path_buf());
+    crate::workspace::Registry::load()
         .ok()
         .and_then(|registry| {
             registry.projects.into_iter().find_map(|(key, project)| {
-                let code_path = fs::canonicalize(&project.code_path)
+                let project_canon = fs::canonicalize(&project.code_path)
                     .unwrap_or_else(|_| project.code_path.into());
-                (code_path == canonical_root).then_some(key)
+                (project_canon == canonical).then_some(key)
             })
         })
+}
+
+pub fn inject_rules(project_root: &Path, options: InjectOptions) -> Result<()> {
+    let canonical_root =
+        fs::canonicalize(project_root).unwrap_or_else(|_| project_root.to_path_buf());
+    let project_key = registered_project_key(project_root)
         .or_else(|| {
             canonical_root
                 .file_name()
