@@ -13,14 +13,25 @@ pub struct Document {
     pub original_text: String,
 }
 
-#[derive(Deserialize, Serialize, Debug, Clone)]
+#[derive(Deserialize, Serialize, Debug, Clone, Default)]
 pub struct Frontmatter {
     pub memory_version: Option<i32>,
     pub id: Option<String>,
     pub alias: Option<String>,
     #[serde(rename = "type")]
     pub doc_type: Option<String>,
+    /// Knowledge lifecycle: `active` (default), `draft`, `superseded`.
     pub status: Option<String>,
+    /// Document id this note supersedes (soft replace chain).
+    pub supersedes: Option<String>,
+    /// Document id that replaced this note when status=superseded.
+    pub superseded_by: Option<String>,
+    /// Inclusive start of factual validity (RFC3339), optional.
+    pub valid_from: Option<String>,
+    /// Exclusive/inclusive end of factual validity (RFC3339), optional.
+    pub valid_until: Option<String>,
+    /// When the fact was learned (RFC3339), optional; used by doctor freshness lint.
+    pub learned_at: Option<String>,
     pub link: Option<String>,
     pub last_modified_by: Option<String>,
     pub timestamp: Option<String>,

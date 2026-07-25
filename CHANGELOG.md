@@ -2,6 +2,28 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.0.7] - 2026-07-25
+
+Bounded recall and vault-native knowledge lifecycle (second-brain mapping onto Markdown + LanceDB, not a SQL memories table).
+
+### Added
+- **`rms_search` decision envelope:** responses include `{ decision: inject|abstain, reason, injected_ids, results }` (additive; existing `results` shape preserved).
+- **`max_chars`:** total injected content budget (default **2000**); weaker hits truncated/dropped to stay in budget.
+- **`min_score`:** optional relevance floor (0..1). Best hit below threshold → **abstain** with empty `results` (fail-closed).
+- **Fail-closed search:** index/embedding failures return an abstain envelope instead of a hard tool error for agents.
+- **Supersession frontmatter:** `status` (`active`|`draft`|`superseded`), `supersedes`, `superseded_by`; Lance default recall keeps NULL/active/draft and excludes superseded.
+- **Soft supersede on `rms_write`:** optional `supersedes: <relative vault path>` stamps the new note and marks the predecessor superseded with bidirectional ids.
+- **Temporal validity:** optional `valid_from` / `valid_until` / `learned_at` in frontmatter; indexed and applied in `vault_recall_filter`.
+- **Doctor `[7/7] Knowledge freshness`:** expired `valid_until`, broken supersession links (issues); old `learned_at` without `valid_until` (informational).
+- ADR: vault `architecture/bounded-recall.md`.
+
+### Changed
+- ROADMAP: stale **pruning** (future/v2) is distinct from vault-native **supersession** + temporal recall gates.
+
+### Verification
+- Unit tests: search abstain/budget/RRF, soft supersede, vault recall filters, freshness datetime parse.
+- `cargo check` / targeted `--lib` filters clean.
+
 ## [1.0.6] - 2026-07-23
 
 Line closed 2026-07-23. Includes everything shipped after **1.0.5** (wiki generator through path-scoped watcher, write isolation, and docs).

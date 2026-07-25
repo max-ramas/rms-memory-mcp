@@ -732,7 +732,7 @@ impl McpServer {
                 "tools": [
                     {
                         "name": "rms_search",
-                        "description": "Search RMS Memory. `corpus=vault` (default) searches human Markdown memory; `code` searches derived semantic code; `all` ranks each corpus independently and combines them with Reciprocal Rank Fusion, never raw vector distances.",
+                        "description": "Search RMS Memory. Returns a decision envelope: {decision: inject|abstain, reason, injected_ids, results}. `corpus=vault` (default) searches human Markdown memory; `code` searches derived semantic code; `all` ranks each corpus independently and combines them with Reciprocal Rank Fusion, never raw vector distances. Weak matches abstain when min_score is set; content is bounded by max_chars.",
                         "inputSchema": {
                             "type": "object",
                             "properties": {
@@ -741,7 +741,9 @@ impl McpServer {
                                 "corpus": { "type": "string", "enum": ["vault", "code", "all"], "description": "Corpus to search. Defaults to vault." },
                                 "limit": { "type": "integer", "description": "Maximum number of chunks to return. Default is 10." },
                                 "include_content": { "type": "boolean", "description": "Whether to include full chunk text in results." },
-                                "min_confidence": { "type": "number", "description": "Optional minimum confidence threshold (0.0–1.0). Records with NULL confidence are always included. CAUTION: do NOT use high values (e.g. 0.9+) unless you need strict filtering. If zero results, retry without this parameter." }
+                                "min_confidence": { "type": "number", "description": "Optional minimum confidence threshold (0.0–1.0). Records with NULL confidence are always included. CAUTION: do NOT use high values (e.g. 0.9+) unless you need strict filtering. If zero results, retry without this parameter." },
+                                "max_chars": { "type": "integer", "description": "Maximum total characters of injected content across results (default 2000). Truncates/drops weaker hits to stay within budget." },
+                                "min_score": { "type": "number", "description": "Optional minimum relevance in 0..1 (distance and RRF normalized). If the best hit is weaker, rms_search abstains with an empty results list (fail-closed)." }
                             },
                             "required": ["query"]
                         }
@@ -785,7 +787,9 @@ impl McpServer {
                                 "content": { "type": "string", "description": "The markdown content to write." },
                                 "mode": { "type": "string", "enum": ["create", "append", "replace"], "description": "Write mode." },
                                 "confidence": { "type": "number", "description": "Optional confidence score (0.0–1.0) indicating reliability of this record." },
-                                "source": { "type": "string", "description": "Optional free-text citation or source reference for this record." }
+                                "source": { "type": "string", "description": "Optional free-text citation or source reference for this record." },
+                                "status": { "type": "string", "description": "Optional lifecycle status: active, draft, or superseded." },
+                                "supersedes": { "type": "string", "description": "Optional relative vault path of a prior note to soft-supersede (marks it status=superseded and links both sides)." }
                             },
                             "required": ["path", "mode", "content"]
                         }

@@ -444,6 +444,26 @@ async fn sync_vault_inner(
             .as_ref()
             .and_then(|fm| fm.confidence)
             .map(|c| c as f32);
+        let status = doc
+            .frontmatter
+            .as_ref()
+            .and_then(|fm| fm.status.clone());
+        let supersedes = doc
+            .frontmatter
+            .as_ref()
+            .and_then(|fm| fm.supersedes.clone());
+        let superseded_by = doc
+            .frontmatter
+            .as_ref()
+            .and_then(|fm| fm.superseded_by.clone());
+        let valid_from = doc
+            .frontmatter
+            .as_ref()
+            .and_then(|fm| fm.valid_from.clone());
+        let valid_until = doc
+            .frontmatter
+            .as_ref()
+            .and_then(|fm| fm.valid_until.clone());
 
         let raw_links = doc.extract_links();
         let mut normalized_links = Vec::new();
@@ -498,6 +518,11 @@ async fn sync_vault_inner(
                 text: chunk.text,
                 vector,
                 confidence,
+                status: status.clone(),
+                supersedes: supersedes.clone(),
+                superseded_by: superseded_by.clone(),
+                valid_from: valid_from.clone(),
+                valid_until: valid_until.clone(),
             });
         }
     }
@@ -587,6 +612,26 @@ async fn index_vault_full_inner(
             .as_ref()
             .and_then(|fm| fm.confidence)
             .map(|c| c as f32);
+        let status = doc
+            .frontmatter
+            .as_ref()
+            .and_then(|fm| fm.status.clone());
+        let supersedes = doc
+            .frontmatter
+            .as_ref()
+            .and_then(|fm| fm.supersedes.clone());
+        let superseded_by = doc
+            .frontmatter
+            .as_ref()
+            .and_then(|fm| fm.superseded_by.clone());
+        let valid_from = doc
+            .frontmatter
+            .as_ref()
+            .and_then(|fm| fm.valid_from.clone());
+        let valid_until = doc
+            .frontmatter
+            .as_ref()
+            .and_then(|fm| fm.valid_until.clone());
 
         let raw_links = doc.extract_links();
         let mut normalized_links = Vec::new();
@@ -641,6 +686,11 @@ async fn index_vault_full_inner(
                 text: chunk.text,
                 vector,
                 confidence,
+                status: status.clone(),
+                supersedes: supersedes.clone(),
+                superseded_by: superseded_by.clone(),
+                valid_from: valid_from.clone(),
+                valid_until: valid_until.clone(),
             });
         }
     }

@@ -13,6 +13,34 @@ fn escape_filter(s: &str) -> String {
     s.replace('\'', "''")
 }
 
+fn append_optional_utf8(
+    builder: &mut lancedb::arrow::arrow_array::builder::StringBuilder,
+    value: Option<&str>,
+) {
+    match value {
+        Some(v) => builder.append_value(v),
+        None => builder.append_null(),
+    }
+}
+
+/// Default vault recall filter: hide superseded notes; keep NULL/active/draft.
+pub fn vault_status_filter() -> &'static str {
+    "(status IS NULL OR status = '' OR status = 'active' OR status = 'draft')"
+}
+
+pub fn vault_recall_filter(min_confidence: Option<f32>) -> Option<String> {
+    let now = chrono::Utc::now().to_rfc3339();
+    let mut parts = vec![
+        vault_status_filter().to_string(),
+        format!("(valid_from IS NULL OR valid_from = '' OR valid_from <= '{now}')"),
+        format!("(valid_until IS NULL OR valid_until = '' OR valid_until >= '{now}')"),
+    ];
+    if let Some(min_conf) = min_confidence {
+        parts.push(format!("(confidence IS NULL OR confidence >= {min_conf})"));
+    }
+    Some(parts.join(" AND "))
+}
+
 #[derive(Clone)]
 pub struct Store {
     pub db: lancedb::Connection,
@@ -65,6 +93,11 @@ impl Store {
             Field::new("heading", DataType::Utf8, false),
             Field::new("text", DataType::Utf8, false),
             Field::new("confidence", DataType::Float32, true),
+            Field::new("status", DataType::Utf8, true),
+            Field::new("supersedes", DataType::Utf8, true),
+            Field::new("superseded_by", DataType::Utf8, true),
+            Field::new("valid_from", DataType::Utf8, true),
+            Field::new("valid_until", DataType::Utf8, true),
             // Use VECTOR_DIMENSION
             Field::new(
                 "vector",
@@ -101,48 +134,55 @@ impl Store {
     }
 
     async fn migrate_schema(&self, table: &Table) -> Result<()> {
+        self.ensure_nullable_column(table, "confidence", DataType::Float32)
+            .await?;
+        for name in [
+            "status",
+            "supersedes",
+            "superseded_by",
+            "valid_from",
+            "valid_until",
+        ] {
+            self.ensure_nullable_column(table, name, DataType::Utf8)
+                .await?;
+        }
+        Ok(())
+    }
+
+    async fn ensure_nullable_column(
+        &self,
+        table: &Table,
+        name: &str,
+        data_type: DataType,
+    ) -> Result<()> {
         let schema = table.schema().await?;
-        if schema.column_with_name("confidence").is_none() {
-            use lancedb::arrow::arrow_schema::{DataType, Field, Schema as ArrowSchema};
-            use lancedb::table::NewColumnTransform;
-            use std::sync::Arc;
+        if schema.column_with_name(name).is_some() {
+            return Ok(());
+        }
+        use lancedb::table::NewColumnTransform;
 
-            tracing::info!(
-                "Migrating LanceDB schema: adding 'confidence' column (Float32, nullable)"
-            );
-
-            let confidence_schema = Arc::new(ArrowSchema::new(vec![Field::new(
-                "confidence",
-                DataType::Float32,
-                true,
-            )]));
-
-            match table
-                .add_columns(NewColumnTransform::AllNulls(confidence_schema), None)
-                .await
-            {
-                Ok(_) => {
-                    tracing::info!("Schema migration successful.");
-                    // Recreate FTS index which may be invalidated by add_columns
-                    if let Err(e) = self.create_fts_index(table).await {
-                        tracing::warn!(
-                            "Failed to recreate FTS index after schema migration: {}",
-                            e
-                        );
-                    }
+        tracing::info!(
+            "Migrating LanceDB schema: adding '{name}' column ({data_type:?}, nullable)"
+        );
+        let column_schema = Arc::new(ArrowSchema::new(vec![Field::new(name, data_type, true)]));
+        match table
+            .add_columns(NewColumnTransform::AllNulls(column_schema), None)
+            .await
+        {
+            Ok(_) => {
+                tracing::info!("Schema migration successful for '{name}'.");
+                if name == "confidence"
+                    && let Err(e) = self.create_fts_index(table).await
+                {
+                    tracing::warn!("Failed to recreate FTS index after schema migration: {e}");
                 }
-                Err(e) => {
-                    let err_str = e.to_string();
-                    if err_str.contains("already exists") || err_str.contains("duplicate") {
-                        tracing::info!(
-                            "Confidence column already exists (race condition), skipping migration."
-                        );
-                    } else {
-                        tracing::warn!(
-                            "Schema migration skipped (confidence column will not be available): {}",
-                            e
-                        );
-                    }
+            }
+            Err(e) => {
+                let err_str = e.to_string();
+                if err_str.contains("already exists") || err_str.contains("duplicate") {
+                    tracing::info!("Column '{name}' already exists (race), skipping migration.");
+                } else {
+                    tracing::warn!("Schema migration skipped for '{name}': {e}");
                 }
             }
         }
@@ -453,6 +493,11 @@ impl Store {
         let mut heading_b = StringBuilder::new();
         let mut text_b = StringBuilder::new();
         let mut confidence_b = Float32Builder::new();
+        let mut status_b = StringBuilder::new();
+        let mut supersedes_b = StringBuilder::new();
+        let mut superseded_by_b = StringBuilder::new();
+        let mut valid_from_b = StringBuilder::new();
+        let mut valid_until_b = StringBuilder::new();
 
         let item_builder = Float32Builder::new();
         let mut vector_b = FixedSizeListBuilder::new(item_builder, VECTOR_DIMENSION as i32);
@@ -473,6 +518,11 @@ impl Store {
                 Some(c) => confidence_b.append_value(c),
                 None => confidence_b.append_null(),
             }
+            append_optional_utf8(&mut status_b, r.status.as_deref());
+            append_optional_utf8(&mut supersedes_b, r.supersedes.as_deref());
+            append_optional_utf8(&mut superseded_by_b, r.superseded_by.as_deref());
+            append_optional_utf8(&mut valid_from_b, r.valid_from.as_deref());
+            append_optional_utf8(&mut valid_until_b, r.valid_until.as_deref());
 
             vector_b.values().append_slice(&r.vector);
             vector_b.append(true);
@@ -493,6 +543,11 @@ impl Store {
                 Arc::new(heading_b.finish()),
                 Arc::new(text_b.finish()),
                 Arc::new(confidence_b.finish()),
+                Arc::new(status_b.finish()),
+                Arc::new(supersedes_b.finish()),
+                Arc::new(superseded_by_b.finish()),
+                Arc::new(valid_from_b.finish()),
+                Arc::new(valid_until_b.finish()),
                 Arc::new(vector_b.finish()),
             ],
         )?;
@@ -635,6 +690,11 @@ pub struct ChunkRecord {
     pub text: String,
     pub vector: Vec<f32>,
     pub confidence: Option<f32>,
+    pub status: Option<String>,
+    pub supersedes: Option<String>,
+    pub superseded_by: Option<String>,
+    pub valid_from: Option<String>,
+    pub valid_until: Option<String>,
 }
 
 #[derive(Clone)]
@@ -869,10 +929,13 @@ impl Store {
         use lancedb::query::{ExecutableQuery, QueryBase};
 
         let table = self.db.open_table(&self.table_name).execute().await?;
+        // Ensure lifecycle columns exist before filtering on them.
+        self.migrate_schema(&table).await?;
 
         let mut results = Vec::new();
 
         let query_vector_first = query_vector.clone();
+        let filter = vault_recall_filter(min_confidence);
 
         // Build base query builder
         let query_builder = table.vector_search(query_vector_first)?;
@@ -884,10 +947,8 @@ impl Store {
             query_builder.limit(limit)
         };
 
-        // Apply confidence filter (NULL-aware)
-        if let Some(min_conf) = min_confidence {
-            let filter = format!("confidence IS NULL OR confidence >= {}", min_conf);
-            query = query.only_if(filter);
+        if let Some(filter) = filter.as_ref() {
+            query = query.only_if(filter.clone());
         }
 
         let stream = query.execute().await;
@@ -901,16 +962,11 @@ impl Store {
             Err(e) => {
                 tracing::warn!("Hybrid search failed ({}), falling back to vector-only", e);
                 let query_builder = table.vector_search(query_vector)?.limit(limit);
-                if let Some(min_conf) = min_confidence {
-                    let filter = format!("confidence IS NULL OR confidence >= {}", min_conf);
-                    let mut stream = query_builder.only_if(filter).execute().await?;
-                    while let Some(batch) = stream.next().await {
-                        let batch = batch?;
-                        extract_results(&batch, &mut results)?;
-                    }
-                    return Ok(results);
-                }
-                let mut stream = query_builder.execute().await?;
+                let mut stream = if let Some(filter) = filter {
+                    query_builder.only_if(filter).execute().await?
+                } else {
+                    query_builder.execute().await?
+                };
                 while let Some(batch) = stream.next().await {
                     let batch = batch?;
                     extract_results(&batch, &mut results)?;
@@ -959,5 +1015,34 @@ impl Store {
             .collect::<Vec<_>>()
             .join("\n\n");
         Ok(full_text)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn vault_status_filter_excludes_superseded() {
+        let f = vault_status_filter();
+        assert!(f.contains("active"));
+        assert!(f.contains("draft"));
+        assert!(!f.contains("superseded"));
+    }
+
+    #[test]
+    fn vault_recall_filter_includes_status_temporal_and_confidence() {
+        let f = vault_recall_filter(Some(0.5)).expect("filter");
+        assert!(f.contains("status"));
+        assert!(f.contains("valid_from"));
+        assert!(f.contains("valid_until"));
+        assert!(f.contains("confidence >= 0.5"));
+    }
+
+    #[test]
+    fn vault_recall_filter_without_confidence_still_temporal() {
+        let f = vault_recall_filter(None).expect("filter");
+        assert!(f.contains("valid_until"));
+        assert!(!f.contains("confidence"));
     }
 }

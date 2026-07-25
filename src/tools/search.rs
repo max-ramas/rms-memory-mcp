@@ -4,6 +4,8 @@ use serde::Serialize;
 use std::collections::HashMap;
 
 const RRF_K: f32 = 60.0;
+/// Default total character budget for injected content (include_content=true).
+const DEFAULT_MAX_CHARS: usize = 2000;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Corpus {
@@ -106,6 +108,65 @@ impl UnifiedSearchResult {
             content_hash,
         )
     }
+
+    fn inject_id(&self) -> String {
+        if let Some(symbol) = self.qualified_symbol.as_deref() {
+            format!("{}:{}", self.path, symbol)
+        } else if let Some(heading) = self.heading.as_deref().filter(|h| !h.is_empty()) {
+            format!("{}#{}", self.path, heading)
+        } else {
+            self.path.clone()
+        }
+    }
+
+    /// Normalize Lance `_distance` or RRF into a 0..1-ish relevance (higher = better).
+    fn relevance(&self) -> Option<f32> {
+        if let Some(rrf) = self.rrf_score {
+            // Single-list top rank ≈ 1/(K+1); scale so that ≈1.0.
+            return Some((rrf * (RRF_K + 1.0)).min(1.0));
+        }
+        self.score.map(|distance| 1.0 / (1.0 + distance.max(0.0)))
+    }
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum SearchDecision {
+    Inject,
+    Abstain,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct SearchEnvelope {
+    pub decision: SearchDecision,
+    pub reason: String,
+    pub injected_ids: Vec<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub max_relevance: Option<f32>,
+    pub results: Vec<UnifiedSearchResult>,
+}
+
+impl SearchEnvelope {
+    fn inject(results: Vec<UnifiedSearchResult>, max_relevance: Option<f32>) -> Self {
+        let injected_ids = results.iter().map(|r| r.inject_id()).collect();
+        Self {
+            decision: SearchDecision::Inject,
+            reason: "hits_above_threshold".into(),
+            injected_ids,
+            max_relevance,
+            results,
+        }
+    }
+
+    fn abstain(reason: impl Into<String>, max_relevance: Option<f32>) -> Self {
+        Self {
+            decision: SearchDecision::Abstain,
+            reason: reason.into(),
+            injected_ids: Vec::new(),
+            max_relevance,
+            results: Vec::new(),
+        }
+    }
 }
 
 pub async fn execute(
@@ -127,6 +188,45 @@ async fn execute_with_forced_corpus(
     args: &serde_json::Map<String, serde_json::Value>,
     forced_corpus: Option<Corpus>,
 ) -> Result<serde_json::Value> {
+    match execute_inner(ctx, args, forced_corpus).await {
+        Ok(envelope) => {
+            log_decision(&envelope);
+            Ok(super::response::json_text_response(&serde_json::to_string(
+                &envelope,
+            )?))
+        }
+        Err(error) => {
+            // Fail-closed: never invent weak context for the agent.
+            tracing::warn!(error = %error, "rms_search failed closed (abstain)");
+            let envelope = SearchEnvelope::abstain(format!("search_error: {error}"), None);
+            log_decision(&envelope);
+            Ok(super::response::json_text_response(&serde_json::to_string(
+                &envelope,
+            )?))
+        }
+    }
+}
+
+fn log_decision(envelope: &SearchEnvelope) {
+    match envelope.decision {
+        SearchDecision::Inject => tracing::info!(
+            ids = ?envelope.injected_ids,
+            max_relevance = ?envelope.max_relevance,
+            "rms_search injected"
+        ),
+        SearchDecision::Abstain => tracing::info!(
+            reason = %envelope.reason,
+            max_relevance = ?envelope.max_relevance,
+            "rms_search abstained"
+        ),
+    }
+}
+
+async fn execute_inner(
+    ctx: &AppContext,
+    args: &serde_json::Map<String, serde_json::Value>,
+    forced_corpus: Option<Corpus>,
+) -> Result<SearchEnvelope> {
     let store = ctx
         .store
         .as_ref()
@@ -148,6 +248,15 @@ async fn execute_with_forced_corpus(
         .get("min_confidence")
         .and_then(|value| value.as_f64())
         .map(|value| value as f32);
+    let max_chars = args
+        .get("max_chars")
+        .and_then(|value| value.as_u64())
+        .map(|value| value as usize)
+        .unwrap_or(DEFAULT_MAX_CHARS);
+    let min_score = args
+        .get("min_score")
+        .and_then(|value| value.as_f64())
+        .map(|value| value as f32);
     let corpus = forced_corpus.unwrap_or(Corpus::parse(
         args.get("corpus").and_then(|value| value.as_str()),
     )?);
@@ -166,7 +275,7 @@ async fn execute_with_forced_corpus(
             .unwrap_or_default()
     };
 
-    let mut results = match corpus {
+    let results = match corpus {
         Corpus::Vault => store
             .search(query_vector, query.to_string(), limit, min_confidence)
             .await?
@@ -200,14 +309,90 @@ async fn execute_with_forced_corpus(
             reciprocal_rank_fusion(vault, code, limit)
         }
     };
+
+    Ok(apply_bounded_recall(
+        results,
+        include_content,
+        max_chars,
+        min_score,
+    ))
+}
+
+/// Apply score abstain + character budget. Pure for unit tests.
+pub fn apply_bounded_recall(
+    mut results: Vec<UnifiedSearchResult>,
+    include_content: bool,
+    max_chars: usize,
+    min_score: Option<f32>,
+) -> SearchEnvelope {
+    let max_relevance = results.iter().filter_map(|r| r.relevance()).fold(
+        None,
+        |acc: Option<f32>, value| Some(acc.map_or(value, |current| current.max(value))),
+    );
+
+    if results.is_empty() {
+        return SearchEnvelope::abstain("no_hits", max_relevance);
+    }
+
+    if let Some(threshold) = min_score {
+        let best = max_relevance.unwrap_or(0.0);
+        if best < threshold {
+            return SearchEnvelope::abstain(
+                format!("best_relevance_below_min_score:{best:.4}<{threshold:.4}"),
+                max_relevance,
+            );
+        }
+    }
+
     if !include_content {
         for result in &mut results {
             result.content = None;
         }
+        return SearchEnvelope::inject(results, max_relevance);
     }
-    Ok(super::response::json_text_response(&serde_json::to_string(
-        &results,
-    )?))
+
+    results = apply_char_budget(results, max_chars);
+    if results.is_empty() {
+        return SearchEnvelope::abstain("char_budget_exhausted", max_relevance);
+    }
+    SearchEnvelope::inject(results, max_relevance)
+}
+
+fn apply_char_budget(
+    results: Vec<UnifiedSearchResult>,
+    max_chars: usize,
+) -> Vec<UnifiedSearchResult> {
+    let mut total = 0usize;
+    let mut kept = Vec::new();
+    for mut result in results {
+        let Some(content) = result.content.as_mut() else {
+            kept.push(result);
+            continue;
+        };
+        let len = content.chars().count();
+        if total >= max_chars {
+            break;
+        }
+        if total + len > max_chars {
+            let remaining = max_chars.saturating_sub(total);
+            if remaining < 80 {
+                break;
+            }
+            truncate_content(content, remaining);
+        }
+        total += content.chars().count();
+        kept.push(result);
+    }
+    kept
+}
+
+fn truncate_content(content: &mut String, max_chars: usize) {
+    if content.chars().count() <= max_chars {
+        return;
+    }
+    let keep = max_chars.saturating_sub(18); // room for truncation marker
+    let truncated: String = content.chars().take(keep).collect();
+    *content = format!("{truncated}\n... [truncated]\n");
 }
 
 /// Merge ranked result lists without comparing their raw retrieval distances.
@@ -263,7 +448,7 @@ mod tests {
             source: source.to_string(),
             path: path.to_string(),
             heading: None,
-            content: None,
+            content: Some(format!("body for {path}")),
             confidence: None,
             score: Some(999.0),
             rrf_score: None,
@@ -274,6 +459,16 @@ mod tests {
             end_line: None,
             segment_index: None,
         }
+    }
+
+    fn with_distance(mut item: UnifiedSearchResult, distance: f32) -> UnifiedSearchResult {
+        item.score = Some(distance);
+        item
+    }
+
+    fn with_content(mut item: UnifiedSearchResult, content: &str) -> UnifiedSearchResult {
+        item.content = Some(content.to_string());
+        item
     }
 
     #[test]
@@ -287,5 +482,57 @@ mod tests {
         assert_eq!(fused[1].path, "a");
         assert!(fused.iter().all(|entry| entry.score.is_none()));
         assert!(fused.iter().all(|entry| entry.rrf_score.is_some()));
+    }
+
+    #[test]
+    fn abstains_when_best_relevance_below_min_score() {
+        let envelope = apply_bounded_recall(
+            vec![with_distance(result("vault", "weak"), 20.0)],
+            true,
+            2000,
+            Some(0.5),
+        );
+        assert_eq!(envelope.decision, SearchDecision::Abstain);
+        assert!(envelope.results.is_empty());
+        assert!(envelope.reason.contains("best_relevance_below_min_score"));
+    }
+
+    #[test]
+    fn injects_when_relevance_meets_min_score() {
+        let envelope = apply_bounded_recall(
+            vec![with_distance(result("vault", "strong"), 0.1)],
+            true,
+            2000,
+            Some(0.5),
+        );
+        assert_eq!(envelope.decision, SearchDecision::Inject);
+        assert_eq!(envelope.results.len(), 1);
+        assert_eq!(envelope.injected_ids, vec!["strong".to_string()]);
+    }
+
+    #[test]
+    fn char_budget_truncates_and_drops_overflow() {
+        let long = "x".repeat(500);
+        let envelope = apply_bounded_recall(
+            vec![
+                with_content(result("vault", "a"), &long),
+                with_content(result("vault", "b"), &long),
+            ],
+            true,
+            400,
+            None,
+        );
+        assert_eq!(envelope.decision, SearchDecision::Inject);
+        assert_eq!(envelope.results.len(), 1);
+        let content = envelope.results[0].content.as_deref().unwrap();
+        assert!(content.contains("[truncated]"));
+        assert!(content.chars().count() <= 420);
+    }
+
+    #[test]
+    fn abstains_on_empty_hits() {
+        let envelope = apply_bounded_recall(vec![], true, 2000, None);
+        assert_eq!(envelope.decision, SearchDecision::Abstain);
+        assert_eq!(envelope.reason, "no_hits");
     }
 }
