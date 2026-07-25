@@ -235,10 +235,17 @@ jobs:
           fi
 
           cd staging
-          tar -czf ../rms-memory-${{ matrix.target }}.${{ matrix.archive_ext }} rms-memory
+          tar -czf "../rms_memory_mcp_${{ matrix.target }}.${{ matrix.archive_ext }}" rms-memory
           if [ "${{ runner.os }}" == "Linux" ]; then
-            mv *.deb ../ 2>/dev/null || true
-            mv *.rpm ../ 2>/dev/null || true
+            shopt -s nullglob
+            for deb in *.deb; do
+              # cargo-deb: rms-memory-mcp_1.0.6-1_amd64.deb → rms_memory_mcp_1.0.6-1_amd64.deb
+              mv "$deb" "../${deb/rms-memory-mcp_/rms_memory_mcp_}"
+            done
+            for rpm in *.rpm; do
+              # cargo-generate-rpm: rms-memory-mcp-1.0.6-1.x86_64.rpm → rms_memory_mcp_1.0.6-1.x86_64.rpm
+              mv "$rpm" "../${rpm/rms-memory-mcp-/rms_memory_mcp_}"
+            done
           fi
         shell: bash
 
@@ -248,17 +255,17 @@ jobs:
           mkdir staging
           cp target\release\rms-memory.exe staging\rms-memory.exe
           cd staging
-          Compress-Archive -Path rms-memory.exe -DestinationPath ..\rms-memory-${{ matrix.target }}.${{ matrix.archive_ext }}
+          Compress-Archive -Path rms-memory.exe -DestinationPath ..\rms_memory_mcp_${{ matrix.target }}.${{ matrix.archive_ext }}
         shell: pwsh
 
       - name: Upload Artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: rms-memory-${{ matrix.target }}
+          name: rms_memory_mcp_${{ matrix.target }}
           path: |
-            rms-memory-${{ matrix.target }}.${{ matrix.archive_ext }}
-            *.deb
-            *.rpm
+            rms_memory_mcp_${{ matrix.target }}.${{ matrix.archive_ext }}
+            rms_memory_mcp_*.deb
+            rms_memory_mcp_*.rpm
           retention-days: 1
 
   release:
