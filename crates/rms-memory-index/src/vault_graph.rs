@@ -14,7 +14,7 @@ struct VaultDocument {
 /// Purge graph identities that were persisted before the Wiki namespace was
 /// reserved for GUI-generated material.
 pub async fn purge_wiki_graph_records(
-    workspace: &crate::workspace::Workspace,
+    workspace: &rms_memory_core::workspace::Workspace,
     store: &crate::store::Store,
 ) -> Result<usize> {
     let tables = store.open_or_create_graph_tables().await?;
@@ -23,8 +23,10 @@ pub async fn purge_wiki_graph_records(
         .await?
         .into_iter()
         .filter(|node| match (node.corpus.as_str(), node.path.as_deref()) {
-            ("vault", Some(path)) => crate::path_policy::is_vault_wiki_relative_path(path),
-            ("code", Some(path)) => crate::path_policy::is_vault_wiki_path(
+            ("vault", Some(path)) => {
+                rms_memory_core::path_policy::is_vault_wiki_relative_path(path)
+            }
+            ("code", Some(path)) => rms_memory_core::path_policy::is_vault_wiki_path(
                 &workspace.root,
                 &workspace.code_path.join(path),
             ),
@@ -40,13 +42,13 @@ pub async fn purge_wiki_graph_records(
 /// missing frontmatter ids use the same deterministic path-derived identity as
 /// the Vault index and malformed documents are skipped.
 pub async fn reconcile_vault_links(
-    workspace: &crate::workspace::Workspace,
+    workspace: &rms_memory_core::workspace::Workspace,
     store: &crate::store::Store,
 ) -> Result<()> {
     let generation = store.next_graph_generation().await?;
     let mut documents = Vec::new();
     for path in workspace.find_markdown_files()? {
-        let document = match crate::document::Document::parse(&path) {
+        let document = match rms_memory_core::document::Document::parse(&path) {
             Ok(document) => document,
             Err(error) => {
                 tracing::warn!(
@@ -190,12 +192,12 @@ mod tests {
         )
         .unwrap();
         std::fs::write(directory.path().join("b.md"), "---\nid: doc-b\n---\n# B\n").unwrap();
-        let workspace = crate::workspace::Workspace {
+        let workspace = rms_memory_core::workspace::Workspace {
             root: directory.path().to_path_buf(),
             code_path: directory.path().to_path_buf(),
             include: vec!["**/*.md".to_string()],
             exclude: vec![],
-            code_index_mode: crate::workspace::CodeIndexMode::Off,
+            code_index_mode: rms_memory_core::workspace::CodeIndexMode::Off,
             code_languages: vec!["auto".to_string()],
         };
         let store =
@@ -235,12 +237,12 @@ mod tests {
     #[tokio::test]
     async fn legacy_wiki_graph_nodes_and_incident_edges_are_purged() {
         let directory = tempfile::tempdir().unwrap();
-        let workspace = crate::workspace::Workspace {
+        let workspace = rms_memory_core::workspace::Workspace {
             root: directory.path().to_path_buf(),
             code_path: directory.path().to_path_buf(),
             include: vec!["**/*.md".to_string()],
             exclude: vec![],
-            code_index_mode: crate::workspace::CodeIndexMode::Off,
+            code_index_mode: rms_memory_core::workspace::CodeIndexMode::Off,
             code_languages: vec!["auto".to_string()],
         };
         let store =

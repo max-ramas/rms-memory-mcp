@@ -15,7 +15,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use crate::graph::EdgeResolution;
 use crate::indexer::Indexer;
 use crate::store::{CodeSearchResult, SearchResult, Store};
-use crate::workspace::Workspace;
+use rms_memory_core::workspace::Workspace;
 
 pub const EXTRACTOR: &str = "embedding-similarity-v1";
 pub const RELATION: &str = "semantically_related";

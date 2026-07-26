@@ -33,6 +33,10 @@ pub struct ConfigArgs {
     /// Comma-separated vault exclude globs for the current project (e.g. `node_modules/**,.git/**`)
     #[arg(long, value_name = "GLOBS")]
     pub exclude: Option<String>,
+    /// Allow this project's vault notes in cross-project federated search
+    /// (`projects` with more than one key and `corpus=vault|all`). Default false.
+    #[arg(long, value_name = "BOOL")]
+    pub cross_project_vault: Option<bool>,
 }
 
 impl ConfigArgs {
@@ -50,7 +54,8 @@ impl ConfigArgs {
         let has_project_flags = self.code_index_mode.is_some()
             || self.code_languages.is_some()
             || self.include.is_some()
-            || self.exclude.is_some();
+            || self.exclude.is_some()
+            || self.cross_project_vault.is_some();
 
         // Any explicit flag means scripted use: apply exactly what was passed,
         // never prompt for unrelated settings.
@@ -179,6 +184,13 @@ impl ConfigArgs {
                 updated = true;
             }
         }
+        if let Some(allow) = self.cross_project_vault
+            && project.cross_project_vault != allow
+        {
+            project.cross_project_vault = allow;
+            println!("Set cross_project_vault to: {allow}");
+            updated = true;
+        }
         Ok(updated)
     }
 }
@@ -256,9 +268,13 @@ fn print_current(registry: &crate::workspace::Registry, scope: Option<&str>) {
                 "| Exclude           | {:<64} |",
                 clip(&project.exclude.join(", "))
             );
+            println!(
+                "| Cross-Project Vault| {:<63} |",
+                project.cross_project_vault
+            );
             println!("{sep}");
             println!(
-                "\nProject flags: --code-index-mode, --code-languages, --include, --exclude (with --scope <path> when outside the repo).\n"
+                "\nProject flags: --code-index-mode, --code-languages, --include, --exclude, --cross-project-vault (with --scope <path> when outside the repo).\n"
             );
         }
         None => {
@@ -420,6 +436,7 @@ mod tests {
             exclude: vec![".git/**".to_string()],
             code_index_mode: crate::workspace::CodeIndexMode::Off,
             code_languages: vec!["auto".to_string()],
+            cross_project_vault: false,
         }
     }
 
@@ -434,6 +451,7 @@ mod tests {
             code_languages: None,
             include: None,
             exclude: None,
+            cross_project_vault: None,
         }
     }
 

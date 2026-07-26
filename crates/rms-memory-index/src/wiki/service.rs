@@ -7,11 +7,15 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::sync::broadcast;
 
+/// Optional host-provided CLI help renderer (clap lives in the umbrella crate).
+pub type CliHelpRenderer = Arc<dyn Fn(&str) -> String + Send + Sync>;
+
 pub struct WikiService {
     retrieval: RetrievalService,
     workspace_root: PathBuf,
     scope: String,
     tx: broadcast::Sender<WikiEvent>,
+    cli_help: Option<CliHelpRenderer>,
 }
 
 impl WikiService {
@@ -22,7 +26,14 @@ impl WikiService {
             workspace_root,
             scope,
             tx,
+            cli_help: None,
         }
+    }
+
+    /// Attach in-process CLI help (preferred over shelling out to `rms-memory`).
+    pub fn with_cli_help(mut self, renderer: CliHelpRenderer) -> Self {
+        self.cli_help = Some(renderer);
+        self
     }
 
     pub fn subscribe(&self) -> broadcast::Receiver<WikiEvent> {
@@ -54,7 +65,7 @@ impl WikiService {
             ));
             let temp_store = Arc::new(
                 crate::store::Store::init(
-                    &crate::workspace::base_dir()
+                    &rms_memory_core::workspace::base_dir()
                         .join("dbs")
                         .join("temp")
                         .to_string_lossy(),
@@ -62,7 +73,7 @@ impl WikiService {
                 )
                 .await?,
             );
-            let ws = crate::workspace::Workspace {
+            let ws = rms_memory_core::workspace::Workspace {
                 root: self.workspace_root.clone(),
                 code_path: self.workspace_root.clone(),
                 include: vec!["**/*".to_string()],
@@ -278,7 +289,7 @@ impl WikiService {
                 }
 
                 let path = entry.path();
-                if crate::path_policy::is_vault_wiki_path(&self.workspace_root, path) {
+                if rms_memory_core::path_policy::is_vault_wiki_path(&self.workspace_root, path) {
                     tracing::debug!("Wiki: excluding its own output: {}", path.display());
                     continue;
                 }
@@ -351,7 +362,7 @@ impl WikiService {
             } else {
                 format!("rms-memory {}", cmd)
             };
-            let help_text = Self::render_subcommand_help(cmd);
+            let help_text = self.render_subcommand_help(cmd);
             let content = format!("$ {} --help\n\n{}", label, help_text);
             let provenance = crate::wiki::providers::ItemProvenance::new("cli_help", &content);
             items.push(crate::wiki::providers::ResolvedItem::new(
@@ -361,23 +372,15 @@ impl WikiService {
         Ok(items)
     }
 
-    fn render_subcommand_help(subcommand: &str) -> String {
-        use clap::CommandFactory;
-        let mut app = crate::cli::Cli::command();
-        if subcommand.is_empty() {
-            return app.render_help().to_string();
+    fn render_subcommand_help(&self, subcommand: &str) -> String {
+        if let Some(renderer) = &self.cli_help {
+            return renderer(subcommand);
         }
-        let parts: Vec<&str> = subcommand.split_whitespace().collect();
-        for part in &parts[..parts.len().saturating_sub(1)] {
-            if let Some(cmd) = app.find_subcommand(part) {
-                app = cmd.clone();
-            }
-        }
-        if let Some(cmd) = app.find_subcommand(parts.last().unwrap_or(&"")) {
-            cmd.clone().render_help().to_string()
-        } else {
-            app.render_help().to_string()
-        }
+        // Library hosts (GUI path-dep) must call `with_cli_help`; shelling out to
+        // PATH is intentionally not used — Tauri builds do not ship the CLI.
+        format!(
+            "(CLI help unavailable: host did not provide WikiService::with_cli_help; subcommand={subcommand:?})"
+        )
     }
 
     fn compute_pack_id(

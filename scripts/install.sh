@@ -48,7 +48,14 @@ fi
 
 echo "Latest release: ${TAG}"
 
-DOWNLOAD_URL="https://github.com/${REPO}/releases/download/${TAG}/rms_memory_mcp_${TARGET}.tar.gz"
+# Assets are always versioned: rms_memory_mcp_<version>_<target>.tar.gz. Derive
+# the version from the tag (v1.0.9 -> 1.0.9); refuse to guess an unversioned URL.
+case "${TAG}" in
+    v[0-9]*) VERSION="${TAG#v}";;
+    *) echo "Error: release tag '${TAG}' is not a version tag (expected vX.Y.Z)."; exit 1;;
+esac
+
+DOWNLOAD_URL="https://github.com/${REPO}/releases/download/${TAG}/rms_memory_mcp_${VERSION}_${TARGET}.tar.gz"
 echo "Downloading ${DOWNLOAD_URL}..."
 
 TEMP_DIR=$(mktemp -d)

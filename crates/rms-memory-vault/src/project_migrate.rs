@@ -1,8 +1,8 @@
-use crate::config_manager::ConfigManager;
-use crate::document::{Document, Frontmatter};
-use crate::index_lock::{self, LockInspection};
-use crate::workspace::Registry;
 use anyhow::{Context, Result, anyhow, bail};
+use rms_memory_core::config_manager::ConfigManager;
+use rms_memory_core::document::{Document, Frontmatter};
+use rms_memory_core::workspace::Registry;
+use rms_memory_index::index_lock::{self, LockInspection};
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -374,7 +374,9 @@ fn index_path_for_vault(vault: &Path) -> PathBuf {
     let hash = blake3::hash(canon.to_string_lossy().as_bytes())
         .to_hex()
         .to_string();
-    crate::workspace::base_dir().join("dbs").join(hash)
+    rms_memory_core::workspace::base_dir()
+        .join("dbs")
+        .join(hash)
 }
 
 fn git_remote_url(dir: &Path) -> Option<String> {
@@ -434,7 +436,7 @@ fn iter_vault_markdown(vault_root: &Path) -> Result<Vec<PathBuf>> {
             .unwrap_or(&path)
             .to_string_lossy()
             .replace('\\', "/");
-        if crate::path_policy::is_vault_wiki_relative_path(&relative) {
+        if rms_memory_core::path_policy::is_vault_wiki_relative_path(&relative) {
             continue;
         }
         files.push(path);
@@ -586,7 +588,7 @@ fn update_frontmatter(path: &Path, update: impl FnOnce(&mut Frontmatter)) -> Res
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::workspace::{GlobalConfig, MigrationRedirect, ProjectConfig, Registry};
+    use rms_memory_core::workspace::{GlobalConfig, MigrationRedirect, ProjectConfig, Registry};
     use std::collections::HashMap;
 
     #[test]
@@ -640,6 +642,7 @@ mod tests {
                     exclude: vec![],
                     code_index_mode: Default::default(),
                     code_languages: vec![],
+                    cross_project_vault: false,
                 },
             )]),
             migrations: HashMap::from([(
@@ -677,6 +680,7 @@ mod tests {
                     exclude: vec![],
                     code_index_mode: Default::default(),
                     code_languages: vec![],
+                    cross_project_vault: false,
                 },
             )]),
             ..Registry::default()

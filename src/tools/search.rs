@@ -31,6 +31,9 @@ impl Corpus {
 pub struct UnifiedSearchResult {
     pub source: String,
     pub path: String,
+    /// Source project key when the hit came from a federated `projects` search.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub project: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub heading: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -62,6 +65,7 @@ impl UnifiedSearchResult {
         Self {
             source: "vault".to_string(),
             path: result.path,
+            project: None,
             heading: Some(result.heading),
             content: Some(result.text),
             confidence: result.confidence,
@@ -81,6 +85,7 @@ impl UnifiedSearchResult {
         Self {
             source: "code".to_string(),
             path: result.file_path,
+            project: None,
             heading: None,
             content: Some(result.content),
             confidence: None,
@@ -96,6 +101,11 @@ impl UnifiedSearchResult {
         }
     }
 
+    fn with_project(mut self, key: &str) -> Self {
+        self.project = Some(key.to_string());
+        self
+    }
+
     fn identity(&self) -> String {
         let content_hash = self
             .content
@@ -103,7 +113,8 @@ impl UnifiedSearchResult {
             .map(|content| blake3::hash(content.as_bytes()).to_string())
             .unwrap_or_default();
         format!(
-            "{}\0{}\0{}\0{}\0{}\0{}",
+            "{}\0{}\0{}\0{}\0{}\0{}\0{}",
+            self.project.as_deref().unwrap_or_default(),
             self.source,
             self.path,
             self.heading.as_deref().unwrap_or_default(),
@@ -114,12 +125,16 @@ impl UnifiedSearchResult {
     }
 
     fn inject_id(&self) -> String {
-        if let Some(symbol) = self.qualified_symbol.as_deref() {
+        let local = if let Some(symbol) = self.qualified_symbol.as_deref() {
             format!("{}:{}", self.path, symbol)
         } else if let Some(heading) = self.heading.as_deref().filter(|h| !h.is_empty()) {
             format!("{}#{}", self.path, heading)
         } else {
             self.path.clone()
+        };
+        match self.project.as_deref() {
+            Some(key) => format!("{key}::{local}"),
+            None => local,
         }
     }
 
@@ -131,6 +146,26 @@ impl UnifiedSearchResult {
         }
         self.score.map(|distance| 1.0 / (1.0 + distance.max(0.0)))
     }
+}
+
+/// Hard-fail error for federated-search argument / policy violations.
+///
+/// These must surface as tool errors (JSON-RPC / Tauri Err), never as an
+/// abstain envelope — silent degrade would make a denied vault search look
+/// like an empty index. See ADR `decisions/cross-project-federated-search.md`.
+#[derive(Debug)]
+pub struct FederatedSearchError(pub String);
+
+impl std::fmt::Display for FederatedSearchError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
+
+impl std::error::Error for FederatedSearchError {}
+
+fn federated_err(message: impl Into<String>) -> anyhow::Error {
+    anyhow::Error::new(FederatedSearchError(message.into()))
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
@@ -202,6 +237,10 @@ pub async fn search_envelope(
             log_decision(&envelope);
             Ok(envelope)
         }
+        Err(error) if error.downcast_ref::<FederatedSearchError>().is_some() => {
+            // Policy / argument errors must surface to the caller, not become abstain.
+            Err(error)
+        }
         Err(error) => {
             tracing::warn!(error = %error, "rms_search failed closed (abstain)");
             let envelope = SearchEnvelope::abstain(format!("search_error: {error}"), None, None);
@@ -229,6 +268,10 @@ async fn execute_with_forced_corpus(
             Ok(super::response::json_text_response(&serde_json::to_string(
                 &envelope,
             )?))
+        }
+        Err(error) if error.downcast_ref::<FederatedSearchError>().is_some() => {
+            // Hard tool error — never silent-degrade a denied vault federation.
+            Err(error)
         }
         Err(error) => {
             // Fail-closed: never invent weak context for the agent.
@@ -262,10 +305,6 @@ async fn execute_inner(
     args: &serde_json::Map<String, serde_json::Value>,
     forced_corpus: Option<Corpus>,
 ) -> Result<SearchEnvelope> {
-    let store = ctx
-        .store
-        .as_ref()
-        .ok_or_else(|| anyhow!("Store not initialized"))?;
     let query = args
         .get("query")
         .and_then(|value| value.as_str())
@@ -296,6 +335,7 @@ async fn execute_inner(
         args.get("corpus").and_then(|value| value.as_str()),
     )?);
 
+    let project_keys = parse_projects_arg(args)?;
     let indexer = ctx
         .indexer
         .as_ref()
@@ -310,6 +350,161 @@ async fn execute_inner(
             .unwrap_or_default()
     };
 
+    let (results, retrieval_mode) = if let Some(keys) = project_keys {
+        // Federated path: open each project's store independently. Does NOT
+        // mutate the active MCP bind (read-only composition).
+        let registry = crate::workspace::Registry::load()?;
+        let resolved = resolve_project_keys(&registry, &keys)?;
+        enforce_cross_project_vault_policy(&resolved, corpus)?;
+        search_federated(
+            &resolved,
+            query_vector,
+            query,
+            limit,
+            min_confidence,
+            corpus,
+        )
+        .await?
+    } else {
+        let store = ctx
+            .store
+            .as_ref()
+            .ok_or_else(|| anyhow!("Store not initialized"))?;
+        search_single_store(store, query_vector, query, limit, min_confidence, corpus).await?
+    };
+
+    Ok(apply_bounded_recall(
+        results,
+        include_content,
+        max_chars,
+        min_score,
+        retrieval_mode,
+    ))
+}
+
+/// Parse the optional `projects` array.
+///
+/// Returns `None` when the caller is using the single-project bind path
+/// (no `projects` argument). An empty array is a hard error.
+///
+/// When both `project` and `projects` are set, **`projects` wins**: injected
+/// agent rules always pass `project`, so hard mutual exclusion would make the
+/// federation API unusable for rule-following agents. Cap length after dedupe.
+const MAX_FEDERATED_PROJECTS: usize = 8;
+
+fn parse_projects_arg(
+    args: &serde_json::Map<String, serde_json::Value>,
+) -> Result<Option<Vec<String>>> {
+    let Some(raw) = args.get("projects") else {
+        return Ok(None);
+    };
+    let Some(array) = raw.as_array() else {
+        return Err(federated_err("`projects` must be an array of project keys"));
+    };
+    let mut keys = Vec::with_capacity(array.len());
+    for entry in array {
+        let Some(key) = entry.as_str().map(str::trim).filter(|key| !key.is_empty()) else {
+            return Err(federated_err(
+                "`projects` entries must be non-empty strings",
+            ));
+        };
+        keys.push(key.to_string());
+    }
+    if keys.is_empty() {
+        return Err(federated_err(
+            "`projects` must contain at least one project key",
+        ));
+    }
+    // Deduplicate while preserving order.
+    let mut seen = std::collections::HashSet::new();
+    keys.retain(|key| seen.insert(key.clone()));
+    if keys.len() > MAX_FEDERATED_PROJECTS {
+        return Err(federated_err(format!(
+            "`projects` accepts at most {MAX_FEDERATED_PROJECTS} keys after dedupe (got {})",
+            keys.len()
+        )));
+    }
+    Ok(Some(keys))
+}
+
+struct ResolvedProject {
+    key: String,
+    cross_project_vault: bool,
+    code_path: String,
+}
+
+fn resolve_project_keys(
+    registry: &crate::workspace::Registry,
+    keys: &[String],
+) -> Result<Vec<ResolvedProject>> {
+    let mut resolved = Vec::with_capacity(keys.len());
+    let mut missing = Vec::new();
+    for key in keys {
+        match registry.locate_by_project(key) {
+            Some(config) => resolved.push(ResolvedProject {
+                key: key.clone(),
+                cross_project_vault: config.cross_project_vault,
+                code_path: config.code_path.clone(),
+            }),
+            None => missing.push(key.clone()),
+        }
+    }
+    if !missing.is_empty() {
+        let mut valid = registry.projects.keys().cloned().collect::<Vec<_>>();
+        valid.sort();
+        return Err(federated_err(format!(
+            "Unknown RMS Memory project key(s): {}. Valid keys: {}",
+            missing.join(", "),
+            if valid.is_empty() {
+                "(none registered)".to_string()
+            } else {
+                valid.join(", ")
+            }
+        )));
+    }
+    Ok(resolved)
+}
+
+/// `cross_project_vault` is consulted **iff** `projects.len() > 1`.
+///
+/// A single-element list is the same scope as `project=A` and bypasses the
+/// gate — requiring opt-in there would be a false positive. When more than
+/// one project is requested with `corpus=vault|all`, every listed key must
+/// have opted in; otherwise this returns a hard FederatedSearchError (no
+/// silent degrade to code-only, no partial vault search).
+fn enforce_cross_project_vault_policy(projects: &[ResolvedProject], corpus: Corpus) -> Result<()> {
+    if projects.len() <= 1 {
+        return Ok(());
+    }
+    let needs_vault = matches!(corpus, Corpus::Vault | Corpus::All);
+    if !needs_vault {
+        return Ok(());
+    }
+    let denied = projects
+        .iter()
+        .filter(|project| !project.cross_project_vault)
+        .map(|project| project.key.as_str())
+        .collect::<Vec<_>>();
+    if denied.is_empty() {
+        return Ok(());
+    }
+    Err(federated_err(format!(
+        "Cross-project vault search denied for project(s): {}. \
+         Set `cross_project_vault = true` for every listed project \
+         (e.g. `rms-memory config --cross-project-vault true --scope <path>`), \
+         or pass `corpus=code`. Silent degrade to code-only is forbidden.",
+        denied.join(", ")
+    )))
+}
+
+async fn search_single_store(
+    store: &crate::store::Store,
+    query_vector: Vec<f32>,
+    query: &str,
+    limit: usize,
+    min_confidence: Option<f32>,
+    corpus: Corpus,
+) -> Result<(Vec<UnifiedSearchResult>, Option<String>)> {
     let mut retrieval_mode: Option<String> = None;
     let results = match corpus {
         Corpus::Vault => {
@@ -348,14 +543,52 @@ async fn execute_inner(
             reciprocal_rank_fusion(vault, code, limit)
         }
     };
+    Ok((results, retrieval_mode))
+}
 
-    Ok(apply_bounded_recall(
-        results,
-        include_content,
-        max_chars,
-        min_score,
-        retrieval_mode,
-    ))
+async fn search_federated(
+    projects: &[ResolvedProject],
+    query_vector: Vec<f32>,
+    query: &str,
+    limit: usize,
+    min_confidence: Option<f32>,
+    corpus: Corpus,
+) -> Result<(Vec<UnifiedSearchResult>, Option<String>)> {
+    // Open stores sequentially (LanceDB open is the heavy part; the query
+    // vector was already embedded once above, so we don't contend on Indexer).
+    let mut per_project_lists: Vec<Vec<UnifiedSearchResult>> = Vec::with_capacity(projects.len());
+    let mut retrieval_mode: Option<String> = None;
+    for project in projects {
+        let workspace =
+            crate::workspace::Workspace::discover(std::path::Path::new(&project.code_path), None)?;
+        let store = crate::store::Store::for_workspace(&workspace).await?;
+        let (hits, mode) = search_single_store(
+            &store,
+            query_vector.clone(),
+            query,
+            limit,
+            min_confidence,
+            corpus,
+        )
+        .await?;
+        if retrieval_mode.is_none() {
+            retrieval_mode = mode;
+        }
+        per_project_lists.push(
+            hits.into_iter()
+                .map(|hit| hit.with_project(&project.key))
+                .collect(),
+        );
+    }
+
+    let results = if projects.len() == 1 {
+        // Single-element `projects` is the same scope as `project=A` — no
+        // cross-list fusion needed; just return the tagged hits.
+        per_project_lists.into_iter().next().unwrap_or_default()
+    } else {
+        reciprocal_rank_fusion_lists(per_project_lists, limit)
+    };
+    Ok((results, retrieval_mode))
 }
 
 /// Apply score abstain + character budget. Pure for unit tests.
@@ -463,12 +696,21 @@ pub fn reciprocal_rank_fusion(
     code: Vec<UnifiedSearchResult>,
     limit: usize,
 ) -> Vec<UnifiedSearchResult> {
+    reciprocal_rank_fusion_lists(vec![vault, code], limit)
+}
+
+/// Reciprocal Rank Fusion over an arbitrary number of ranked lists.
+///
+/// Used for both intra-project vault+code fusion and cross-project federation.
+pub fn reciprocal_rank_fusion_lists(
+    lists: Vec<Vec<UnifiedSearchResult>>,
+    limit: usize,
+) -> Vec<UnifiedSearchResult> {
     let mut merged = HashMap::<String, UnifiedSearchResult>::new();
-    for (rank, result) in vault.into_iter().enumerate() {
-        accumulate_rrf(&mut merged, result, rank);
-    }
-    for (rank, result) in code.into_iter().enumerate() {
-        accumulate_rrf(&mut merged, result, rank);
+    for list in lists {
+        for (rank, result) in list.into_iter().enumerate() {
+            accumulate_rrf(&mut merged, result, rank);
+        }
     }
     let mut results = merged.into_values().collect::<Vec<_>>();
     results.sort_by(|left, right| {
@@ -508,6 +750,7 @@ mod tests {
         UnifiedSearchResult {
             source: source.to_string(),
             path: path.to_string(),
+            project: None,
             heading: None,
             content: Some(format!("body for {path}")),
             confidence: None,
@@ -649,5 +892,113 @@ mod tests {
         let envelope = apply_bounded_recall(vec![], true, 2000, None, None);
         assert_eq!(envelope.decision, SearchDecision::Abstain);
         assert_eq!(envelope.reason, "no_hits");
+    }
+
+    fn resolved(key: &str, allow: bool) -> ResolvedProject {
+        ResolvedProject {
+            key: key.to_string(),
+            cross_project_vault: allow,
+            code_path: format!("/tmp/{key}"),
+        }
+    }
+
+    #[test]
+    fn cross_project_vault_gate_skipped_for_single_project() {
+        // Single-element projects=[A] + vault without flag → OK (gate not consulted).
+        enforce_cross_project_vault_policy(&[resolved("A", false)], Corpus::Vault).unwrap();
+        enforce_cross_project_vault_policy(&[resolved("A", false)], Corpus::All).unwrap();
+    }
+
+    #[test]
+    fn cross_project_vault_gate_allows_code_without_opt_in() {
+        enforce_cross_project_vault_policy(
+            &[resolved("A", false), resolved("B", false)],
+            Corpus::Code,
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn cross_project_vault_hard_fails_without_allow() {
+        let error = enforce_cross_project_vault_policy(
+            &[resolved("A", false), resolved("B", true)],
+            Corpus::Vault,
+        )
+        .unwrap_err();
+        let policy = error
+            .downcast_ref::<FederatedSearchError>()
+            .expect("policy denial must be FederatedSearchError (hard tool error, not abstain)");
+        assert!(
+            policy.0.contains("A") && policy.0.contains("cross_project_vault"),
+            "got: {}",
+            policy.0
+        );
+    }
+
+    #[test]
+    fn cross_project_vault_all_or_nothing_on_partial_allow() {
+        // corpus=all with partial allow also fails the whole call.
+        let error = enforce_cross_project_vault_policy(
+            &[resolved("A", true), resolved("B", false)],
+            Corpus::All,
+        )
+        .unwrap_err();
+        assert!(error.downcast_ref::<FederatedSearchError>().is_some());
+        assert!(error.to_string().contains("B"));
+    }
+
+    #[test]
+    fn cross_project_vault_ok_when_all_opted_in() {
+        enforce_cross_project_vault_policy(
+            &[resolved("A", true), resolved("B", true)],
+            Corpus::Vault,
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn parse_projects_prefers_projects_when_project_also_set() {
+        let mut args = serde_json::Map::new();
+        args.insert("project".into(), serde_json::json!("A"));
+        args.insert("projects".into(), serde_json::json!(["A", "B"]));
+        let keys = parse_projects_arg(&args).unwrap().unwrap();
+        assert_eq!(keys, vec!["A".to_string(), "B".to_string()]);
+    }
+
+    #[test]
+    fn parse_projects_rejects_over_cap() {
+        let mut args = serde_json::Map::new();
+        let keys: Vec<String> = (0..9).map(|i| format!("p{i}")).collect();
+        args.insert("projects".into(), serde_json::json!(keys));
+        let error = parse_projects_arg(&args).unwrap_err();
+        assert!(error.downcast_ref::<FederatedSearchError>().is_some());
+        assert!(error.to_string().contains("at most"));
+    }
+
+    #[test]
+    fn parse_projects_rejects_empty_array() {
+        let mut args = serde_json::Map::new();
+        args.insert("projects".into(), serde_json::json!([]));
+        let error = parse_projects_arg(&args).unwrap_err();
+        assert!(error.downcast_ref::<FederatedSearchError>().is_some());
+    }
+
+    #[test]
+    fn parse_projects_dedupes_and_preserves_order() {
+        let mut args = serde_json::Map::new();
+        args.insert("projects".into(), serde_json::json!(["B", "A", "B"]));
+        let keys = parse_projects_arg(&args).unwrap().unwrap();
+        assert_eq!(keys, vec!["B".to_string(), "A".to_string()]);
+    }
+
+    #[test]
+    fn federated_identity_keeps_same_path_in_different_projects_apart() {
+        let mut a = result("code", "src/lib.rs");
+        a.project = Some("proj-a".into());
+        let mut b = result("code", "src/lib.rs");
+        b.project = Some("proj-b".into());
+        assert_ne!(a.identity(), b.identity());
+        let fused = reciprocal_rank_fusion_lists(vec![vec![a], vec![b]], 10);
+        assert_eq!(fused.len(), 2);
     }
 }

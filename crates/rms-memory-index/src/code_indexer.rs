@@ -45,7 +45,7 @@ const CODE_INDEX_MARKER: &str = ".code-index.updated";
 /// Remove code segments written by older versions for files inside the
 /// reserved Vault Wiki namespace.
 pub async fn purge_wiki_code_records(
-    workspace: &crate::workspace::Workspace,
+    workspace: &rms_memory_core::workspace::Workspace,
     store: &crate::store::Store,
 ) -> Result<usize> {
     let stale = store
@@ -53,7 +53,10 @@ pub async fn purge_wiki_code_records(
         .await?
         .into_iter()
         .filter(|path| {
-            crate::path_policy::is_vault_wiki_path(&workspace.root, &workspace.code_path.join(path))
+            rms_memory_core::path_policy::is_vault_wiki_path(
+                &workspace.root,
+                &workspace.code_path.join(path),
+            )
         })
         .collect::<Vec<_>>();
     store.delete_code_file_paths(&stale).await?;
@@ -61,7 +64,7 @@ pub async fn purge_wiki_code_records(
 }
 
 pub async fn index_code_full(
-    workspace: &crate::workspace::Workspace,
+    workspace: &rms_memory_core::workspace::Workspace,
     store: &crate::store::Store,
     indexer: &mut crate::indexer::Indexer,
 ) -> Result<CodeIndexStats> {
@@ -72,7 +75,7 @@ pub async fn index_code_full(
 }
 
 pub async fn try_index_code(
-    workspace: &crate::workspace::Workspace,
+    workspace: &rms_memory_core::workspace::Workspace,
     store: &crate::store::Store,
     indexer: &mut crate::indexer::Indexer,
 ) -> Result<CodeIndexStatus> {
@@ -88,7 +91,7 @@ pub async fn try_index_code(
 /// code index is uninitialized, the dirty set is empty, or it exceeds
 /// [`PATH_SCOPED_FALLBACK_THRESHOLD`].
 pub async fn try_index_code_paths(
-    workspace: &crate::workspace::Workspace,
+    workspace: &rms_memory_core::workspace::Workspace,
     store: &crate::store::Store,
     indexer: &mut crate::indexer::Indexer,
     paths: &[std::path::PathBuf],
@@ -139,7 +142,7 @@ fn completed_marker_time(storage_path: &str) -> Result<std::time::SystemTime> {
 }
 
 async fn index_code_full_inner(
-    workspace: &crate::workspace::Workspace,
+    workspace: &rms_memory_core::workspace::Workspace,
     store: &crate::store::Store,
     indexer: &mut crate::indexer::Indexer,
 ) -> Result<CodeIndexStats> {
@@ -175,7 +178,7 @@ async fn index_code_full_inner(
             }
         };
         let path = entry.path();
-        if crate::path_policy::is_vault_wiki_path(&workspace.root, path)
+        if rms_memory_core::path_policy::is_vault_wiki_path(&workspace.root, path)
             || is_hard_excluded(path)
             || !is_indexable_code_path(path, &workspace.code_languages)
         {
@@ -236,7 +239,7 @@ async fn index_code_full_inner(
 }
 
 async fn index_code_paths_inner(
-    workspace: &crate::workspace::Workspace,
+    workspace: &rms_memory_core::workspace::Workspace,
     store: &crate::store::Store,
     indexer: &mut crate::indexer::Indexer,
     paths: &[std::path::PathBuf],
@@ -355,7 +358,7 @@ async fn index_code_paths_inner(
 }
 
 fn normalize_indexable_relative_path(
-    workspace: &crate::workspace::Workspace,
+    workspace: &rms_memory_core::workspace::Workspace,
     root: &Path,
     absolute: &Path,
 ) -> Option<String> {
@@ -364,7 +367,7 @@ fn normalize_indexable_relative_path(
     } else {
         root.join(absolute)
     };
-    if crate::path_policy::is_vault_wiki_path(&workspace.root, &absolute)
+    if rms_memory_core::path_policy::is_vault_wiki_path(&workspace.root, &absolute)
         || is_hard_excluded(&absolute)
         || !is_indexable_code_path(&absolute, &workspace.code_languages)
     {
@@ -410,7 +413,7 @@ fn insert_project_structure_node(
 /// Returns `Ok(true)` when the file contributed indexed content.
 #[allow(clippy::too_many_arguments)]
 fn index_existing_code_file(
-    workspace: &crate::workspace::Workspace,
+    workspace: &rms_memory_core::workspace::Workspace,
     root: &Path,
     path: &Path,
     graph_generation: u64,
@@ -422,7 +425,7 @@ fn index_existing_code_file(
     pending: &mut Vec<PendingCodeChunk>,
     stats: &mut CodeIndexStats,
 ) -> Result<bool> {
-    if crate::path_policy::is_vault_wiki_path(&workspace.root, path)
+    if rms_memory_core::path_policy::is_vault_wiki_path(&workspace.root, path)
         || is_hard_excluded(path)
         || !is_indexable_code_path(path, &workspace.code_languages)
     {
@@ -941,12 +944,12 @@ mod tests {
     #[tokio::test]
     async fn legacy_wiki_code_segments_are_purged_by_path() {
         let directory = tempfile::tempdir().unwrap();
-        let workspace = crate::workspace::Workspace {
+        let workspace = rms_memory_core::workspace::Workspace {
             root: directory.path().to_path_buf(),
             code_path: directory.path().to_path_buf(),
             include: vec!["**/*.md".to_string()],
             exclude: vec![],
-            code_index_mode: crate::workspace::CodeIndexMode::Manual,
+            code_index_mode: rms_memory_core::workspace::CodeIndexMode::Manual,
             code_languages: vec!["rust".to_string()],
         };
         let store =
@@ -1101,12 +1104,12 @@ mod tests {
         std::fs::write(&alpha, "pub fn alpha() { let _x = 1; }\n").unwrap();
         std::fs::write(&beta, "pub fn beta() { let _y = 2; }\n").unwrap();
 
-        let workspace = crate::workspace::Workspace {
+        let workspace = rms_memory_core::workspace::Workspace {
             root: directory.path().to_path_buf(),
             code_path: code_root.clone(),
             include: vec!["**/*.md".to_string()],
             exclude: vec![],
-            code_index_mode: crate::workspace::CodeIndexMode::Manual,
+            code_index_mode: rms_memory_core::workspace::CodeIndexMode::Manual,
             code_languages: vec!["rust".to_string()],
         };
         let store =
@@ -1202,12 +1205,12 @@ mod tests {
         std::fs::write(&alpha, "pub fn alpha() {}\n").unwrap();
         std::fs::write(&beta, "pub fn beta() {}\n").unwrap();
 
-        let workspace = crate::workspace::Workspace {
+        let workspace = rms_memory_core::workspace::Workspace {
             root: directory.path().to_path_buf(),
             code_path: code_root,
             include: vec!["**/*.md".to_string()],
             exclude: vec![],
-            code_index_mode: crate::workspace::CodeIndexMode::Manual,
+            code_index_mode: rms_memory_core::workspace::CodeIndexMode::Manual,
             code_languages: vec!["rust".to_string()],
         };
         let store =

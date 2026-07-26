@@ -8,4 +8,4 @@ pub mod service;
 
 pub use manifest::WikiManifest;
 pub use progress::{WikiEvent, WikiPhase};
-pub use service::{WikiGenerateRequest, WikiGenerateResult, WikiService};
+pub use service::{CliHelpRenderer, WikiGenerateRequest, WikiGenerateResult, WikiService};

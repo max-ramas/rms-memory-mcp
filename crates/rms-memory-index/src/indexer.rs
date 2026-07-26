@@ -76,7 +76,9 @@ impl Indexer {
     }
 
     fn try_load_model() -> Result<Self> {
-        let mut cache_dir = crate::workspace::base_dir().join("cache").join("fastembed");
+        let mut cache_dir = rms_memory_core::workspace::base_dir()
+            .join("cache")
+            .join("fastembed");
 
         // If we cannot create the primary cache dir (e.g. HOME is read-only or sandboxed), fallback to temp dir
         if let Err(e) = std::fs::create_dir_all(&cache_dir) {
@@ -245,7 +247,7 @@ impl Indexer {
 }
 
 pub async fn sync_vault(
-    workspace: &crate::workspace::Workspace,
+    workspace: &rms_memory_core::workspace::Workspace,
     store: &crate::store::Store,
     indexer: &mut Indexer,
 ) -> Result<()> {
@@ -254,7 +256,7 @@ pub async fn sync_vault(
 }
 
 pub async fn try_sync_vault(
-    workspace: &crate::workspace::Workspace,
+    workspace: &rms_memory_core::workspace::Workspace,
     store: &crate::store::Store,
     indexer: &mut Indexer,
 ) -> Result<SyncStatus> {
@@ -266,7 +268,7 @@ pub async fn try_sync_vault(
 }
 
 async fn sync_vault_inner(
-    workspace: &crate::workspace::Workspace,
+    workspace: &rms_memory_core::workspace::Workspace,
     store: &crate::store::Store,
     indexer: &mut Indexer,
 ) -> Result<()> {
@@ -306,7 +308,7 @@ async fn sync_vault_inner(
     // carry the same frontmatter ID as its canonical source.
     let excluded_paths = path_info
         .keys()
-        .filter(|path| crate::path_policy::is_vault_wiki_relative_path(path))
+        .filter(|path| rms_memory_core::path_policy::is_vault_wiki_relative_path(path))
         .cloned()
         .collect::<Vec<_>>();
     let purged_excluded = !excluded_paths.is_empty();
@@ -344,7 +346,8 @@ async fn sync_vault_inner(
 
         // Read file mtime; a link that escapes the vault falls back to the
         // linker's own mtime rather than reaching outside.
-        let resolved_path = crate::link::resolve_link_in_vault_or_self(&file_path, &workspace.root);
+        let resolved_path =
+            rms_memory_core::link::resolve_link_in_vault_or_self(&file_path, &workspace.root);
         let mtime = std::fs::metadata(&resolved_path)
             .and_then(|m| m.modified())
             .map(|t| chrono::DateTime::<chrono::Utc>::from(t).to_rfc3339())
@@ -358,7 +361,7 @@ async fn sync_vault_inner(
             continue;
         }
 
-        let mut doc = match crate::document::Document::parse(&file_path) {
+        let mut doc = match rms_memory_core::document::Document::parse(&file_path) {
             Ok(d) => d,
             Err(error) => {
                 tracing::error!(
@@ -374,7 +377,7 @@ async fn sync_vault_inner(
         // If it's a linked document, swap the content with the source file content.
         // Escaping links are ignored so indexed content stays inside the vault.
         if let Some(linked_content) =
-            crate::link::get_linked_content_in_vault(&file_path, &workspace.root)
+            rms_memory_core::link::get_linked_content_in_vault(&file_path, &workspace.root)
         {
             doc.content = linked_content;
         }
@@ -538,7 +541,7 @@ async fn sync_vault_inner(
 }
 
 pub async fn index_vault_full(
-    workspace: &crate::workspace::Workspace,
+    workspace: &rms_memory_core::workspace::Workspace,
     store: &crate::store::Store,
     indexer: &mut Indexer,
 ) -> Result<()> {
@@ -547,7 +550,7 @@ pub async fn index_vault_full(
 }
 
 async fn index_vault_full_inner(
-    workspace: &crate::workspace::Workspace,
+    workspace: &rms_memory_core::workspace::Workspace,
     store: &crate::store::Store,
     indexer: &mut Indexer,
 ) -> Result<()> {
@@ -567,7 +570,7 @@ async fn index_vault_full_inner(
             .map(|t| chrono::DateTime::<chrono::Utc>::from(t).to_rfc3339())
             .unwrap_or_else(|_| chrono::Utc::now().to_rfc3339());
 
-        let mut doc = match crate::document::Document::parse(&file_path) {
+        let mut doc = match rms_memory_core::document::Document::parse(&file_path) {
             Ok(d) => d,
             Err(error) => {
                 tracing::error!(
@@ -582,7 +585,7 @@ async fn index_vault_full_inner(
         // If it's a linked document, swap the content with the source file content.
         // Escaping links are ignored so indexed content stays inside the vault.
         if let Some(linked_content) =
-            crate::link::get_linked_content_in_vault(&file_path, &workspace.root)
+            rms_memory_core::link::get_linked_content_in_vault(&file_path, &workspace.root)
         {
             doc.content = linked_content;
         }

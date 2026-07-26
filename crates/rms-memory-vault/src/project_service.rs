@@ -1,6 +1,6 @@
-use crate::config_manager::ConfigManager;
-use crate::workspace::{ProjectConfig, Registry, base_dir};
 use anyhow::{Result, anyhow, bail};
+use rms_memory_core::config_manager::ConfigManager;
+use rms_memory_core::workspace::{ProjectConfig, Registry, base_dir};
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 
@@ -186,7 +186,7 @@ fn remove_directory(path: &Path, label: &str, warnings: &mut Vec<String>) -> boo
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::workspace::{CodeIndexMode, GlobalConfig, ProjectConfig, Registry};
+    use rms_memory_core::workspace::{CodeIndexMode, GlobalConfig, ProjectConfig, Registry};
     use std::collections::HashMap;
 
     fn project(code: &Path, vault: &Path) -> ProjectConfig {
@@ -197,6 +197,7 @@ mod tests {
             exclude: Vec::new(),
             code_index_mode: CodeIndexMode::Off,
             code_languages: vec!["auto".to_string()],
+            cross_project_vault: false,
         }
     }
 

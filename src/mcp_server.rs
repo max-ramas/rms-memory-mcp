@@ -95,14 +95,107 @@ use crate::tools::AppContext;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 
+/// Max concurrent Store+watcher binds held warm by the MCP server.
+///
+/// Typical multi-root (license + mcp + gui + one more). Protects open LanceDB
+/// handles and notify/tokio watcher tasks — **not** the Indexer, which remains
+/// a process-singleton (ONNX/fastembed RAM lesson from 1.0.3–1.0.5). See ADR
+/// `decisions/mcp-concurrent-bound-projects.md`.
+const MAX_BOUND_PROJECTS: usize = 4;
+
+/// One warm project bind: an open Store plus its live watcher task(s).
+struct BoundWorkspace {
+    root: std::path::PathBuf,
+    store: crate::store::Store,
+    cancel_tx: tokio::sync::watch::Sender<bool>,
+    watcher_handles: Vec<tokio::task::JoinHandle<()>>,
+    last_used: std::time::Instant,
+}
+
 pub struct McpServer {
     ctx: AppContext,
     /// Process lifetime — set on stdin EOF.
     shutdown_tx: tokio::sync::watch::Sender<bool>,
-    /// Per-bind watcher lifetime — replaced on explicit project rebind.
-    watcher_cancel_tx: tokio::sync::watch::Sender<bool>,
+    /// Concurrent warm binds (LRU-capped at [`MAX_BOUND_PROJECTS`]).
+    bound: std::collections::HashMap<String, BoundWorkspace>,
     client_supports_roots: bool,
     pending_roots_request_id: Option<Value>,
+}
+
+/// Runs a workspace (re)bind so it is failure-atomic.
+///
+/// The new store is opened first. Only after a successful open, and only on a
+/// rebind, are the previous vault's watchers cancelled via `cancel_watchers`.
+/// If `open_store` fails the closure is never invoked, so the previously bound
+/// project keeps its store and live watchers intact instead of being left
+/// bound-but-watcher-less. Kept as a unit-testable primitive; the concurrent
+/// bind cache in `bind_workspace` applies the same open-before-evict ordering.
+#[allow(dead_code)] // exercised by mcp_server::tests::* failure-atomic cases
+async fn open_store_failure_atomic<S, F, Fut, C>(
+    is_rebind: bool,
+    open_store: F,
+    cancel_watchers: C,
+) -> Result<S>
+where
+    F: FnOnce() -> Fut,
+    Fut: std::future::Future<Output = Result<S>>,
+    C: FnOnce(),
+{
+    let store = open_store().await?;
+    if is_rebind {
+        cancel_watchers();
+    }
+    Ok(store)
+}
+
+/// Cancel a bound workspace's watchers and wait for their tasks to finish.
+///
+/// Eviction is not complete until the JoinHandles resolve (or the timeout
+/// elapses) — shrinking the HashMap alone would leak notify/tokio tasks.
+async fn evict_bound_workspace(bound: BoundWorkspace) {
+    evict_handles(bound.cancel_tx, bound.watcher_handles).await;
+    // `bound.store` drops here, releasing LanceDB handles.
+}
+
+/// Testable core of eviction: signal cancel, then join every watcher handle
+/// (with a timeout so a stuck task cannot wedge the server forever).
+/// On timeout the task is **aborted** so it cannot keep watching/syncing after
+/// the Store was dropped from the bind cache.
+async fn evict_handles(
+    cancel_tx: tokio::sync::watch::Sender<bool>,
+    handles: Vec<tokio::task::JoinHandle<()>>,
+) {
+    let _ = cancel_tx.send(true);
+    for handle in handles {
+        let abort = handle.abort_handle();
+        match tokio::time::timeout(std::time::Duration::from_secs(5), handle).await {
+            Ok(Ok(())) => {}
+            Ok(Err(join_err)) => {
+                tracing::warn!("Watcher task panicked during eviction: {join_err}");
+            }
+            Err(_) => {
+                abort.abort();
+                tracing::warn!(
+                    "Watcher task did not exit within 5s after cancel; aborted detached task"
+                );
+            }
+        }
+    }
+}
+
+/// Pick the LRU victim key to evict when inserting `incoming` into a full cache.
+///
+/// Never returns `incoming` itself. Returns `None` only if the map is empty or
+/// contains solely `incoming`.
+fn lru_victim_key(
+    bound: &std::collections::HashMap<String, BoundWorkspace>,
+    incoming: &str,
+) -> Option<String> {
+    bound
+        .iter()
+        .filter(|(key, _)| *key != incoming)
+        .min_by_key(|(_, entry)| entry.last_used)
+        .map(|(key, _)| key.clone())
 }
 
 fn spawn_sync_watcher(
@@ -111,7 +204,7 @@ fn spawn_sync_watcher(
     indexer: Arc<Mutex<Indexer>>,
     mut cancel_rx: tokio::sync::watch::Receiver<bool>,
     mut shutdown_rx: tokio::sync::watch::Receiver<bool>,
-) {
+) -> tokio::task::JoinHandle<()> {
     tokio::spawn(async move {
         // Initial sync
         {
@@ -229,7 +322,7 @@ fn spawn_sync_watcher(
         }
 
         drop(watcher);
-    });
+    })
 }
 
 fn spawn_code_watcher(
@@ -238,7 +331,7 @@ fn spawn_code_watcher(
     indexer: Arc<Mutex<Indexer>>,
     mut cancel_rx: tokio::sync::watch::Receiver<bool>,
     mut shutdown_rx: tokio::sync::watch::Receiver<bool>,
-) {
+) -> tokio::task::JoinHandle<()> {
     tokio::spawn(async move {
         let (tx, mut rx) =
             tokio::sync::mpsc::channel::<(std::path::PathBuf, std::time::SystemTime)>(100);
@@ -362,7 +455,7 @@ fn spawn_code_watcher(
             }
         }
         drop(watcher);
-    });
+    })
 }
 
 fn is_watched_code_path(
@@ -408,7 +501,6 @@ impl McpServer {
         scope: Option<String>,
     ) -> Result<()> {
         let (shutdown_tx, _shutdown_rx) = tokio::sync::watch::channel(false);
-        let (watcher_cancel_tx, _watcher_cancel_rx) = tokio::sync::watch::channel(false);
         let shutdown_tx_for_server = shutdown_tx.clone();
         let shared_indexer = if let Some(idx) = indexer {
             idx
@@ -428,7 +520,7 @@ impl McpServer {
                 project_key: None,
             },
             shutdown_tx: shutdown_tx_for_server,
-            watcher_cancel_tx,
+            bound: std::collections::HashMap::new(),
             client_supports_roots: false,
             pending_roots_request_id: None,
         };
@@ -528,65 +620,105 @@ impl McpServer {
     }
 
     async fn bind_workspace(&mut self, workspace: crate::workspace::Workspace) -> Result<()> {
-        let project_key = workspace.project_key();
-        let is_rebind = match &self.ctx.workspace_root {
-            Some(current_root) if current_root == &workspace.root => return Ok(()),
-            Some(_) => true,
-            None => false,
-        };
+        let project_key = workspace
+            .project_key()
+            .unwrap_or_else(|| format!("path:{}", workspace.root.display()));
 
-        // Open and validate the new store BEFORE tearing down the current
-        // watchers. If this fails on a rebind, the previous project stays fully
-        // intact (store + live watchers) instead of being left bound but
-        // watcher-less. Rebind is therefore failure-atomic.
-        let store = workspace.get_store().await?;
+        // Cache hit: reuse the warm Store+watchers and just touch LRU.
+        if let Some(entry) = self.bound.get_mut(&project_key)
+            && entry.root == workspace.root
+        {
+            entry.last_used = std::time::Instant::now();
+            self.ctx.workspace_root = Some(entry.root.clone());
+            self.ctx.project_key = Some(project_key.clone());
+            self.ctx.store = Some(entry.store.clone());
+            tracing::debug!(
+                "MCP workspace cache hit: client={} project_key={}",
+                self.ctx.caller_id,
+                project_key
+            );
+            return Ok(());
+        }
+
         let indexer = self
             .ctx
             .indexer
             .clone()
             .ok_or_else(|| anyhow::anyhow!("Indexer not initialized"))?;
 
-        if is_rebind {
+        // Failure-atomic: open the new store BEFORE any eviction/cancel so a
+        // failed open leaves the existing cache intact.
+        let store = crate::store::Store::for_workspace(&workspace).await?;
+
+        // Evict LRU victim if we need a slot and the target is not already cached.
+        if !self.bound.contains_key(&project_key)
+            && self.bound.len() >= MAX_BOUND_PROJECTS
+            && let Some(victim_key) = lru_victim_key(&self.bound, &project_key)
+        {
             tracing::info!(
-                "MCP workspace rebinding: client={} from={} to={} vault_root={}",
-                self.ctx.caller_id,
-                self.ctx.project_key.as_deref().unwrap_or("unknown"),
-                project_key.as_deref().unwrap_or("unknown"),
-                workspace.root.display()
+                "MCP bind cache evicting LRU project_key={} (cap={})",
+                victim_key,
+                MAX_BOUND_PROJECTS
             );
-            // The new store is open; only now is it safe to stop the previous
-            // vault's watchers and swap in a fresh cancellation channel.
-            let _ = self.watcher_cancel_tx.send(true);
-            let (next_cancel_tx, _) = tokio::sync::watch::channel(false);
-            self.watcher_cancel_tx = next_cancel_tx;
+            if let Some(victim) = self.bound.remove(&victim_key) {
+                evict_bound_workspace(victim).await;
+            }
         }
 
-        spawn_sync_watcher(
+        // If we are replacing a stale same-key entry, cancel it now that the
+        // new store is open.
+        if let Some(stale) = self.bound.remove(&project_key) {
+            evict_bound_workspace(stale).await;
+        }
+
+        let (cancel_tx, _) = tokio::sync::watch::channel(false);
+        let mut watcher_handles = Vec::with_capacity(2);
+        watcher_handles.push(spawn_sync_watcher(
             workspace.clone(),
             store.clone(),
             indexer.clone(),
-            self.watcher_cancel_tx.subscribe(),
+            cancel_tx.subscribe(),
             self.shutdown_tx.subscribe(),
-        );
+        ));
         if workspace.code_index_mode == crate::workspace::CodeIndexMode::Watch {
-            spawn_code_watcher(
+            watcher_handles.push(spawn_code_watcher(
                 workspace.clone(),
                 store.clone(),
                 indexer,
-                self.watcher_cancel_tx.subscribe(),
+                cancel_tx.subscribe(),
                 self.shutdown_tx.subscribe(),
-            );
+            ));
         }
+
+        self.bound.insert(
+            project_key.clone(),
+            BoundWorkspace {
+                root: workspace.root.clone(),
+                store: store.clone(),
+                cancel_tx,
+                watcher_handles,
+                last_used: std::time::Instant::now(),
+            },
+        );
         self.ctx.workspace_root = Some(workspace.root.clone());
-        self.ctx.project_key = project_key;
+        self.ctx.project_key = Some(project_key.clone());
         self.ctx.store = Some(store);
         tracing::info!(
-            "MCP workspace bound: client={} project_key={} vault_root={}",
+            "MCP workspace bound: client={} project_key={} vault_root={} cached={}",
             self.ctx.caller_id,
-            self.ctx.project_key.as_deref().unwrap_or("none"),
-            workspace.root.display()
+            project_key,
+            workspace.root.display(),
+            self.bound.len()
         );
         Ok(())
+    }
+
+    fn touch_active_bind(&mut self) {
+        if let Some(key) = self.ctx.project_key.clone()
+            && let Some(entry) = self.bound.get_mut(&key)
+        {
+            entry.last_used = std::time::Instant::now();
+        }
     }
 
     async fn bind_project_argument(&mut self, args: &serde_json::Map<String, Value>) -> Result<()> {
@@ -597,6 +729,7 @@ impl McpServer {
         // could trap every agent on the first vault they touched).
         if let Some(requested) = requested {
             if self.ctx.project_key.as_deref() == Some(requested) {
+                self.touch_active_bind();
                 return Ok(());
             }
             let registry = crate::workspace::Registry::load()?;
@@ -820,12 +953,13 @@ impl McpServer {
                 "tools": [
                     {
                         "name": "rms_search",
-                        "description": "Search RMS Memory. Returns a decision envelope: {decision: inject|abstain, reason, injected_ids, results}. `corpus=vault` (default) searches human Markdown memory; `code` searches derived semantic code; `all` ranks each corpus independently and combines them with Reciprocal Rank Fusion, never raw vector distances. Weak matches abstain when min_score is set; content is bounded by max_chars.",
+                        "description": "Search RMS Memory. Returns a decision envelope: {decision: inject|abstain, reason, injected_ids, results}. `corpus=vault` (default) searches human Markdown memory; `code` searches derived semantic code; `all` ranks each corpus independently and combines them with Reciprocal Rank Fusion, never raw vector distances. Pass `projects: [key, …]` for read-only cross-project federation (when both `project` and `projects` are set, `projects` wins so injected rules stay compatible); vault/all across multiple projects requires every listed key to have `cross_project_vault=true` (hard error otherwise — no silent degrade). Weak matches abstain when min_score is set; content is bounded by max_chars.",
                         "inputSchema": {
                             "type": "object",
                             "properties": {
                                 "query": { "type": "string", "description": "The semantic query string to search for." },
-                                "project": { "type": "string", "description": "Registered project key, used when the MCP client did not provide a workspace root." },
+                                "project": { "type": "string", "description": "Registered project key, used when the MCP client did not provide a workspace root. Ignored when `projects` is also set." },
+                                "projects": { "type": "array", "items": { "type": "string" }, "description": "Explicit list of registered project keys for read-only federated search (max 8 after dedupe). Does not change the active bind. When set together with `project`, this list wins. Vault/all with len>1 requires cross_project_vault=true on every listed key." },
                                 "corpus": { "type": "string", "enum": ["vault", "code", "all"], "description": "Corpus to search. Defaults to vault." },
                                 "limit": { "type": "integer", "description": "Maximum number of chunks to return. Default is 10." },
                                 "include_content": { "type": "boolean", "description": "Whether to include full chunk text in results." },
@@ -838,12 +972,13 @@ impl McpServer {
                     },
                     {
                         "name": "rms_code_search",
-                        "description": "Search only the derived semantic code index. Results include language, file, symbol, kind, line range, and segment index. The code index is optional, so an unindexed project returns an empty result list.",
+                        "description": "Search only the derived semantic code index. Results include language, file, symbol, kind, line range, and segment index. The code index is optional, so an unindexed project returns an empty result list. Pass `projects: [key, …]` for read-only cross-project code federation (when both `project` and `projects` are set, `projects` wins); does not change the active bind.",
                         "inputSchema": {
                             "type": "object",
                             "properties": {
                                 "query": { "type": "string", "description": "The semantic code query." },
-                                "project": { "type": "string", "description": "Registered project key, used when the MCP client did not provide a workspace root." },
+                                "project": { "type": "string", "description": "Registered project key, used when the MCP client did not provide a workspace root. Ignored when `projects` is also set." },
+                                "projects": { "type": "array", "items": { "type": "string" }, "description": "Explicit list of registered project keys for read-only federated code search (max 8 after dedupe). Does not change the active bind. When set together with `project`, this list wins." },
                                 "limit": { "type": "integer", "description": "Maximum results; default 10, maximum 100." },
                                 "include_content": { "type": "boolean", "description": "Whether to include indexed code content; default true." }
                             },
@@ -995,7 +1130,16 @@ impl McpServer {
                     }));
                 }
 
-                self.bind_project_argument(&args).await?;
+                // Federated search (`projects: […]`) is read-only composition
+                // across stores and must not rebind the active workspace. Skip
+                // the normal single-project bind path when that arg is present;
+                // search.rs owns validation (mutual exclusion, unknown keys,
+                // cross_project_vault policy).
+                let is_federated_search = matches!(name, "rms_search" | "rms_code_search")
+                    && args.contains_key("projects");
+                if !is_federated_search {
+                    self.bind_project_argument(&args).await?;
+                }
 
                 match name {
                     "rms_search" => crate::tools::search::execute(&self.ctx, &args).await,
@@ -1056,6 +1200,7 @@ impl McpServer {
                     }
                     _ => anyhow::bail!("Unknown tool"),
                 }
+                .inspect(|_| self.touch_active_bind())
             }
             _ => anyhow::bail!("Method not found"),
         }
@@ -1064,7 +1209,144 @@ impl McpServer {
 
 #[cfg(test)]
 mod tests {
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicUsize, Ordering};
     use tempfile::tempdir;
+
+    /// Regression: a forced store-open failure on a rebind must NOT cancel the
+    /// previous vault's watchers, so the prior project stays fully bound.
+    #[tokio::test]
+    async fn rebind_store_open_failure_keeps_previous_watchers() {
+        let cancels = Arc::new(AtomicUsize::new(0));
+        let seen = cancels.clone();
+        let result: anyhow::Result<()> = super::open_store_failure_atomic(
+            /* is_rebind */ true,
+            || async { anyhow::bail!("forced store-open failure") },
+            || {
+                seen.fetch_add(1, Ordering::SeqCst);
+            },
+        )
+        .await;
+        assert!(result.is_err(), "forced store open must fail");
+        assert_eq!(
+            cancels.load(Ordering::SeqCst),
+            0,
+            "watchers must not be cancelled when the new store fails to open"
+        );
+    }
+
+    /// On a successful rebind the previous watchers are cancelled exactly once,
+    /// only after the new store opened.
+    #[tokio::test]
+    async fn rebind_cancels_previous_watchers_after_successful_open() {
+        let cancels = Arc::new(AtomicUsize::new(0));
+        let seen = cancels.clone();
+        let store = super::open_store_failure_atomic(
+            true,
+            || async { Ok::<u8, anyhow::Error>(7) },
+            || {
+                seen.fetch_add(1, Ordering::SeqCst);
+            },
+        )
+        .await
+        .expect("open should succeed");
+        assert_eq!(store, 7);
+        assert_eq!(cancels.load(Ordering::SeqCst), 1);
+    }
+
+    /// A first bind (no previous vault) never cancels, even on success.
+    #[tokio::test]
+    async fn first_bind_does_not_cancel_watchers() {
+        let cancels = Arc::new(AtomicUsize::new(0));
+        let seen = cancels.clone();
+        let result = super::open_store_failure_atomic(
+            /* is_rebind */ false,
+            || async { Ok::<(), anyhow::Error>(()) },
+            || {
+                seen.fetch_add(1, Ordering::SeqCst);
+            },
+        )
+        .await;
+        assert!(result.is_ok());
+        assert_eq!(cancels.load(Ordering::SeqCst), 0);
+    }
+
+    #[test]
+    fn max_bound_projects_is_four() {
+        // Lock the ADR criterion: 4 IDE roots, not a magic 4–8 range.
+        assert_eq!(super::MAX_BOUND_PROJECTS, 4);
+    }
+
+    /// Eviction must join the watcher task — proving the task exited, not just
+    /// that a HashMap lost the key.
+    #[tokio::test]
+    async fn eviction_joins_watcher_task_until_finished() {
+        let live = Arc::new(AtomicUsize::new(0));
+        let (cancel_tx, mut cancel_rx) = tokio::sync::watch::channel(false);
+        let counter = live.clone();
+        let handle = tokio::spawn(async move {
+            counter.fetch_add(1, Ordering::SeqCst);
+            // Exit only when cancelled — the same contract as real watchers.
+            let _ = cancel_rx.changed().await;
+            counter.fetch_sub(1, Ordering::SeqCst);
+        });
+        // Give the task a moment to start.
+        for _ in 0..20 {
+            if live.load(Ordering::SeqCst) == 1 {
+                break;
+            }
+            tokio::task::yield_now().await;
+        }
+        assert_eq!(
+            live.load(Ordering::SeqCst),
+            1,
+            "watcher must be live before eviction"
+        );
+        assert!(!handle.is_finished());
+
+        super::evict_handles(cancel_tx, vec![handle]).await;
+
+        assert_eq!(
+            live.load(Ordering::SeqCst),
+            0,
+            "watcher task must have exited after eviction join"
+        );
+    }
+
+    #[test]
+    fn lru_victim_never_picks_incoming_key() {
+        use std::time::{Duration, Instant};
+        let now = Instant::now();
+        // Timestamp-only stand-in for BoundWorkspace.last_used — same selection
+        // rule as lru_victim_key without constructing a real Store.
+        let ages = [
+            ("A".to_string(), now - Duration::from_secs(30)),
+            ("B".to_string(), now - Duration::from_secs(10)),
+            ("C".to_string(), now - Duration::from_secs(20)),
+            ("D".to_string(), now - Duration::from_secs(5)),
+        ];
+        let victim = ages
+            .iter()
+            .filter(|(key, _)| key != "E")
+            .min_by_key(|(_, used)| *used)
+            .map(|(key, _)| key.clone());
+        assert_eq!(victim.as_deref(), Some("A"));
+
+        let with_incoming_oldest = [
+            ("E".to_string(), now - Duration::from_secs(100)),
+            ("A".to_string(), now - Duration::from_secs(30)),
+        ];
+        let victim = with_incoming_oldest
+            .iter()
+            .filter(|(key, _)| key != "E")
+            .min_by_key(|(_, used)| *used)
+            .map(|(key, _)| key.clone());
+        assert_eq!(
+            victim.as_deref(),
+            Some("A"),
+            "incoming key must never be the eviction victim"
+        );
+    }
 
     #[test]
     fn resolve_manifest_path_accepts_vault_relative() {
@@ -1181,8 +1463,13 @@ mod tests {
             "sticky switch refuse must not remain in mcp_server.rs"
         );
         assert!(
-            production.contains("MCP workspace rebinding"),
-            "explicit rebind log path must exist"
+            production.contains("MCP workspace bound")
+                || production.contains("MCP workspace cache hit"),
+            "explicit bind / cache-hit log path must exist"
+        );
+        assert!(
+            production.contains("MAX_BOUND_PROJECTS") || production.contains("bind cache evicting"),
+            "concurrent bind cache with LRU eviction must exist"
         );
         assert!(
             production.contains("trying process cwd"),

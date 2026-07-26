@@ -56,6 +56,7 @@ impl InitArgs {
                     ],
                     code_index_mode: crate::workspace::CodeIndexMode::Off,
                     code_languages: vec!["auto".to_string()],
+                    cross_project_vault: false,
                 },
             );
             if !self.dry_run {

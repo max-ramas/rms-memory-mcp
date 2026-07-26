@@ -1848,7 +1848,7 @@ mod tests {
     fn fixture(name: &str) -> String {
         std::fs::read_to_string(
             std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-                .join("tests/fixtures/rust")
+                .join("../../tests/fixtures/rust")
                 .join(name),
         )
         .unwrap()
@@ -1857,7 +1857,7 @@ mod tests {
     fn go_fixture(name: &str) -> String {
         std::fs::read_to_string(
             std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-                .join("tests/fixtures/go")
+                .join("../../tests/fixtures/go")
                 .join(name),
         )
         .unwrap()

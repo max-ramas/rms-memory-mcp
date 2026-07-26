@@ -1,6 +1,6 @@
 # RMS Memory GUI
 
-**Current release:** GUI `1.0.8` (2026-07-26) with MCP `1.0.8` (unified numbering).
+**Current release:** GUI `1.0.9` (2026-07-26) with MCP `1.0.9` (unified numbering).
 
 RMS Memory GUI is the optional commercial desktop application for
 [RMS Memory MCP](https://github.com/max-ramas/rms-memory-mcp). It is a Tauri
@@ -13,14 +13,14 @@ the same vaults and projects served by MCP.
 | --- | --- |
 | Dashboard | Project health, document/store status, grouped Doctor findings, one-click repair for missing IDs, Continuity teaser (active checkpoints → Continuity tab) |
 | Continuity | Create/continue/complete checkpoints, recent notes, overview counts (camelCase via GUI `serde_gui`; core remains snake_case) |
-| Search | Bounded memory search (same inject/abstain envelope as `rms_search`), corpus selector, optional `min_score`, retrieval-mode badge, pinned hit badge |
+| Search | Bounded memory search (same inject/abstain envelope as `rms_search`), corpus selector, optional multi-project federation (max 8; busy cleared on project switch), optional `min_score`, retrieval-mode badge, pinned hit badge |
 | About / license | Pro vs trial panel: hide trial chrome + key form when licensed; show license expiry from signed payload when present |
 | Editor | Visual (Milkdown) and Raw (Monaco) Markdown editing, create/rename/delete files and folders, dirty-state protection |
 | Hybrid graph | Full WebGL Markdown + code + semantic graph, independent filters, search and deep zoom, no sampling or node cap |
 | Source control | Per-project Git status/diff/history plus a separate global Vault Git/GitHub sync (safe commit → pull → push) |
 | Doctor & Setup | Init, MCP client installation, indexing, sync, GC, doctor and Wiki generation from one screen |
 | AI & Wiki (optional) | Bring-your-own-key organizer across 12 providers; proposal-only workflow — every change is reviewed with sources and a before/after diff before it touches the vault |
-| Spend | Local token/cost ledger across your AI coding tools, with optional cloud sync |
+| Spend | Local token/cost ledger across your AI coding tools, with optional cloud sync (serialized `spend-sync.json` updates) |
 | Other | Backup history with restore, `llms.txt`/Graphviz export, live log viewer, light/dark themes, 7 UI languages |
 
 AI, Spend cloud sync and Vault GitHub sync are the only features gated behind
@@ -53,10 +53,11 @@ the asset whose platform and architecture match your machine:
 | Linux x64 | `.AppImage`, `.deb`, or `.rpm` |
 
 The public release uses the same `v<version>` tag as the GUI build (unified with MCP:
-**`v1.0.8`**). Installer assets are named `rms_memory_gui_*` and checksums live in
+**`v1.0.9`**). Installer assets are named `rms_memory_gui_<version>_*` (publish fails
+if the version is missing from the basename) and checksums live in
 `rms_memory_gui_SHA256SUMS.txt`. The GUI pipeline runs both for a pushed `v*` tag
 and for a manual dispatch that supplies the same version tag as
-`src-tauri/tauri.conf.json`.
+`src-tauri/tauri.conf.json`. Cross-repo MCP checkout is pinned to that same tag.
 
 ### Known macOS distribution issue
 

@@ -2,7 +2,7 @@
 
 This document outlines the strategic direction and upcoming milestones for RMS Memory.
 
-**Current (2026-07-26):** MCP **`1.0.8`** · companion GUI **`1.0.8`** (unified numbering).
+**Current (2026-07-26):** MCP **`1.0.9`** · companion GUI **`1.0.9`** (unified numbering).
 
 ## v1.0 — Foundation & Open Source ✅ (Released)
 
@@ -137,23 +137,37 @@ This document outlines the strategic direction and upcoming milestones for RMS M
 - [x] Release packaging clears the persistent target's `debian`/`generate-rpm` dirs, so stale `.deb`/`.rpm` cannot be uploaded again.
 - [x] Manual `workflow_dispatch` checks out the requested tag and validates `Cargo.toml` version before building (MCP and GUI).
 
-## v1.1 — Workspace Split & Ecosystem (Next)
+## v1.0.9 — Federated search + concurrent binds (2026-07-26)
 
-**Goal:** Transition the already shared core/GUI architecture from a monolithic crate into a modular ecosystem of crates.
+**Goal:** Cross-project read-only search without merging vaults, plus warm multi-root binds without thrashing.
 
-- `rms-memory-core` — Core abstractions, API schemas, and types.
-- `rms-memory-vault` — File-system interactions and Vault management.
-- `rms-memory-index` — The RAG engine (LanceDB vector + Tantivy FTS).
-- `rms-memory-mcp` — Model Context Protocol server implementation.
-- `rms-memory-cli` — The end-user CLI application.
+- [x] Versioned release asset names (MCP portable + GUI installers); remove `expected_version` override; installers always request versioned URLs.
+- [x] GUI cross-repo MCP checkout pinned to the matching release tag.
+- [x] `projects: [key, …]` federated search + `cross_project_vault` opt-in (gate only when `len > 1`); hard fail, no silent degrade.
+- [x] Concurrent bind cache: `MAX_BOUND_PROJECTS = 4`, LRU by last tool-call, eviction joins watcher tasks.
+- [x] `cargo deny` CI gate + spin 0.10.1 yank hygiene.
+- [x] ADRs: cross-project federated search; concurrent bound projects.
+- [x] Crate-split **dependency analysis** + inversions + physical workspace (`crates/rms-memory-{core,index,vault}`, reserved cli); umbrella re-exports keep GUI paths stable (`docs/crate-split.md`).
+- [x] Unified product version **1.0.9** with companion GUI.
+- [x] Release asset-name CI contract (`scripts/check-release-asset-names.sh`).
 
-This enables downstream consumers to use just `rms-memory-index` without the MCP layer.
+**Explicitly deferred (post-1.0.9):**
 
-The companion GUI already consumes the core library through human-oriented Tauri commands for graph, configuration, jobs, and project lifecycle operations. MCP remains the IDE/agent protocol; v1.1 focuses on extracting stable crate boundaries rather than inventing a second application core.
+- crates.io publish of internal workspace members (path-only / `publish = false` today).
+- Agentic pruning / consolidation (distinct from supersession).
+- Remote Vector DB backends.
 
-**Not a v1.0.x release blocker.** Path-scoped code watch, graph layout worker (GUI), and GUI entitlement guards are already landed in the 1.0.6 line; GUI/MCP share **1.0.8** unified numbering.
+## v1.1 — Ecosystem packaging (Next)
 
-**Recall lifecycle (landed in 1.0.7):** bounded `rms_search` (`max_chars` / `min_score` / inject|abstain / `retrieval_mode`), vault-native supersession (`status` / `supersedes`), temporal validity filters + doctor freshness lint, short-query FTS prefer, and companion GUI Search tab. See vault ADR `architecture/bounded-recall.md`. Agentic stale pruning remains v2.0 and is not the same as supersession.
+**Goal:** Make the workspace crates independently useful to downstream consumers (and publishable to crates.io), not just path-only members of the umbrella.
+
+Landed in **1.0.9:** physical extraction with stable facade. Remaining:
+
+- Publish strategy for `rms-memory-core` / `index` / `vault` (or vendor into the umbrella for crates.io).
+- Move CLI/commands out of the umbrella into `rms-memory-cli` without a cycle through `mcp_server`.
+- Document consuming `rms-memory-index` alone (no MCP layer).
+
+The companion GUI already consumes the umbrella through Tauri commands. MCP remains the IDE/agent protocol.
 
 ## Multilanguage Code Memory — 1.0.5 extension (complete)
 
@@ -165,11 +179,11 @@ The companion GUI already consumes the core library through human-oriented Tauri
 
 The detailed production contract and delivery slices are maintained privately in RMS Memory.
 
-## v2.0 — Multi-Vault & Advanced Context (Future)
+## Post-1.0.9 / former v2.0 — Agentic pruning & remote backends (Future)
 
-- Multi-vault routing: one MCP server serving multiple workspaces simultaneously.
 - Agentic memory graphs: autonomous summarization and knowledge consolidation.
   Stale **pruning** (delete/archive cold notes) is distinct from vault-native **supersession**
   (`status` / `supersedes` / `superseded_by`) and temporal validity (`valid_from` / `valid_until`),
   which already gate recall and doctor freshness lint — pruning remains a later agentic step.
 - Remote backends: cloud-hosted Vector DBs (managed LanceDB, Qdrant) beyond local `.lancedb`.
+- Physical multi-vault merge (vaults stay isolated; 1.0.9 federated search + concurrent binds cover the multi-root IDE case without merging).

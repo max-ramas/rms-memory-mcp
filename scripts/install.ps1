@@ -28,7 +28,15 @@ if (-not $tag) {
 
 Write-Host "Latest release: $tag"
 
-$downloadUrl = "https://github.com/$repo/releases/download/$tag/rms_memory_mcp_$target.zip"
+# Assets are always versioned: rms_memory_mcp_<version>_<target>.zip. Derive the
+# version from the tag (v1.0.9 -> 1.0.9); refuse to guess an unversioned URL.
+if ($tag -notmatch '^v[0-9]') {
+    Write-Host "Error: release tag '$tag' is not a version tag (expected vX.Y.Z)." -ForegroundColor Red
+    exit 1
+}
+$version = $tag.TrimStart('v')
+
+$downloadUrl = "https://github.com/$repo/releases/download/$tag/rms_memory_mcp_${version}_$target.zip"
 Write-Host "Downloading $downloadUrl..."
 
 $tempZip = Join-Path $env:TEMP "rms-memory.zip"

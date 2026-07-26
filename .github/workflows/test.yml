@@ -59,11 +59,35 @@ jobs:
     - name: Check Formatting
       run: cargo fmt --all -- --check
 
+    - name: Release asset-name contract
+      # Phase 0 canon: every portable/package/GUI name carries the release version.
+      # Fails if workflows/installers regress to unversioned templates.
+      run: ./scripts/check-release-asset-names.sh
+
     - name: Run Clippy
-      run: cargo clippy --all-targets -- -D warnings
+      run: cargo clippy --workspace --all-targets -- -D warnings
 
     - name: Run Tests
-      run: cargo test --verbose
+      run: cargo test --workspace --verbose
 
     - name: Record grammar dependency graph
       run: cargo tree -i tree-sitter
+
+  supply-chain:
+    name: Supply-chain audit (cargo-deny)
+    runs-on: [self-hosted, linux, x64]
+    timeout-minutes: 20
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Install Rust toolchain
+      uses: dtolnay/rust-toolchain@stable
+
+    - name: Install cargo-deny
+      run: cargo install cargo-deny --locked || cargo install cargo-deny
+
+    - name: cargo-deny (advisories, bans, sources)
+      # Fails on RUSTSEC vulnerabilities and yanked crates. Licenses are not
+      # gated yet (see deny.toml). --locked so the audit reflects the committed
+      # Cargo.lock, not a freshly resolved tree.
+      run: cargo deny --locked check advisories bans sources

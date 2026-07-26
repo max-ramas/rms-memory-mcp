@@ -84,6 +84,16 @@ impl Store {
         })
     }
 
+    /// Open the LanceDB store for a discovered workspace (index owns store open;
+    /// workspace no longer depends on this module for crate-split).
+    pub async fn for_workspace(workspace: &rms_memory_core::workspace::Workspace) -> Result<Self> {
+        let hash = workspace.project_hash()?;
+        let db_path = rms_memory_core::workspace::base_dir()
+            .join("dbs")
+            .join(hash);
+        Self::init(&db_path.to_string_lossy(), "memory").await
+    }
+
     pub fn schema() -> Arc<ArrowSchema> {
         Arc::new(ArrowSchema::new(vec![
             Field::new("document_id", DataType::Utf8, false),
@@ -873,7 +883,7 @@ fn extract_results(
         .and_then(|c| c.as_any().downcast_ref::<StringArray>().cloned());
 
     for i in 0..batch.num_rows() {
-        if crate::path_policy::is_vault_wiki_relative_path(path_array.value(i)) {
+        if rms_memory_core::path_policy::is_vault_wiki_relative_path(path_array.value(i)) {
             continue;
         }
         let score = if let Some(ref distances) = distance_array {

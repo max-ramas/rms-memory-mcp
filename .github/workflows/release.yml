@@ -27,10 +27,6 @@ on:
         required: false
         default: false
         type: boolean
-      expected_version:
-        description: "Cargo version without v (e.g. 1.0.6). Defaults from release_tag."
-        required: false
-        type: string
 
 concurrency:
   group: release-${{ github.workflow }}-${{ github.ref }}-${{ inputs.release_tag || github.ref_name }}
@@ -43,7 +39,7 @@ jobs:
     outputs:
       include: ${{ steps.select.outputs.include }}
       release_tag: ${{ steps.select.outputs.release_tag }}
-      expected_version: ${{ steps.select.outputs.expected_version }}
+      version: ${{ steps.select.outputs.version }}
     steps:
       - name: Checkout requested ref
         uses: actions/checkout@v4
@@ -58,7 +54,6 @@ jobs:
           EVENT_NAME: ${{ github.event_name }}
           PLATFORMS: ${{ inputs.platforms || 'all' }}
           INPUT_RELEASE_TAG: ${{ inputs.release_tag || '' }}
-          INPUT_EXPECTED_VERSION: ${{ inputs.expected_version || '' }}
           REF_NAME: ${{ github.ref_name }}
         run: |
           set -euo pipefail
@@ -124,32 +119,34 @@ jobs:
           if not re.fullmatch(r"v\d+\.\d+\.\d+", release_tag):
             raise SystemExit(f"release_tag must look like v1.0.6, got {release_tag!r}")
 
-          expected = (os.environ.get("INPUT_EXPECTED_VERSION") or "").strip()
-          if not expected:
-              expected = release_tag[1:]  # strip leading v
-          if expected.startswith("v"):
-              expected = expected[1:]
+          # Version has exactly one source: the validated release tag. There is
+          # no override input — every asset name and version check derives from
+          # this single value, so an unversioned artifact is unrepresentable.
+          version = release_tag[1:]  # strip leading v
+          if not version:
+            raise SystemExit(f"could not derive version from release_tag {release_tag!r}")
 
           print("Selected:", ", ".join(r["id"] for r in selected))
           print("Release tag:", release_tag)
-          print("Expected cargo version:", expected)
+          print("Version:", version)
           out = os.environ["GITHUB_OUTPUT"]
           with open(out, "a", encoding="utf-8") as fh:
               fh.write(f"include={json.dumps(selected)}\n")
               fh.write(f"release_tag={release_tag}\n")
-              fh.write(f"expected_version={expected}\n")
+              fh.write(f"version={version}\n")
           PY
 
       - name: Verify Cargo version matches release tag
         shell: bash
         env:
-          EXPECTED_VERSION: ${{ steps.select.outputs.expected_version }}
+          VERSION: ${{ steps.select.outputs.version }}
         run: |
           set -euo pipefail
-          version="$(grep -m1 '^version = ' Cargo.toml | sed -E 's/^version = "([^"]+)".*/\1/')"
-          echo "Cargo.toml version: ${version}; expected: ${EXPECTED_VERSION}"
-          if [ "${version}" != "${EXPECTED_VERSION}" ]; then
-            echo "Cargo.toml version ${version} does not match release tag version ${EXPECTED_VERSION}; refusing to build." >&2
+          test -n "${VERSION}"
+          cargo_version="$(grep -m1 '^version = ' Cargo.toml | sed -E 's/^version = "([^"]+)".*/\1/')"
+          echo "Cargo.toml version: ${cargo_version}; release tag version: ${VERSION}"
+          if [ "${cargo_version}" != "${VERSION}" ]; then
+            echo "Cargo.toml version ${cargo_version} does not match release tag version ${VERSION}; refusing to build." >&2
             exit 1
           fi
 
@@ -252,8 +249,13 @@ jobs:
 
       - name: Package (Unix / macOS)
         if: runner.os != 'Windows'
+        env:
+          VERSION: ${{ needs.plan.outputs.version }}
         run: |
           set -euo pipefail
+          # Version is a mandatory output of the validated release tag. Assert it
+          # so an unversioned archive is never produced (job fails instead).
+          test -n "${VERSION}"
           TD="${CARGO_TARGET_DIR:-target}"
           mkdir -p staging
           cp "$TD/release/rms-memory" staging/rms-memory
@@ -264,15 +266,15 @@ jobs:
           fi
 
           cd staging
-          tar -czf "../rms_memory_mcp_${{ matrix.target }}.${{ matrix.archive_ext }}" rms-memory
+          tar -czf "../rms_memory_mcp_${VERSION}_${{ matrix.target }}.${{ matrix.archive_ext }}" rms-memory
           if [ "${{ runner.os }}" == "Linux" ]; then
             shopt -s nullglob
             for deb in *.deb; do
-              # cargo-deb: rms-memory-mcp_1.0.6-1_amd64.deb → rms_memory_mcp_1.0.6-1_amd64.deb
+              # cargo-deb: rms-memory-mcp_1.0.9-1_amd64.deb → rms_memory_mcp_1.0.9-1_amd64.deb
               mv "$deb" "../${deb/rms-memory-mcp_/rms_memory_mcp_}"
             done
             for rpm in *.rpm; do
-              # cargo-generate-rpm: rms-memory-mcp-1.0.6-1.x86_64.rpm → rms_memory_mcp_1.0.6-1.x86_64.rpm
+              # cargo-generate-rpm: rms-memory-mcp-1.0.9-1.x86_64.rpm → rms_memory_mcp_1.0.9-1.x86_64.rpm
               mv "$rpm" "../${rpm/rms-memory-mcp-/rms_memory_mcp_}"
             done
           fi
@@ -280,11 +282,14 @@ jobs:
 
       - name: Package (Windows)
         if: runner.os == 'Windows'
+        env:
+          VERSION: ${{ needs.plan.outputs.version }}
         run: |
+          if (-not $env:VERSION) { throw "VERSION is empty; refusing to produce an unversioned archive." }
           mkdir staging
           cp target\release\rms-memory.exe staging\rms-memory.exe
           cd staging
-          Compress-Archive -Path rms-memory.exe -DestinationPath ..\rms_memory_mcp_${{ matrix.target }}.${{ matrix.archive_ext }}
+          Compress-Archive -Path rms-memory.exe -DestinationPath "..\rms_memory_mcp_${env:VERSION}_${{ matrix.target }}.${{ matrix.archive_ext }}"
         shell: pwsh
 
       - name: Upload Artifacts
@@ -292,7 +297,7 @@ jobs:
         with:
           name: rms_memory_mcp_${{ matrix.target }}
           path: |
-            rms_memory_mcp_${{ matrix.target }}.${{ matrix.archive_ext }}
+            rms_memory_mcp_${{ needs.plan.outputs.version }}_${{ matrix.target }}.${{ matrix.archive_ext }}
             rms_memory_mcp_*.deb
             rms_memory_mcp_*.rpm
           retention-days: 1
@@ -337,14 +342,18 @@ jobs:
             -f "client_payload[repo]=max-ramas/rms-memory-mcp" \
             -f "client_payload[formula]=rms-memory-mcp" \
             -f "client_payload[bin_name]=rms-memory-mcp" \
-            -f "client_payload[tag]=${{ needs.plan.outputs.release_tag }}"
+            -f "client_payload[tag]=${{ needs.plan.outputs.release_tag }}" \
+            -f "client_payload[version]=${{ needs.plan.outputs.version }}"
 
   publish-crates:
     name: Publish to crates.io
     needs: [plan, build, release]
     runs-on: [self-hosted, linux, x64]
-    # Tags publish automatically. Manual dispatch must opt in explicitly.
-    if: startsWith(github.ref, 'refs/tags/v') || inputs.publish_crates == true
+    # 1.0.9+ workspace members are path-only (`publish = false`). `cargo publish`
+    # of the umbrella therefore fails until internals are published or vendored.
+    # Do NOT auto-publish on tag push — require an explicit workflow_dispatch
+    # opt-in after the packaging strategy in docs/crate-split.md is resolved.
+    if: github.event_name == 'workflow_dispatch' && inputs.publish_crates == true
     environment: crates.io
     permissions:
       contents: read
@@ -364,12 +373,21 @@ jobs:
 
       - name: Verify requested version
         env:
-          EXPECTED_VERSION: ${{ needs.plan.outputs.expected_version }}
+          VERSION: ${{ needs.plan.outputs.version }}
         run: |
           package_version="$(cargo metadata --no-deps --format-version 1 | jq -r '.packages[] | select(.name == "rms-memory-mcp") | .version')"
-          expected_version="${EXPECTED_VERSION#v}"
-          test -n "$expected_version"
-          test "$package_version" = "$expected_version"
+          test -n "$VERSION"
+          test "$package_version" = "$VERSION"
+
+      - name: Refuse path-only workspace publish
+        run: |
+          set -euo pipefail
+          # Guardrail: even with opt-in, refuse until members are crates.io-ready.
+          if grep -R --include='Cargo.toml' -n 'publish = false' crates >/dev/null 2>&1; then
+            echo "Workspace members under crates/ still have publish = false (path-only)." >&2
+            echo "See docs/crate-split.md. Unset publish_crates or finish the publish strategy first." >&2
+            exit 1
+          fi
 
       - name: Publish package
         env:

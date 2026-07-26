@@ -1,0 +1,40 @@
+# cargo-deny configuration for rms-memory-mcp.
+#
+# Goal for 1.0.9: a supply-chain gate that FAILS on known security
+# vulnerabilities and yanked crates. CI runs only the advisories/bans/sources
+# checks (`cargo deny check advisories bans sources`) — we do not gate on
+# license policy yet because the transitive tree pulled in by lancedb / ort /
+# tree-sitter is large and mixed. Tighten licenses in a later release if needed.
+
+[advisories]
+version = 2
+# Yanked crates (e.g. the yanked spin 0.10.0 that used to come via the lance
+# test chain — now pinned to 0.10.1) and unpatched vulnerabilities must fail CI.
+yanked = "deny"
+# Accepted transitive advisories with no upgrade path from our pinned
+# lancedb/datafusion/fastembed stack, and not reachable through any rms-memory
+# runtime code path. Each is re-reviewed on every dependency bump; the point of
+# the list is that a NEW advisory on any other crate still fails the gate.
+ignore = [
+  # quick-xml 0.26 (DoS: quadratic attribute scan + unbounded NsReader alloc).
+  # Via inferno -> pprof -> lance-testing -> lancedb; only used by lance's
+  # profiling/flamegraph path, never to parse untrusted XML at runtime.
+  "RUSTSEC-2026-0194",
+  "RUSTSEC-2026-0195",
+  # crossbeam-epoch 0.9.18 (invalid pointer deref in a Debug/Pointer impl).
+  # Via the `ignore` file walker and fastembed/rayon; latest 0.9.x, no fix
+  # released. Not triggered by our usage.
+  "RUSTSEC-2026-0204",
+  # paste 1.0.15 unmaintained (proc-macro), pulled transitively by datafusion.
+  # No runtime code; unmaintained is not a vulnerability.
+  "RUSTSEC-2024-0436",
+]
+
+[bans]
+# Duplicate versions are common across the ML/vector stack; don't block on them.
+multiple-versions = "allow"
+wildcards = "allow"
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "allow"
