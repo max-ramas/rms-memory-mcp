@@ -1,6 +1,6 @@
 # RMS Memory MCP Server — Walkthrough
 
-Updated: 2026-07-26 · MCP `1.0.8` / GUI `1.0.8`
+Updated: 2026-07-26 · MCP `1.0.9` / GUI `1.0.9`
 
 RMS Memory is a specialized Model Context Protocol (MCP) server that acts as localized persistent memory for LLM agents. It keeps human-authored knowledge in centralized Markdown Vaults and can optionally maintain a separate derived semantic index for source code, solving context fragmentation across multiple IDEs (Cursor, Zed, VS Code, Claude Code, Codex).
 
@@ -248,3 +248,12 @@ Mind-inspired checkpoints/orientation, corrected for the vault-first stack: no S
 - **Rebind is failure-atomic:** the target store is opened and validated first; only then are the previous vault's watchers cancelled. A failed switch leaves the old project fully intact instead of bound-but-unwatched.
 - **`inject-rules` refuses to invent keys:** injected rules carry a mandatory `project: "<key>"`, so writing a basename that `rms_projects` cannot resolve is worse than failing. Standalone single-path injection is fail-closed; `--all` walks the registry, and `init` keeps its basename fallback for the pre-registration moment.
 - **Release pipeline:** installers now request the `rms_memory_mcp_*` names that are actually published; packaging wipes the persistent target's `debian`/`generate-rpm` dirs (a `1.0.6` RPM had shipped inside the `1.0.7` release); manual dispatch checks out the requested tag and validates the Cargo version before building anything.
+
+### 24. Federated search + concurrent binds (v1.0.9)
+
+- **Cross-project federated search:** pass `projects: ["rms-license","rms-memory-mcp","rms-memory-gui"]` to `rms_search` / `rms_code_search`. Read-only — does not rebind. Hits are tagged `project: <key>` and merged with the same RRF used for `corpus=all`.
+- **Vault opt-in:** `cross_project_vault` (default false) is consulted **only when `projects.len() > 1`** with `corpus=vault|all`. Missing opt-in → hard tool error (never silent degrade). Single-element `projects=[A]` is equivalent to `project=A` and skips the gate. CLI: `rms-memory config --cross-project-vault true`.
+- **Concurrent bind cache:** up to 4 warm Store+watcher pairs (`MAX_BOUND_PROJECTS`); LRU by last successful tool-call; eviction cancels **and joins** watcher tasks. Indexer stays process-singleton.
+- **Versioned assets only:** portable MCP archives are `rms_memory_mcp_<version>_<target>.*`; GUI installers must match `rms_memory_gui_<version>_*` or the publish job fails. No unversioned fallback. CI contract: `scripts/check-release-asset-names.sh` (wired in `test.yml`).
+- **Cargo workspace crate-split:** path-only members `crates/rms-memory-{core,index,vault}` (+ reserved `rms-memory-cli`). Root `rms-memory-mcp` stays the umbrella binary/MCP/tools/rules_injector and re-exports every former `rms_memory_mcp::<mod>` path for the GUI. Inversions: `Store::for_workspace`, `InjectOptions` in workspace, `audit::inject_audit_metadata`. See `docs/crate-split.md`. crates.io publish of internal members remains post-1.0.9 (`publish = false` today).
+- **Supply-chain gate:** `cargo deny` CI job (advisories/bans/sources) + yanked `spin 0.10.1` hygiene.

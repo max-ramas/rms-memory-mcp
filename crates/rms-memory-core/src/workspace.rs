@@ -7,6 +7,16 @@ use std::str::FromStr;
 
 pub const REGISTRY_SCHEMA_VERSION: u32 = 1;
 
+/// Options for IDE rules injection. Lives next to workspace discovery so core
+/// does not depend on the MCP `rules_injector` module (crate-split inversion).
+#[derive(Default, Clone, Copy)]
+pub struct InjectOptions {
+    pub dry_run: bool,
+    pub force: bool,
+    pub full: bool,
+    pub interactive: bool,
+}
+
 #[derive(Deserialize, Serialize, Debug, Clone, PartialEq, Eq)]
 pub struct Registry {
     #[serde(default = "default_registry_schema_version")]
@@ -64,6 +74,14 @@ pub struct ProjectConfig {
     pub code_index_mode: CodeIndexMode,
     #[serde(default = "default_code_languages")]
     pub code_languages: Vec<String>,
+    /// When true, this project's vault notes may appear in a cross-project
+    /// `rms_search`/`rms_code_search` call with `projects.len() > 1` and
+    /// `corpus=vault|all`. Default false (fail-closed). Consulted **only**
+    /// when more than one project is requested — a single-element `projects`
+    /// list is equivalent to the existing `project=` parameter and bypasses
+    /// this gate. See ADR `decisions/cross-project-federated-search.md`.
+    #[serde(default)]
+    pub cross_project_vault: bool,
 }
 
 fn default_code_languages() -> Vec<String> {
@@ -198,7 +216,7 @@ impl Workspace {
     pub fn discover_with_scope(
         scope_override: Option<&str>,
         cwd: &Path,
-        _options: Option<crate::rules_injector::InjectOptions>,
+        _options: Option<InjectOptions>,
     ) -> Result<Self> {
         let identifier = Self::resolve_identifier(scope_override, cwd)?;
         let cwd_path = std::path::Path::new(&identifier);
@@ -226,10 +244,7 @@ impl Workspace {
         })
     }
 
-    pub fn discover(
-        start_dir: &Path,
-        _options: Option<crate::rules_injector::InjectOptions>,
-    ) -> Result<Self> {
+    pub fn discover(start_dir: &Path, _options: Option<InjectOptions>) -> Result<Self> {
         let config_manager = crate::config_manager::ConfigManager::open()?;
         let config_snapshot = config_manager.snapshot();
         let registry = config_snapshot.registry;
@@ -365,12 +380,6 @@ impl Workspace {
             }
         }
         Ok(files)
-    }
-
-    pub async fn get_store(&self) -> Result<crate::store::Store> {
-        let hash = self.project_hash()?;
-        let db_path = base_dir().join("dbs").join(hash);
-        crate::store::Store::init(&db_path.to_string_lossy(), "memory").await
     }
 
     /// Returns the project key (registry name) for this workspace, if found.

@@ -4,8 +4,8 @@
 
 | Component | Version | Supported |
 |-----------|---------|-----------|
-| `rms-memory` CLI / MCP (`rms-memory-mcp`) | **1.0.8** (2026-07-26) | Yes |
-| RMS Memory GUI (`rms-memory-gui`) | **1.0.8** (2026-07-26) | Yes |
+| `rms-memory` CLI / MCP (`rms-memory-mcp`) | **1.0.9** (2026-07-26) | Yes |
+| RMS Memory GUI (`rms-memory-gui`) | **1.0.9** (2026-07-26) | Yes |
 
 Older pre-1.0 builds are unsupported.
 
@@ -47,3 +47,9 @@ Out of scope (unless chained into a higher impact):
 - Workspace discovery matches registered projects by whole path components on canonical paths, so a registered `/repo` cannot capture a sibling `/repo-old` or `/repo2` and route reads/writes into the wrong vault (fixed in 1.0.8, where cwd fallback made this reachable automatically).
 - `rms-memory inject-rules` is fail-closed for unregistered directories: it never writes a `project` key that the registry cannot resolve.
 - Release packaging clears the persistent build target's package directories before regenerating, so a published release cannot carry `.deb`/`.rpm` artifacts left over from an older version. Manual release dispatch builds the requested tag and validates the Cargo version before producing artifacts.
+- Portable MCP archives and GUI installers are **always versioned** (`rms_memory_mcp_<version>_<target>.*`, `rms_memory_gui_<version>_*`). Unversioned names are not published; CI runs `scripts/check-release-asset-names.sh`.
+- Cross-project vault federation (`projects` with `len > 1` + `corpus=vault|all`) is fail-closed: every listed project must opt in via `cross_project_vault` or the tool call errors (no silent degrade to code-only).
+- **Accepted residual (1.0.9):** multi-project `corpus=code` (and the code half of `corpus=all`) does **not** consult `cross_project_vault`. Same-host, same-user IDE use is the intended audience; treat indexed code as less sensitive than vault Markdown, or keep those projects unregistered / code-index off. A future `cross_project_code` flag is out of scope for 1.0.9.
+- Federated `projects` lists are capped (8 keys after dedupe) so fan-out cannot unbounded-open LanceDB stores outside the bind cache.
+- Bind-cache eviction cancels watchers and aborts tasks that miss the join timeout, so detached notify/sync loops do not accumulate after Store drop.
+- CI runs `cargo deny --locked check advisories bans sources` (`deny.toml`) so known RUSTSEC advisories and yanked crates fail the build (with a documented ignore list for unfixable transitive deps).

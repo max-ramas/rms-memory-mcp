@@ -55,7 +55,7 @@ impl ReindexArgs {
     pub async fn run(&self, scope: Option<String>) -> Result<()> {
         let current_dir = std::env::current_dir()?;
         let workspace = Workspace::discover_with_scope(scope.as_deref(), &current_dir, None)?;
-        let store = workspace.get_store().await?;
+        let store = crate::store::Store::for_workspace(&workspace).await?;
         let mut indexer = Indexer::new()?;
 
         if self.vault || self.all || !self.code {
@@ -296,7 +296,7 @@ impl DoctorArgs {
 
         // 4. Check LanceDB store
         println!("\n[4/7] LanceDB store...");
-        match workspace.get_store().await {
+        match crate::store::Store::for_workspace(&workspace).await {
             Ok(store) => {
                 match crate::index_lock::inspect(&store.storage_path) {
                     Ok(crate::index_lock::LockInspection::Active(Some(owner))) => println!(
@@ -334,7 +334,7 @@ impl DoctorArgs {
 
         // 5. Verify that GUI Wiki output has not leaked into canonical memory.
         println!("\n[5/7] Wiki index isolation...");
-        match workspace.get_store().await {
+        match crate::store::Store::for_workspace(&workspace).await {
             Ok(store) => {
                 let leaked_vault = match store.open_table().await {
                     Ok(table) => store
@@ -752,7 +752,7 @@ impl SyncArgs {
     pub async fn run(&self, scope: Option<String>) -> Result<()> {
         let current_dir = std::env::current_dir()?;
         let workspace = Workspace::discover_with_scope(scope.as_deref(), &current_dir, None)?;
-        let store = workspace.get_store().await?;
+        let store = crate::store::Store::for_workspace(&workspace).await?;
         let mut indexer = Indexer::new()?;
         crate::indexer::sync_vault(&workspace, &store, &mut indexer).await?;
         println!("Sync complete.");

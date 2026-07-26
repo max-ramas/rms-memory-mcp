@@ -39,6 +39,15 @@ jobs:
           test -n "$EXPECTED_VERSION"
           test "$package_version" = "$EXPECTED_VERSION"
 
+      - name: Refuse path-only workspace publish
+        run: |
+          set -euo pipefail
+          if grep -R --include='Cargo.toml' -n 'publish = false' crates >/dev/null 2>&1; then
+            echo "Workspace members under crates/ still have publish = false (path-only)." >&2
+            echo "See docs/crate-split.md. Finish the publish strategy before cargo publish." >&2
+            exit 1
+          fi
+
       - name: Publish package
         env:
           CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}

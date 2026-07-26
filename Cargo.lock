@@ -5744,16 +5744,38 @@ dependencies = [
 ]
 
 [[package]]
-name = "rms-memory-mcp"
-version = "1.0.8"
+name = "rms-memory-cli"
+version = "1.0.9"
+
+[[package]]
+name = "rms-memory-core"
+version = "1.0.9"
 dependencies = [
  "anyhow",
  "blake3",
  "chrono",
- "clap",
- "dialoguer",
  "directories",
- "dirs",
+ "fs2",
+ "glob",
+ "notify",
+ "regex",
+ "serde",
+ "serde_json",
+ "serde_yaml",
+ "tempfile",
+ "tokio",
+ "toml",
+ "tracing",
+ "uuid",
+]
+
+[[package]]
+name = "rms-memory-index"
+version = "1.0.9"
+dependencies = [
+ "anyhow",
+ "blake3",
+ "chrono",
  "fastembed",
  "fs2",
  "futures",
@@ -5761,22 +5783,18 @@ dependencies = [
  "ignore",
  "lance-index",
  "lancedb",
- "notify",
  "octorus-tree-sitter-vue3",
  "ort",
  "pathdiff",
  "pulldown-cmark",
  "regex",
+ "rms-memory-core",
  "serde",
  "serde_json",
  "serde_yaml",
- "similar",
  "tempfile",
  "tokio",
- "toml",
  "tracing",
- "tracing-appender",
- "tracing-subscriber",
  "tree-sitter",
  "tree-sitter-c",
  "tree-sitter-cpp",
@@ -5788,7 +5806,64 @@ dependencies = [
  "tree-sitter-rust",
  "tree-sitter-swift",
  "tree-sitter-typescript",
+ "uuid",
+ "walkdir",
+]
+
+[[package]]
+name = "rms-memory-mcp"
+version = "1.0.9"
+dependencies = [
+ "anyhow",
+ "blake3",
+ "chrono",
+ "clap",
+ "dialoguer",
+ "directories",
+ "dirs",
+ "fs2",
+ "futures",
+ "glob",
+ "ignore",
+ "notify",
+ "pathdiff",
+ "pulldown-cmark",
+ "regex",
+ "rms-memory-core",
+ "rms-memory-index",
+ "rms-memory-vault",
+ "serde",
+ "serde_json",
+ "serde_yaml",
+ "similar",
+ "tempfile",
+ "tokio",
+ "toml",
+ "tracing",
+ "tracing-appender",
+ "tracing-subscriber",
  "url",
+ "uuid",
+ "walkdir",
+]
+
+[[package]]
+name = "rms-memory-vault"
+version = "1.0.9"
+dependencies = [
+ "anyhow",
+ "blake3",
+ "chrono",
+ "dialoguer",
+ "dirs",
+ "pathdiff",
+ "rms-memory-core",
+ "rms-memory-index",
+ "serde",
+ "serde_json",
+ "serde_yaml",
+ "tempfile",
+ "tracing",
  "uuid",
  "walkdir",
 ]
@@ -6304,9 +6379,9 @@ dependencies = [
 
 [[package]]
 name = "spin"
-version = "0.10.0"
+version = "0.10.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d5fe4ccb98d9c292d56fec89a5e07da7fc4cf0dc11e156b41793132775d3e591"
+checksum = "023a211cb3138dbc438680b32560ad89f699977624c9f8dbb95a47d5b4c07dd3"
 dependencies = [
  "lock_api",
 ]

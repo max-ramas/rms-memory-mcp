@@ -47,7 +47,7 @@ impl WikiCommands {
 async fn resolve_service(scope: Option<String>) -> Result<(WikiService, std::path::PathBuf)> {
     let current_dir = std::env::current_dir()?;
     let workspace = Workspace::discover_with_scope(scope.as_deref(), &current_dir, None)?;
-    let store = Arc::new(workspace.get_store().await?);
+    let store = Arc::new(crate::store::Store::for_workspace(&workspace).await?);
     let indexer = Arc::new(Mutex::new(Indexer::new()?));
     let retrieval = RetrievalService::new(store, indexer);
     let wiki_root = workspace.root.join("wiki");
@@ -55,7 +55,10 @@ async fn resolve_service(scope: Option<String>) -> Result<(WikiService, std::pat
         retrieval,
         workspace.root.clone(),
         scope.unwrap_or_else(|| workspace.canonical_path().unwrap_or_default()),
-    );
+    )
+    .with_cli_help(std::sync::Arc::new(|subcommand: &str| {
+        crate::render_cli_help(subcommand)
+    }));
     Ok((service, wiki_root))
 }
 

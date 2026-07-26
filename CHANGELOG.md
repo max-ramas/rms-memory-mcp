@@ -2,6 +2,39 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.0.9] - 2026-07-26
+
+Hardening leftovers after 1.0.8, Cargo workspace crate-split, cross-project federated search, and concurrent multi-project bind cache. Companion GUI adopts the **same `1.0.9` product version**.
+
+### Fixed
+- **Versioned release assets (mandatory):** portable MCP archives are now `rms_memory_mcp_<version>_<target>.{tar.gz,zip}`. The optional `expected_version` workflow input is removed — version has exactly one source (the validated `release_tag`). Unversioned archive templates are gone; packaging asserts `VERSION` is non-empty so an unversioned artifact is unrepresentable. `install.sh` / `install.ps1` derive the version from the release tag and always request the versioned URL (no unversioned fallback).
+- **Yanked `spin 0.10.0`:** lockfile bumped to `0.10.1` (was pulled via `lancedb → lance-testing → pprof`).
+- **Pre-release audit fixes:** tag push no longer auto-runs `cargo publish` (path-only workspace members); Wiki `self_cli_help` uses in-process clap via `WikiService::with_cli_help` / `render_cli_help` (no PATH `rms-memory` spawn); federated `projects` wins when `project` is also set (agent rules stay compatible) and is capped at 8 keys; bind eviction **aborts** watcher tasks after the 5s join timeout.
+- **CI runs Clippy/tests with `--workspace`** so core/index/vault crate tests are not skipped after the crate-split.
+
+### Added
+- **Cargo workspace crate-split:** `rms-memory-core` / `rms-memory-index` / `rms-memory-vault` (+ reserved `rms-memory-cli`). Root `rms-memory-mcp` remains the umbrella binary + MCP/tools/rules_injector and re-exports every former `rms_memory_mcp::<mod>` path for the GUI. See `docs/crate-split.md`.
+- **Release asset-name contract:** `scripts/check-release-asset-names.sh` wired into CI (`test.yml`) — asserts versioned portable/package/GUI name formulas and rejects unversioned workflow templates.
+- **Cross-project federated search:** `projects: [key, …]` on `rms_search` / `rms_code_search` (mutually exclusive with `project`). Read-only composition across isolated stores; each hit tagged `project: <key>`; merge via existing RRF. Does **not** change the active bind.
+- **`cross_project_vault` registry flag** (default `false`) + CLI `rms-memory config --cross-project-vault true|false`. Consulted **only when `projects.len() > 1`** with `corpus=vault|all`. Partial allow → hard tool error (no silent degrade to code-only). Single-element `projects=[A]` bypasses the gate (same as `project=A`).
+- **Concurrent multi-project bind cache:** up to `MAX_BOUND_PROJECTS = 4` warm Store+watcher pairs; LRU by last successful tool-call; eviction cancels watchers **and joins** their tasks before dropping the Store. Indexer remains process-singleton.
+- **`cargo deny` CI gate** (advisories/bans/sources) with documented ignore list for unfixable transitive advisories.
+- ADRs: `decisions/cross-project-federated-search.md`, `decisions/mcp-concurrent-bound-projects.md`. Crate-split analysis: `architecture/crate-split-dependency-analysis.md` (inversions applied; physical extraction landed).
+
+### Changed
+- Homebrew dispatch payload now includes `version` alongside `tag`.
+- Failure-atomic rebind ordering retained and covered by forced store-open failure unit tests; `inject-rules` refuse covered by command-level unit tests.
+- Dependency inversions for the split: `Store::for_workspace` (workspace no longer opens LanceDB); `InjectOptions` in workspace; `audit::inject_audit_metadata` (document_service no longer depends on MCP tools).
+
+### Explicitly out of 1.0.9
+- Publishing internal workspace members to crates.io (members are `publish = false` / path-only; umbrella publish needs a follow-up strategy — see `docs/crate-split.md`). Release workflow no longer auto-runs `cargo publish` on tag push (opt-in `workflow_dispatch` only, and even then refuses while members are path-only).
+- Agentic pruning / consolidation and remote Vector DB backends — remain post-1.0.9 / former v2.0.
+
+### Verification
+- Unit: federated policy (single-element OK, multi without allow hard-fails, all-or-nothing, mutual exclusion); concurrent bind (`MAX_BOUND_PROJECTS=4`, eviction joins watcher task); failure-atomic rebind; inject-rules refuse. **173 workspace tests green**.
+- `cargo fmt --all`, `cargo clippy --workspace --all-targets -- -D warnings`, `cargo deny --locked check advisories bans sources`, `./scripts/check-release-asset-names.sh`.
+- GUI `cargo check --lib` + frontend `tsc --noEmit` green against the path-dep (unchanged import paths).
+
 ## [1.0.8] - 2026-07-26
 
 Multi-project MCP routing fix. Companion GUI adopts the **same `1.0.8` product version**.

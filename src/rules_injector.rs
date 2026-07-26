@@ -2,6 +2,8 @@ use anyhow::{Result, bail};
 use std::fs;
 use std::path::Path;
 
+pub use crate::workspace::InjectOptions;
+
 const CURSOR_RULES: &str = include_str!("../templates/cursor_rules.md");
 const CLAUDE_RULES: &str = include_str!("../templates/claude_code_rules.md");
 const ZED_RULES: &str = include_str!("../templates/zed_assistant_rules.md");
@@ -9,14 +11,6 @@ const GENERAL_RULES: &str = include_str!("../templates/general_mcp_guide.md");
 
 const START_MARKER: &str = "<!-- RMS-MEMORY-START -->";
 const END_MARKER: &str = "<!-- RMS-MEMORY-END -->";
-
-#[derive(Default, Clone, Copy)]
-pub struct InjectOptions {
-    pub dry_run: bool,
-    pub force: bool,
-    pub full: bool,
-    pub interactive: bool,
-}
 
 /// Returns the exact registry key whose `code_path` canonically equals `code_path`.
 ///

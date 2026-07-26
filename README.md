@@ -2,7 +2,7 @@
 
 # 🧠 RMS Memory MCP
 
-**Version:** `1.0.8` (2026-07-26) · companion GUI `1.0.8` (unified numbering)
+**Version:** `1.0.9` (2026-07-26) · companion GUI `1.0.9` (unified numbering)
 
 **Persistent, local-first memory for your AI coding agents.**
 
@@ -52,8 +52,11 @@ You're developing a single project but switching between different agents — Cu
 | 🎯 **Bounded Recall (v1.0.7)** | `rms_search` returns an inject/abstain envelope with `max_chars`, optional `min_score`, fail-closed errors, and `retrieval_mode` (`hybrid` or short-query `fts_prefer`). |
 | ♻️ **Knowledge Lifecycle** | Frontmatter `status` / `supersedes` / temporal `valid_*` gate Lance recall; soft supersede via `rms_write`; Doctor freshness lint (7/7). |
 | 🔄 **Session Continuity (v1.0.7)** | Vault-backed checkpoints (`rms_checkpoint_save/done/load/query`), `rms_overview` project orientation, `rms_system_instructions` self-bootstrap, editor-agnostic `rms-memory hook` CLI, installer L3 thin adapters, and `pinned` notes that bypass temporal/`min_confidence` recall gates. |
-| 🧭 **Multi-project MCP routing (v1.0.8)** | Explicit `project` always rebinds the active vault; empty Cursor `roots/list` falls back to process cwd; injected rules require `project: "<key>"` on every memory tool call; `rms-memory inject-rules [--all]` refreshes keys. |
-| 📦 **Unified Releases** | Public assets use `rms_memory_mcp_*` / `rms_memory_gui_*` on the **same** `vX.Y.Z` tag (MCP + GUI share numbering). |
+| 🧭 **Multi-project MCP routing (v1.0.8+)** | Explicit `project` always rebinds the active vault; empty Cursor `roots/list` falls back to process cwd; injected rules require `project: "<key>"` on every memory tool call; `rms-memory inject-rules [--all]` refreshes keys. |
+| 🔗 **Cross-project federated search (v1.0.9)** | Pass `projects: [key, …]` to `rms_search` / `rms_code_search` for read-only RRF federation. Vault/all across multiple projects requires `cross_project_vault=true` on every listed key (hard fail otherwise). |
+| 🧊 **Concurrent bind cache (v1.0.9)** | Up to 4 warm Store+watcher pairs (LRU); multi-root IDE sessions stop thrashing open/close. |
+| 🧱 **Cargo workspace (v1.0.9)** | `rms-memory-{core,index,vault}` path crates under `crates/`; public umbrella `rms-memory-mcp` keeps stable module paths for the GUI. See [docs/crate-split.md](./docs/crate-split.md). |
+| 📦 **Unified Releases** | Public assets use `rms_memory_mcp_<version>_<target>.*` / `rms_memory_gui_<version>_*` on the **same** `vX.Y.Z` tag (MCP + GUI share numbering). Unversioned names are no longer published. |
 | ⚙️ **Dynamic Auto-Installer** | `rms-memory install` scans your system and wires itself into every supported IDE. |
 | 📜 **Rules-as-Code Patching** | Non-destructive AST patching of `.cursorrules`, `.zed/assistant.md`, etc. Opt-in by default. |
 | 🧪 **Durable Vault Writes** | `rms_write` creates rolling `.bak` backups and atomically replaces `create`/`replace` targets after fsync, so interrupted writes never expose a truncated Markdown file. |
@@ -79,12 +82,19 @@ automatically with every release.
 > **Not covered by Homebrew:** macOS Intel (dropped as of v1.0.1) and
 > Windows (Homebrew doesn't run there — use Option 2 or the `.zip` below).
 
-### Option 2: Cargo
+### Option 2: GitHub release binary
 
-If you have Rust installed:
+Prebuilt binaries for `aarch64-apple-darwin` (Apple Silicon), `x86_64-unknown-linux-gnu`,
+`aarch64-unknown-linux-gnu`, and `x86_64-pc-windows-msvc` are published on every
+[release](https://github.com/max-ramas/rms-memory-mcp/releases), along with
+`.deb`/`.rpm` packages for Linux. One-line installers auto-detect your architecture:
 
 ```bash
-cargo install rms-memory-mcp
+curl -fsSL https://raw.githubusercontent.com/max-ramas/rms-memory-mcp/master/scripts/install.sh | bash
+```
+
+```powershell
+irm https://raw.githubusercontent.com/max-ramas/rms-memory-mcp/master/scripts/install.ps1 | iex
 ```
 
 ### Option 3: Build from Source
@@ -101,11 +111,17 @@ cargo build --release
 cp target/release/rms-memory ~/.cargo/bin/
 ```
 
-> Prebuilt binaries for `aarch64-apple-darwin` (Apple Silicon), `x86_64-unknown-linux-gnu`,
-> `aarch64-unknown-linux-gnu`, and `x86_64-pc-windows-msvc` are published on every
-> [release](https://github.com/max-ramas/rms-memory-mcp/releases), along with
-> `.deb`/`.rpm` packages for Linux. One-line installers (`install.sh` / `install.ps1`)
-> auto-detect your architecture.
+### crates.io (`cargo install`) — lagging until workspace publish
+
+As of **1.0.9** the library is a Cargo workspace with path-only internal crates
+(`publish = false`). `cargo publish` of the umbrella is intentionally disabled.
+Prefer Homebrew or a GitHub release binary for the current version.
+
+```bash
+# May install an older crates.io revision until the publish strategy lands
+# (see docs/crate-split.md). Not the recommended path for 1.0.9+.
+cargo install rms-memory-mcp
+```
 
 ### Optional RMS Memory GUI installers
 
@@ -228,7 +244,7 @@ Supported names are `rust`, `go`, `javascript`, `jsx`, `typescript`, `tsx`, `pyt
 | `rms-memory install` | Hooks the server into supported IDEs. `--dry-run` supported. |
 | `rms-memory uninstall` | Removes the server from all discovered IDE configurations. |
 | `rms-memory doctor` | Runs 5-point vault health diagnostics. `--repair-frontmatter` safely repairs duplicate, missing, and known attached frontmatter IDs with backups; arbitrary invalid YAML is reported but never rewritten automatically. |
-| `rms-memory config` | Without flags: prints global + current-project settings, then offers interactive global editing. Any flag runs non-interactively. Global: `--vault-path`, `--auto-add`, `--inject-rules`, `--auto-import skip\|link\|import_organize\|import`, `--max-backups N`. Project (cwd or `--scope <path>`): `--code-index-mode off\|manual\|watch`, `--code-languages auto\|<comma-list>`, `--include <globs>`, `--exclude <globs>`. |
+| `rms-memory config` | Without flags: prints global + current-project settings, then offers interactive global editing. Any flag runs non-interactively. Global: `--vault-path`, `--auto-add`, `--inject-rules`, `--auto-import skip\|link\|import_organize\|import`, `--max-backups N`. Project (cwd or `--scope <path>`): `--code-index-mode off\|manual\|watch`, `--code-languages auto\|<comma-list>`, `--include <globs>`, `--exclude <globs>`, `--cross-project-vault true\|false`. |
 | `rms-memory reindex [--vault\|--code\|--all]` | Refreshes Markdown memory (default), derived semantic code memory, or both. |
 | `rms-memory sync` | Incremental LanceDB delete-then-insert sync (also runs automatically during `serve`). |
 | `rms-memory gc` | Prunes orphaned LanceDB indices belonging to deleted vaults. |
@@ -248,13 +264,13 @@ Tool descriptions are written to be **action-oriented**, so agents use the vault
 <tr><th>Tool</th><th>Purpose</th><th>Input</th></tr>
 <tr>
 <td><code>rms-memory_rms_search</code></td>
-<td>Searches Markdown memory by default. Set <code>corpus</code> to <code>code</code> or <code>all</code>; <code>all</code> uses Reciprocal Rank Fusion. Returns an inject/abstain decision envelope (<code>decision</code>, <code>reason</code>, <code>injected_ids</code>, optional <code>retrieval_mode</code>). Agents are instructed to call this <em>first</em>.</td>
-<td><code>{ query, project?, corpus: vault|code|all, limit, include_content, min_confidence, max_chars?, min_score? }</code></td>
+<td>Searches Markdown memory by default. Set <code>corpus</code> to <code>code</code> or <code>all</code>; <code>all</code> uses Reciprocal Rank Fusion. Pass <code>projects: [key, …]</code> for read-only cross-project federation (mutually exclusive with <code>project</code>); vault/all with <code>len&gt;1</code> requires <code>cross_project_vault=true</code> on every listed key (hard fail — no silent degrade). Returns an inject/abstain decision envelope (<code>decision</code>, <code>reason</code>, <code>injected_ids</code>, optional <code>retrieval_mode</code>). Agents are instructed to call this <em>first</em>.</td>
+<td><code>{ query, project?, projects?, corpus: vault|code|all, limit, include_content, min_confidence, max_chars?, min_score? }</code></td>
 </tr>
 <tr>
 <td><code>rms-memory_rms_code_search</code></td>
-<td>Convenience endpoint for the derived semantic code index. Results include file, symbol, kind, line range, and segment index.</td>
-<td><code>{ query, project?, limit, include_content }</code></td>
+<td>Convenience endpoint for the derived semantic code index. Results include file, symbol, kind, line range, and segment index. Same optional <code>projects: […]</code> federation as <code>rms_search</code> (code-only; does not change the active bind).</td>
+<td><code>{ query, project?, projects?, limit, include_content }</code></td>
 </tr>
 <tr>
 <td><code>rms-memory_rms_read</code></td>
@@ -303,6 +319,12 @@ project key and accepts only a dedicated child of the configured master vault;
 the repository source path is explicitly excluded from deletion.
 
 ## 🏗 Architecture Highlights
+
+<details>
+<summary><b>Cargo workspace (v1.0.9)</b></summary>
+
+Implementation lives in path-only crates under `crates/` (`rms-memory-core`, `rms-memory-index`, `rms-memory-vault`; `rms-memory-cli` reserved). The published product remains the root umbrella `rms-memory-mcp` (binary + MCP server + tools + rules injector), which re-exports every former `rms_memory_mcp::<module>` path so the companion GUI keeps stable imports. Heavy deps (`lancedb`, `ort`, `fastembed`, tree-sitter) concentrate in `rms-memory-index`. Details: [docs/crate-split.md](./docs/crate-split.md).
+</details>
 
 <details>
 <summary><b>Unified Configuration & Knowledge Isolation</b></summary>

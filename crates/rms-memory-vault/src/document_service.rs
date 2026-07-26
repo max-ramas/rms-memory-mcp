@@ -44,7 +44,7 @@ pub struct DocumentRead {
     pub content: String,
     /// BLAKE3 of the content that will be replaced; pass it back when saving.
     pub etag: String,
-    pub metadata: Option<crate::document::Frontmatter>,
+    pub metadata: Option<rms_memory_core::document::Frontmatter>,
     pub linked_target: Option<String>,
     pub modified_at: Option<String>,
 }
@@ -104,7 +104,7 @@ impl DocumentService {
             .into_iter()
             .filter_entry(|entry| {
                 !is_internal_directory(entry.path())
-                    && !crate::path_policy::is_vault_wiki_path(&self.root, entry.path())
+                    && !rms_memory_core::path_policy::is_vault_wiki_path(&self.root, entry.path())
             })
             .filter_map(std::result::Result::ok)
         {
@@ -115,7 +115,7 @@ impl DocumentService {
             // Extra defence: even if the walker missed it, drop wiki-relative
             // paths before they leave the service.
             let relative = self.relative_string(entry.path())?;
-            if crate::path_policy::is_vault_wiki_relative_path(&relative) {
+            if rms_memory_core::path_policy::is_vault_wiki_relative_path(&relative) {
                 continue;
             }
             let metadata = entry.metadata().ok();
@@ -149,7 +149,7 @@ impl DocumentService {
         let (editable, linked_target) = self.resolve_edit_target(&requested)?;
         let content = fs::read_to_string(&editable)
             .with_context(|| format!("Failed to read {}", editable.display()))?;
-        let metadata = crate::document::Document::parse(&requested)
+        let metadata = rms_memory_core::document::Document::parse(&requested)
             .ok()
             .and_then(|document| document.frontmatter);
         let modified_at = fs::metadata(&editable)
@@ -308,7 +308,7 @@ impl DocumentService {
             if let Some(source) = request.source.as_ref() {
                 metadata_args.insert("source".to_owned(), Value::from(source.clone()));
             }
-            crate::tools::write::inject_audit_metadata(
+            rms_memory_core::audit::inject_audit_metadata(
                 &request.content,
                 &self.caller_id,
                 self.project_key.as_deref(),
@@ -391,8 +391,8 @@ impl DocumentService {
         // Vault-aware link resolution: if the requested document is a link,
         // the returned target is guaranteed to be inside the vault (both by
         // parsing and by canonicalisation-plus-symlink check).
-        let target =
-            crate::link::resolve_link_in_vault(requested, &self.root).with_context(|| {
+        let target = rms_memory_core::link::resolve_link_in_vault(requested, &self.root)
+            .with_context(|| {
                 format!(
                     "Linked document target does not exist or escapes vault for {}",
                     requested.display()
@@ -449,7 +449,7 @@ fn validate_document_path(path: &str) -> Result<()> {
 }
 
 fn reject_wiki(path: &str) -> Result<()> {
-    if crate::path_policy::is_vault_wiki_relative_path(path) {
+    if rms_memory_core::path_policy::is_vault_wiki_relative_path(path) {
         bail!(
             "Path '{path}' is inside the generated Wiki namespace. Canonical memory tools cannot touch Wiki output; use the *_wiki DocumentService methods instead."
         );
@@ -458,7 +458,7 @@ fn reject_wiki(path: &str) -> Result<()> {
 }
 
 fn require_wiki(path: &str) -> Result<()> {
-    if !crate::path_policy::is_vault_wiki_relative_path(path) {
+    if !rms_memory_core::path_policy::is_vault_wiki_relative_path(path) {
         bail!(
             "Path '{path}' is not inside the Wiki namespace. Wiki-safe methods only accept wiki/ paths."
         );
