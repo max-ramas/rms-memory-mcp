@@ -23,9 +23,9 @@ on:
         required: true
         type: string
       publish_crates:
-        description: Publish workspace crates to crates.io after successful build + release upload
+        description: Publish the package to crates.io after successful build + release upload
         required: false
-        default: true
+        default: false
         type: boolean
 
 concurrency:
@@ -349,7 +349,8 @@ jobs:
     name: Publish to crates.io
     needs: [plan, build, release]
     runs-on: [self-hosted, linux, x64]
-    if: github.event_name == 'push' || inputs.publish_crates == true
+    # Tags publish automatically. Manual dispatch must opt in explicitly.
+    if: startsWith(github.ref, 'refs/tags/v') || inputs.publish_crates == true
     environment: crates.io
     permissions:
       contents: read
