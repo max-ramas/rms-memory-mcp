@@ -432,10 +432,10 @@ impl DocumentService {
         if path.starts_with(&self.root) {
             return Ok(());
         }
-        if let Some(code_path) = &self.code_path {
-            if path.starts_with(code_path) {
-                return Ok(());
-            }
+        if let Some(code_path) = &self.code_path
+            && path.starts_with(code_path)
+        {
+            return Ok(());
         }
         bail!("Path escapes project boundary: {}", path.display());
     }
@@ -444,13 +444,13 @@ impl DocumentService {
         if let Ok(relative) = target.strip_prefix(&self.root) {
             return Ok(relative.to_string_lossy().replace('\\', "/"));
         }
-        if let Some(code_path) = &self.code_path {
-            if let Ok(relative) = target.strip_prefix(code_path) {
-                return Ok(format!(
-                    "repo:{}",
-                    relative.to_string_lossy().replace('\\', "/")
-                ));
-            }
+        if let Some(code_path) = &self.code_path
+            && let Ok(relative) = target.strip_prefix(code_path)
+        {
+            return Ok(format!(
+                "repo:{}",
+                relative.to_string_lossy().replace('\\', "/")
+            ));
         }
         Ok(target.to_string_lossy().replace('\\', "/"))
     }
