@@ -7,8 +7,8 @@ All notable changes to this project will be documented in this file.
 Hotfix release: **1.0.9 shipped with broken import link stubs** in the GUI editor (vault `link:` files could not resolve to repository sources). Companion GUI adopts the **same `1.1.0` product version**.
 
 ### Fixed
+- **crates.io publish = umbrella only:** workspace members stay `publish = false`. Publish flattens path crates into a staging tree and uploads **only** `rms-memory-mcp` (no more `rms-memory-{core,index,vault}` on the registry).
 - **Link file resolution (regression from 1.0.9 / `fa17250`):** `resolve_link_in_vault` again follows import stubs to the registered `code_path` (e.g. `guides/README.md` → repo `README.md`, `rules/*.md` → `.cursorrules`). Targets must canonicalize inside the vault **or** the project code path; symlink escapes outside both roots remain blocked. `DocumentService`, MCP read/write tools, and the indexer pass `code_path`.
-- **crates.io publish restored:** workspace members `rms-memory-{core,index,vault}` are publishable; tag push auto-runs `scripts/publish-workspace-crates.sh` (dependency order) after release assets upload. Removed the erroneous `Refuse path-only workspace publish` guardrail.
 - **CI `cargo-deny` install:** self-hosted runner skips reinstall when `cargo-deny` is already on PATH (fixes `binary already exists` failure).
 
 ### Changed

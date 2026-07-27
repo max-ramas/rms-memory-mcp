@@ -41,9 +41,9 @@ notify = "8.2.0"
 pathdiff = "0.2.3"
 pulldown-cmark = "0.13.4"
 regex = "1.12.4"
-rms-memory-core = { version = "=1.1.0", path = "crates/rms-memory-core" }
-rms-memory-index = { version = "=1.1.0", path = "crates/rms-memory-index" }
-rms-memory-vault = { version = "=1.1.0", path = "crates/rms-memory-vault" }
+rms-memory-core = { path = "crates/rms-memory-core" }
+rms-memory-index = { path = "crates/rms-memory-index" }
+rms-memory-vault = { path = "crates/rms-memory-vault" }
 serde = { version = "1.0.228", features = ["derive"] }
 serde_json = "1.0.150"
 serde_yaml = "0.9.34"

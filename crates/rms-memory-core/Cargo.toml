@@ -5,6 +5,7 @@ edition = "2024"
 description = "Core documents, configuration, and workspace discovery for RMS Memory."
 license = "MIT"
 repository = "https://github.com/max-ramas/rms-memory-mcp"
+publish = false
 
 [dependencies]
 anyhow = "1.0.103"
