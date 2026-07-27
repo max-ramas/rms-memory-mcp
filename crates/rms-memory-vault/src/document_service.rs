@@ -89,9 +89,8 @@ impl DocumentService {
         if !root.is_dir() {
             bail!("Vault root is not a directory: {}", root.display());
         }
-        let code_path = code_path.map(|path| {
-            fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf())
-        });
+        let code_path =
+            code_path.map(|path| fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf()));
         Ok(Self {
             root,
             code_path,
