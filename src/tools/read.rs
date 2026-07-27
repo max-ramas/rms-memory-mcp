@@ -24,9 +24,11 @@ pub async fn execute(
     // If this document is a link, fetch the linked content — but only when the
     // resolved target stays inside the vault. Escapes fall through to reading
     // the link file itself instead of leaking data from outside the vault.
-    if let Some(linked_content) =
-        crate::link::get_linked_content_in_vault(&file_path, workspace_root)
-    {
+    if let Some(linked_content) = crate::link::get_linked_content_in_vault(
+        &file_path,
+        workspace_root,
+        ctx.code_path.as_deref(),
+    ) {
         Ok(super::response::json_text_response(&linked_content))
     } else {
         let store = ctx

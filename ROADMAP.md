@@ -2,7 +2,7 @@
 
 This document outlines the strategic direction and upcoming milestones for RMS Memory.
 
-**Current (2026-07-26):** MCP **`1.0.9`** · companion GUI **`1.0.9`** (unified numbering).
+**Current (2026-07-27):** MCP **`1.1.0`** · companion GUI **`1.1.0`** (unified numbering).
 
 ## v1.0 — Foundation & Open Source ✅ (Released)
 
@@ -136,6 +136,14 @@ This document outlines the strategic direction and upcoming milestones for RMS M
 - [x] Installers request the published `rms_memory_mcp_<target>.*` assets (were 404 on `rms-memory-<target>.*`).
 - [x] Release packaging clears the persistent target's `debian`/`generate-rpm` dirs, so stale `.deb`/`.rpm` cannot be uploaded again.
 - [x] Manual `workflow_dispatch` checks out the requested tag and validates `Cargo.toml` version before building (MCP and GUI).
+
+## v1.1.0 — Link stubs + crates.io hotfix (2026-07-27)
+
+**Why 1.1.0:** 1.0.9 shipped with import link stubs broken in the GUI (`link:` could not resolve to `code_path`).
+
+- [x] Restore link resolution to registered `code_path` (security: no escape outside vault+repo).
+- [x] Restore automatic crates.io publish on tag push (workspace members in dependency order).
+- [x] Unified product version **1.1.0** with companion GUI.
 
 ## v1.0.9 — Federated search + concurrent binds (2026-07-26)
 

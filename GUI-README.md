@@ -1,6 +1,6 @@
 # RMS Memory GUI
 
-**Current release:** GUI `1.0.9` (2026-07-26) with MCP `1.0.9` (unified numbering).
+**Current release:** GUI `1.1.0` (2026-07-27) with MCP `1.1.0` (unified numbering).
 
 RMS Memory GUI is the optional commercial desktop application for
 [RMS Memory MCP](https://github.com/max-ramas/rms-memory-mcp). It is a Tauri

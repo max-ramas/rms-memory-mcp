@@ -1,6 +1,6 @@
 # RMS Memory MCP Server — Walkthrough
 
-Updated: 2026-07-26 · MCP `1.0.9` / GUI `1.0.9`
+Updated: 2026-07-27 · MCP `1.1.0` / GUI `1.1.0`
 
 RMS Memory is a specialized Model Context Protocol (MCP) server that acts as localized persistent memory for LLM agents. It keeps human-authored knowledge in centralized Markdown Vaults and can optionally maintain a separate derived semantic index for source code, solving context fragmentation across multiple IDEs (Cursor, Zed, VS Code, Claude Code, Codex).
 

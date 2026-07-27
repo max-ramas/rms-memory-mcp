@@ -2,7 +2,7 @@
 
 # 🧠 RMS Memory MCP
 
-**Version:** `1.0.9` (2026-07-26) · companion GUI `1.0.9` (unified numbering)
+**Version:** `1.1.0` (2026-07-27) · companion GUI `1.1.0` (unified numbering)
 
 **Persistent, local-first memory for your AI coding agents.**
 
