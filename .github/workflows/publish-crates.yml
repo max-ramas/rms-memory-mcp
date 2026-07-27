@@ -39,7 +39,7 @@ jobs:
           test -n "$EXPECTED_VERSION"
           test "$package_version" = "$EXPECTED_VERSION"
 
-      - name: Publish workspace crates
+      - name: Publish package
         env:
           CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
         run: bash scripts/publish-workspace-crates.sh
