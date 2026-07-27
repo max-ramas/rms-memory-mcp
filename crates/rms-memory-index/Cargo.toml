@@ -2,7 +2,9 @@
 name = "rms-memory-index"
 version = "1.0.9"
 edition = "2024"
-publish = false
+description = "Storage, indexing, retrieval, and graphs for RMS Memory."
+license = "MIT"
+repository = "https://github.com/max-ramas/rms-memory-mcp"
 
 [dependencies]
 anyhow = "1.0.103"
@@ -19,7 +21,7 @@ ort = { version = "2.0.0-rc.12", default-features = false, features = ["download
 pathdiff = "0.2.3"
 pulldown-cmark = "0.13.4"
 regex = "1.12.4"
-rms-memory-core = { path = "../rms-memory-core" }
+rms-memory-core = { version = "=1.0.9", path = "../rms-memory-core" }
 serde = { version = "1.0.228", features = ["derive"] }
 serde_json = "1.0.150"
 serde_yaml = "0.9.34"
