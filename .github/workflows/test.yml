@@ -12,6 +12,12 @@ on:
 
 env:
   CARGO_TERM_COLOR: always
+  # Self-hosted runner OOMs when several Lance/ORT debug test binaries link at
+  # once (`ld terminated with signal 9`). Serialize cargo work and keep
+  # line-tables debuginfo so lib tests still get useful backtraces.
+  CARGO_BUILD_JOBS: "1"
+  CARGO_PROFILE_DEV_DEBUG: "line-tables-only"
+  CARGO_PROFILE_TEST_DEBUG: "line-tables-only"
 
 # Finishing a warm build beats canceling mid-Lance and paying for a cold rebuild.
 concurrency:
@@ -68,7 +74,16 @@ jobs:
       run: cargo clippy --workspace --all-targets -- -D warnings
 
     - name: Run Tests
-      run: cargo test --workspace --verbose
+      # Link one package at a time. `cargo test --workspace` still schedules
+      # multiple rustc link jobs for heavy crates and can OOM despite JOBS=1
+      # when the graph fans out across package boundaries.
+      run: |
+        set -euo pipefail
+        for pkg in rms-memory-core rms-memory-index rms-memory-vault rms-memory-mcp; do
+          echo "::group::cargo test -p ${pkg} --lib"
+          cargo test -p "$pkg" --lib --verbose
+          echo "::endgroup::"
+        done
 
     - name: Record grammar dependency graph
       run: cargo tree -i tree-sitter
