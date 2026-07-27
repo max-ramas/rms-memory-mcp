@@ -99,7 +99,12 @@ jobs:
       uses: dtolnay/rust-toolchain@stable
 
     - name: Install cargo-deny
-      run: cargo install cargo-deny --locked || cargo install cargo-deny
+      run: |
+        if command -v cargo-deny >/dev/null 2>&1; then
+          cargo-deny --version
+        else
+          cargo install cargo-deny --locked
+        fi
 
     - name: cargo-deny (advisories, bans, sources)
       # Fails on RUSTSEC vulnerabilities and yanked crates. Licenses are not
