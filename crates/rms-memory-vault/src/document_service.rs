@@ -24,6 +24,7 @@ use std::path::{Component, Path, PathBuf};
 #[derive(Debug, Clone)]
 pub struct DocumentService {
     root: PathBuf,
+    code_path: Option<PathBuf>,
     caller_id: String,
     project_key: Option<String>,
     max_backups: usize,
@@ -81,14 +82,19 @@ impl DocumentService {
         caller_id: impl Into<String>,
         project_key: Option<String>,
         max_backups: usize,
+        code_path: Option<impl AsRef<Path>>,
     ) -> Result<Self> {
         let root = fs::canonicalize(root.as_ref())
             .with_context(|| format!("Vault root does not exist: {}", root.as_ref().display()))?;
         if !root.is_dir() {
             bail!("Vault root is not a directory: {}", root.display());
         }
+        let code_path = code_path.map(|path| {
+            fs::canonicalize(path.as_ref()).unwrap_or_else(|_| path.as_ref().to_path_buf())
+        });
         Ok(Self {
             root,
+            code_path,
             caller_id: caller_id.into(),
             project_key,
             max_backups,
@@ -388,32 +394,65 @@ impl DocumentService {
     }
 
     fn resolve_edit_target(&self, requested: &Path) -> Result<(PathBuf, Option<String>)> {
-        // Vault-aware link resolution: if the requested document is a link,
-        // the returned target is guaranteed to be inside the vault (both by
-        // parsing and by canonicalisation-plus-symlink check).
-        let target = rms_memory_core::link::resolve_link_in_vault(requested, &self.root)
-            .with_context(|| {
-                format!(
-                    "Linked document target does not exist or escapes vault for {}",
-                    requested.display()
-                )
-            })?;
-        // `resolve_link_in_vault` returns a canonicalised path when it followed
-        // a link, or the original path (which is already canonical because the
-        // caller went through `resolve_existing`) when there was no link.
-        self.ensure_inside_root(&target)?;
-        if !target.is_file() || !is_markdown(&target) {
+        // Link stubs may redirect to another vault document or to a file in the
+        // registered code path (import "Link Only" flow).
+        let target = rms_memory_core::link::resolve_link_in_vault(
+            requested,
+            &self.root,
+            self.code_path.as_deref(),
+        )
+        .with_context(|| {
+            format!(
+                "Linked document target does not exist or escapes project boundary for {}",
+                requested.display()
+            )
+        })?;
+        self.ensure_inside_project(&target)?;
+        if !target.is_file() {
+            bail!(
+                "Linked target does not exist or is not a file: {}",
+                target.display()
+            );
+        }
+        if target.starts_with(&self.root) && !is_markdown(&target) {
             bail!(
                 "Linked target is not a vault Markdown document: {}",
                 target.display()
             );
         }
         let linked_target = if target != requested {
-            Some(self.relative_string(&target)?)
+            Some(self.linked_target_string(&target)?)
         } else {
             None
         };
         Ok((target, linked_target))
+    }
+
+    fn ensure_inside_project(&self, path: &Path) -> Result<()> {
+        if path.starts_with(&self.root) {
+            return Ok(());
+        }
+        if let Some(code_path) = &self.code_path {
+            if path.starts_with(code_path) {
+                return Ok(());
+            }
+        }
+        bail!("Path escapes project boundary: {}", path.display());
+    }
+
+    fn linked_target_string(&self, target: &Path) -> Result<String> {
+        if let Ok(relative) = target.strip_prefix(&self.root) {
+            return Ok(relative.to_string_lossy().replace('\\', "/"));
+        }
+        if let Some(code_path) = &self.code_path {
+            if let Ok(relative) = target.strip_prefix(code_path) {
+                return Ok(format!(
+                    "repo:{}",
+                    relative.to_string_lossy().replace('\\', "/")
+                ));
+            }
+        }
+        Ok(target.to_string_lossy().replace('\\', "/"))
     }
 
     fn ensure_inside_root(&self, path: &Path) -> Result<()> {
@@ -508,7 +547,14 @@ mod tests {
     use tempfile::tempdir;
 
     fn service(root: &Path) -> DocumentService {
-        DocumentService::new(root, "gui", Some("project-a".to_string()), 2).unwrap()
+        DocumentService::new(
+            root,
+            "gui",
+            Some("project-a".to_string()),
+            2,
+            Option::<&Path>::None,
+        )
+        .unwrap()
     }
 
     #[test]
@@ -614,7 +660,32 @@ mod tests {
             })
             .unwrap_err()
             .to_string();
-        assert!(error.contains("escapes vault"), "got: {error}");
+        assert!(
+            error.contains("escapes vault") || error.contains("escapes project"),
+            "got: {error}"
+        );
+    }
+
+    #[test]
+    fn read_follows_link_into_registered_code_path() {
+        let layout = tempdir().unwrap();
+        let code = layout.path().join("repo");
+        let vault = layout.path().join("vault");
+        fs::create_dir_all(&code).unwrap();
+        fs::create_dir_all(vault.join("guides")).unwrap();
+        fs::write(code.join("README.md"), "# Repo README").unwrap();
+        fs::write(
+            vault.join("guides/README.md"),
+            "---\nlink: ../../repo/README.md\n---\n",
+        )
+        .unwrap();
+
+        let service =
+            DocumentService::new(&vault, "gui", Some("project-a".to_string()), 2, Some(&code))
+                .unwrap();
+        let opened = service.read("guides/README.md").unwrap();
+        assert!(opened.content.contains("# Repo README"));
+        assert_eq!(opened.linked_target.as_deref(), Some("repo:README.md"));
     }
 
     #[cfg(unix)]
@@ -637,7 +708,9 @@ mod tests {
         let service = service(vault.path());
         let error = service.read("doc.md").unwrap_err().to_string();
         assert!(
-            error.contains("escapes vault") || error.contains("does not exist"),
+            error.contains("escapes project")
+                || error.contains("escapes allowed")
+                || error.contains("does not exist"),
             "got: {error}"
         );
 
@@ -653,7 +726,9 @@ mod tests {
             .unwrap_err()
             .to_string();
         assert!(
-            error.contains("escapes vault") || error.contains("does not exist"),
+            error.contains("escapes project")
+                || error.contains("escapes allowed")
+                || error.contains("does not exist"),
             "got: {error}"
         );
 

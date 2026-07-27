@@ -1,6 +1,6 @@
 [package]
 name = "rms-memory-core"
-version = "1.0.9"
+version = "1.1.0"
 edition = "2024"
 description = "Core documents, configuration, and workspace discovery for RMS Memory."
 license = "MIT"

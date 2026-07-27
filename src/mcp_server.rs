@@ -514,6 +514,7 @@ impl McpServer {
                 store,
                 indexer: Some(shared_indexer.clone()),
                 workspace_root,
+                code_path: None,
                 max_backups,
                 scope,
                 caller_id: "unknown".to_string(),
@@ -631,6 +632,7 @@ impl McpServer {
             entry.last_used = std::time::Instant::now();
             self.ctx.workspace_root = Some(entry.root.clone());
             self.ctx.project_key = Some(project_key.clone());
+            self.ctx.code_path = Some(workspace.code_path.clone());
             self.ctx.store = Some(entry.store.clone());
             tracing::debug!(
                 "MCP workspace cache hit: client={} project_key={}",
@@ -702,6 +704,7 @@ impl McpServer {
         );
         self.ctx.workspace_root = Some(workspace.root.clone());
         self.ctx.project_key = Some(project_key.clone());
+        self.ctx.code_path = Some(workspace.code_path.clone());
         self.ctx.store = Some(store);
         tracing::info!(
             "MCP workspace bound: client={} project_key={} vault_root={} cached={}",
