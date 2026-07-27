@@ -23,9 +23,9 @@ on:
         required: true
         type: string
       publish_crates:
-        description: Publish the package to crates.io after successful build + release upload
+        description: Publish workspace crates to crates.io after successful build + release upload
         required: false
-        default: false
+        default: true
         type: boolean
 
 concurrency:
@@ -349,11 +349,7 @@ jobs:
     name: Publish to crates.io
     needs: [plan, build, release]
     runs-on: [self-hosted, linux, x64]
-    # 1.0.9+ workspace members are path-only (`publish = false`). `cargo publish`
-    # of the umbrella therefore fails until internals are published or vendored.
-    # Do NOT auto-publish on tag push — require an explicit workflow_dispatch
-    # opt-in after the packaging strategy in docs/crate-split.md is resolved.
-    if: github.event_name == 'workflow_dispatch' && inputs.publish_crates == true
+    if: github.event_name == 'push' || inputs.publish_crates == true
     environment: crates.io
     permissions:
       contents: read
@@ -379,17 +375,7 @@ jobs:
           test -n "$VERSION"
           test "$package_version" = "$VERSION"
 
-      - name: Refuse path-only workspace publish
-        run: |
-          set -euo pipefail
-          # Guardrail: even with opt-in, refuse until members are crates.io-ready.
-          if grep -R --include='Cargo.toml' -n 'publish = false' crates >/dev/null 2>&1; then
-            echo "Workspace members under crates/ still have publish = false (path-only)." >&2
-            echo "See docs/crate-split.md. Unset publish_crates or finish the publish strategy first." >&2
-            exit 1
-          fi
-
-      - name: Publish package
+      - name: Publish workspace crates
         env:
           CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
-        run: cargo publish --locked
+        run: bash scripts/publish-workspace-crates.sh
