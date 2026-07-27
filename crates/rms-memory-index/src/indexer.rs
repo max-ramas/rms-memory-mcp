@@ -379,13 +379,11 @@ async fn sync_vault_inner(
 
         // If it's a linked document, swap the content with the source file content.
         // Escaping links are ignored so indexed content stays inside the vault.
-        if let Some(linked_content) =
-            rms_memory_core::link::get_linked_content_in_vault(
-                &file_path,
-                &workspace.root,
-                Some(&workspace.code_path),
-            )
-        {
+        if let Some(linked_content) = rms_memory_core::link::get_linked_content_in_vault(
+            &file_path,
+            &workspace.root,
+            Some(&workspace.code_path),
+        ) {
             doc.content = linked_content;
         }
 
@@ -591,13 +589,11 @@ async fn index_vault_full_inner(
 
         // If it's a linked document, swap the content with the source file content.
         // Escaping links are ignored so indexed content stays inside the vault.
-        if let Some(linked_content) =
-            rms_memory_core::link::get_linked_content_in_vault(
-                &file_path,
-                &workspace.root,
-                Some(&workspace.code_path),
-            )
-        {
+        if let Some(linked_content) = rms_memory_core::link::get_linked_content_in_vault(
+            &file_path,
+            &workspace.root,
+            Some(&workspace.code_path),
+        ) {
             doc.content = linked_content;
         }
 

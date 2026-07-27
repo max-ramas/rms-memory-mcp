@@ -15,10 +15,7 @@ fn canonical_root(path: &Path) -> PathBuf {
 fn canonicalize_inside_allowed(path: &Path, allowed_roots: &[PathBuf]) -> Result<PathBuf> {
     let canonical = std::fs::canonicalize(path)
         .map_err(|error| anyhow::anyhow!("Failed to canonicalize link target: {error}"))?;
-    if allowed_roots
-        .iter()
-        .any(|root| canonical.starts_with(root))
-    {
+    if allowed_roots.iter().any(|root| canonical.starts_with(root)) {
         return Ok(canonical);
     }
     bail!(
@@ -133,11 +130,7 @@ mod tests {
         fs::create_dir_all(vault.join("guides")).unwrap();
         fs::write(code.join("README.md"), "# Project README").unwrap();
         let stub = vault.join("guides/README.md");
-        fs::write(
-            &stub,
-            "---\nlink: ../../repo/README.md\n---\n",
-        )
-        .unwrap();
+        fs::write(&stub, "---\nlink: ../../repo/README.md\n---\n").unwrap();
 
         let resolved =
             resolve_link_in_vault(&stub, &vault, Some(&code)).expect("repo link should resolve");
