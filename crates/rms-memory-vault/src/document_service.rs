@@ -82,7 +82,7 @@ impl DocumentService {
         caller_id: impl Into<String>,
         project_key: Option<String>,
         max_backups: usize,
-        code_path: Option<impl AsRef<Path>>,
+        code_path: Option<&Path>,
     ) -> Result<Self> {
         let root = fs::canonicalize(root.as_ref())
             .with_context(|| format!("Vault root does not exist: {}", root.as_ref().display()))?;
@@ -90,7 +90,7 @@ impl DocumentService {
             bail!("Vault root is not a directory: {}", root.display());
         }
         let code_path = code_path.map(|path| {
-            fs::canonicalize(path.as_ref()).unwrap_or_else(|_| path.as_ref().to_path_buf())
+            fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf())
         });
         Ok(Self {
             root,
@@ -547,14 +547,7 @@ mod tests {
     use tempfile::tempdir;
 
     fn service(root: &Path) -> DocumentService {
-        DocumentService::new(
-            root,
-            "gui",
-            Some("project-a".to_string()),
-            2,
-            Option::<&Path>::None,
-        )
-        .unwrap()
+        DocumentService::new(root, "gui", Some("project-a".to_string()), 2, None).unwrap()
     }
 
     #[test]
