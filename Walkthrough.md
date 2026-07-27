@@ -249,6 +249,12 @@ Mind-inspired checkpoints/orientation, corrected for the vault-first stack: no S
 - **`inject-rules` refuses to invent keys:** injected rules carry a mandatory `project: "<key>"`, so writing a basename that `rms_projects` cannot resolve is worse than failing. Standalone single-path injection is fail-closed; `--all` walks the registry, and `init` keeps its basename fallback for the pre-registration moment.
 - **Release pipeline:** installers now request the `rms_memory_mcp_*` names that are actually published; packaging wipes the persistent target's `debian`/`generate-rpm` dirs (a `1.0.6` RPM had shipped inside the `1.0.7` release); manual dispatch checks out the requested tag and validates the Cargo version before building anything.
 
+### 25. Link file hotfix (v1.1.0)
+
+**1.0.9 regression:** vault-aware link resolution (`fa17250`) required targets inside the vault and rejected `..`, breaking import **Link Only** stubs (`guides/README.md` → repo `README.md`, rule files → `.cursorrules`, etc.). The GUI Editor showed *Linked document target does not exist or escapes vault*.
+
+**1.1.0 fix:** `resolve_link_in_vault(..., code_path)` allows canonical targets inside the registered **code path** as well as the vault; symlink escapes outside both roots remain blocked. `DocumentService` and MCP tools pass `code_path`.
+
 ### 24. Federated search + concurrent binds (v1.0.9)
 
 - **Cross-project federated search:** pass `projects: ["rms-license","rms-memory-mcp","rms-memory-gui"]` to `rms_search` / `rms_code_search`. Read-only — does not rebind. Hits are tagged `project: <key>` and merged with the same RRF used for `corpus=all`.
