@@ -1,5 +1,6 @@
 {
   "$schema": "https://glama.ai/mcp/config.schema.json",
+  "maintainers": ["max-ramas"],
   "name": "rms-memory-mcp",
   "description": "Persistent, local-first memory for AI coding agents with LanceDB RAG and multi-language code graph.",
   "version": "1.1.0",
