@@ -1,0 +1,24 @@
+{
+  "$schema": "https://glama.ai/mcp/config.schema.json",
+  "name": "rms-memory-mcp",
+  "description": "Persistent, local-first memory for AI coding agents with LanceDB RAG and multi-language code graph.",
+  "version": "1.1.0",
+  "homepage": "https://github.com/max-ramas/rms-memory-mcp",
+  "build": {
+    "dockerfile": "Dockerfile"
+  },
+  "entrypoint": ["rms-memory", "serve"],
+  "environment": {
+    "RMS_MEMORY_HOME": "/root/.rms-memory"
+  },
+  "volumes": [
+    {
+      "containerPath": "/root/.rms-memory",
+      "description": "Persistent storage for LanceDB databases and project configuration"
+    },
+    {
+      "containerPath": "/workspace",
+      "description": "Source code directory to index"
+    }
+  ]
+}
