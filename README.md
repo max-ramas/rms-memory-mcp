@@ -2,6 +2,8 @@
 
 # 🧠 RMS Memory MCP
 
+[![MCP Toplist](https://mcptoplist.com/badge/glama%2Fmax-ramas%2Frms-memory-mcp.svg)](https://mcptoplist.com/server/glama%2Fmax-ramas%2Frms-memory-mcp)
+
 **Version:** `1.1.0` (2026-07-27) · companion GUI `1.1.0` (unified numbering)
 
 **Persistent, local-first memory for your AI coding agents.**
