@@ -306,7 +306,9 @@ jobs:
     name: GitHub Release + Homebrew
     # Uploads built assets onto the release tag (tag push or manual release_tag).
     needs: [plan, build]
-    runs-on: [self-hosted, linux, x64]
+    # GitHub-hosted: self-hosted download-artifact against large multi-arch zips
+    # has flaked with "Artifact download failed after 5 retries".
+    runs-on: ubuntu-latest
     permissions:
       contents: write
     steps:
