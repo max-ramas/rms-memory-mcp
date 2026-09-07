@@ -4,7 +4,7 @@
 Local development keeps the workspace (publish = false members). crates.io
 only receives the public umbrella `rms-memory-mcp`; Cargo cannot publish path
 deps that are not on the registry, so this script builds a staging tree where
-core/index/vault sources are modules inside the umbrella package.
+core/index/vault/cli sources are modules inside the umbrella package.
 """
 
 from __future__ import annotations
@@ -18,6 +18,7 @@ INTERNAL = [
     ("rms-memory-core", "rms_memory_core"),
     ("rms-memory-index", "rms_memory_index"),
     ("rms-memory-vault", "rms_memory_vault"),
+    ("rms-memory-cli", "rms_memory_cli"),
 ]
 
 SKIP_DEP_NAMES = {name for name, _ in INTERNAL}
@@ -126,7 +127,7 @@ pub use rms_memory_index::{
     code_indexer, code_parser, graph, graph_store, index_lock, indexer, jobs, retrieval,
     semantic_graph, store, vault_graph, wiki,
 };
-pub use rms_memory_vault::{document_service, import, project_migrate, project_service};
+pub use rms_memory_vault::{document_service, import, project_migrate, project_service, prune};
 """
     # Keep everything after the original pub use block.
     rest_match = re.search(

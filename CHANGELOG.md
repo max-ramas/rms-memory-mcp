@@ -13,6 +13,7 @@ Pre-release hardening after **1.1.0**: safe vault prune (CLI + MCP), CLI crate e
 
 ### Changed
 - **CLI crate extraction (first slice):** cycle-free `gc` and `prune` live in `rms-memory-cli`; umbrella keeps thin re-exports; `serve` stays local (no cycle through `mcp_server`).
+- **crates.io flatten:** staging tree also inlines `rms-memory-cli` (fixes publish after the CLI slice).
 - **Toolchain:** `rust-toolchain.toml` + Dockerfile pin **Rust 1.96.1**.
 - Docs / ROADMAP / Walkthrough / README MCP tools / `docs/crate-split.md` / GUI-README aligned to prune + cli slice + **1.1.1**.
 

@@ -20,9 +20,9 @@ All members have `publish = false`. They are **never** uploaded to crates.io.
 
 ## crates.io publish
 
-`scripts/publish-workspace-crates.sh` flattens core/index/vault into a temporary
+`scripts/publish-workspace-crates.sh` flattens core/index/vault/cli into a temporary
 single-package tree (`scripts/flatten-for-crates-io.py`) and runs
 `cargo publish` for **`rms-memory-mcp` only**. Tag push and the manual
 `Publish crates.io` workflow both use that script.
 
-Do not reintroduce publishing of `rms-memory-{core,index,vault}`.
+Do not reintroduce publishing of `rms-memory-{core,index,vault,cli}`.
