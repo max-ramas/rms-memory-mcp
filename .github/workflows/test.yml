@@ -27,18 +27,10 @@ concurrency:
 jobs:
   test:
     name: Test Suite
-    runs-on: [self-hosted, linux, x64]
-    timeout-minutes: 60
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
     steps:
     - uses: actions/checkout@v4
-
-    - name: Persistent cargo target (self-hosted)
-      run: |
-        set -euo pipefail
-        dir="${HOME}/.cache/rms-ci/rms-memory-mcp/target"
-        mkdir -p "$dir"
-        echo "CARGO_TARGET_DIR=$dir" >> "$GITHUB_ENV"
-        echo "Using CARGO_TARGET_DIR=$dir"
 
     - name: Cache cargo registry
       uses: actions/cache@v4
@@ -61,6 +53,9 @@ jobs:
       uses: arduino/setup-protoc@v3
       with:
         repo-token: ${{ secrets.GITHUB_TOKEN }}
+
+    - name: Install System Dependencies
+      run: sudo apt-get update && sudo apt-get install -y pkg-config libssl-dev
 
     - name: Check Formatting
       run: cargo fmt --all -- --check
@@ -93,7 +88,7 @@ jobs:
 
   supply-chain:
     name: Supply-chain audit (cargo-deny)
-    runs-on: [self-hosted, linux, x64]
+    runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
     - uses: actions/checkout@v4
@@ -102,12 +97,7 @@ jobs:
       uses: dtolnay/rust-toolchain@stable
 
     - name: Install cargo-deny
-      run: |
-        if command -v cargo-deny >/dev/null 2>&1; then
-          cargo-deny --version
-        else
-          cargo install cargo-deny --locked
-        fi
+      run: cargo install cargo-deny --locked
 
     - name: cargo-deny (advisories, bans, sources)
       # Fails on RUSTSEC vulnerabilities and yanked crates. Licenses are not
