@@ -11,8 +11,10 @@ Local development uses path-only workspace members under `crates/`:
   links, and audit metadata.
 - `rms-memory-index`: storage, indexing, retrieval, graphs, jobs, and Wiki.
 - `rms-memory-vault`: document and project services, migration, and import.
-- `rms-memory-cli`: reserved boundary (`publish = false`); CLI stays in the
-  umbrella because `serve` calls the local MCP server.
+- `rms-memory-cli`: cycle-free command implementations (`gc` and `prune`).
+  The clap command tree, binary, and `serve` remain in the umbrella because
+  `serve` calls the local MCP server. The crate must not grow a second
+  `rms-memory` binary.
 
 All members have `publish = false`. They are **never** uploaded to crates.io.
 

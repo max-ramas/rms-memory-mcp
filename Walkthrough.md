@@ -1,6 +1,6 @@
 # RMS Memory MCP Server — Walkthrough
 
-Updated: 2026-07-27 · MCP `1.1.0` / GUI `1.1.0`
+Updated: 2026-09-08 · MCP `1.1.1` / GUI `1.1.1`
 
 RMS Memory is a specialized Model Context Protocol (MCP) server that acts as localized persistent memory for LLM agents. It keeps human-authored knowledge in centralized Markdown Vaults and can optionally maintain a separate derived semantic index for source code, solving context fragmentation across multiple IDEs (Cursor, Zed, VS Code, Claude Code, Codex).
 
@@ -217,7 +217,7 @@ Maps second-brain recall discipline onto the existing Markdown vault + LanceDB s
 - **Supersession:** frontmatter `status` / `supersedes` / `superseded_by`; Lance recall excludes superseded; `rms_write(supersedes=<path>)` soft-replaces a prior note.
 - **Temporal:** `valid_from` / `valid_until` / `learned_at` gate recall; Doctor check 7/7 lints freshness and broken supersession links.
 - **FTS prefer:** short keyword/path queries try Lance FTS-only before hybrid (`retrieval_mode` in the envelope).
-- **Pruning ≠ supersession:** deleting/archiving cold notes remains a future agentic step; supersession is vault-native lifecycle.
+- **Pruning ≠ supersession:** supersession is vault-native lifecycle; `rms-memory prune` is the first non-agentic archive step for aged superseded notes. Autonomous consolidation of active cold notes remains future work.
 - **GUI Search:** companion app Search tab surfaces inject/abstain + reason + mode for the same envelope.
 
 ### 22. Session Continuity (v1.0.7)
@@ -263,3 +263,12 @@ Mind-inspired checkpoints/orientation, corrected for the vault-first stack: no S
 - **Versioned assets only:** portable MCP archives are `rms_memory_mcp_<version>_<target>.*`; GUI installers must match `rms_memory_gui_<version>_*` or the publish job fails. No unversioned fallback. CI contract: `scripts/check-release-asset-names.sh` (wired in `test.yml`).
 - **Cargo workspace crate-split:** path-only members `crates/rms-memory-{core,index,vault}` (+ reserved `rms-memory-cli`). Root `rms-memory-mcp` stays the umbrella binary/MCP/tools/rules_injector and re-exports every former `rms_memory_mcp::<mod>` path for the GUI. Inversions: `Store::for_workspace`, `InjectOptions` in workspace, `audit::inject_audit_metadata`. See `docs/crate-split.md`. crates.io publish of internal members remains post-1.0.9 (`publish = false` today).
 - **Supply-chain gate:** `cargo deny` CI job (advisories/bans/sources) + yanked `spin 0.10.1` hygiene.
+
+### 26. Safe prune + CLI extract slice (v1.1.1)
+
+First non-agentic consolidation step after supersession lifecycle (see §21).
+
+- **`rms-memory prune`:** dry-run by default; `--apply` moves aged `status: superseded` notes under `artifacts/pruned/YYYY-MM-DD/` with `manifest.jsonl`. Never deletes. Skips `pinned`, wiki, trash, and prior prune batches. Distinct from `rms-memory gc` (orphan LanceDB dirs).
+- **`rms_prune` MCP tool:** same policy for agents (`apply` defaults false); smoke test expects the tool in `tools/list`.
+- **`rms-memory-cli`:** hosts cycle-free `gc` + `prune`; clap tree / `serve` remain in the umbrella. See `docs/crate-split.md`.
+- **CI:** `tests/mcp_stdio_smoke.rs` (initialize + tools/list) in `test.yml`.

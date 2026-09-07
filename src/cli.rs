@@ -34,6 +34,8 @@ pub enum Commands {
     Uninstall(crate::commands::simple::UninstallArgs),
     /// Garbage collection: delete orphaned indices
     Gc(crate::commands::gc::GcArgs),
+    /// Archive old superseded vault notes under artifacts/pruned/ (dry-run by default)
+    Prune(crate::commands::prune::PruneArgs),
     /// Process an editor-agnostic continuity hook event (session_start, pre_compact, session_stop)
     Hook(crate::commands::hook::HookArgs),
     /// Incremental sync of the current vault
@@ -69,6 +71,7 @@ impl Cli {
             Commands::Install(args) => args.run(scope).await,
             Commands::Uninstall(args) => args.run(scope).await,
             Commands::Gc(args) => args.run(scope).await,
+            Commands::Prune(args) => args.run(scope).await,
             Commands::Hook(args) => args.run(),
             Commands::Sync(args) => args.run(scope).await,
             Commands::Log(args) => args.run(scope).await,

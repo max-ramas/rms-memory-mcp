@@ -1054,6 +1054,18 @@ impl McpServer {
                         }
                     },
                     {
+                        "name": "rms_prune",
+                        "description": "Find superseded vault notes older than a retention window and optionally archive them under artifacts/pruned/. Defaults to a dry run; set apply=true to archive candidates. Never deletes notes.",
+                        "inputSchema": {
+                            "type": "object",
+                            "properties": {
+                                "older_than_days": { "type": "integer", "minimum": 1, "maximum": 4294967295_u64, "default": 30, "description": "Minimum age in days for a superseded note to be eligible." },
+                                "apply": { "type": "boolean", "default": false, "description": "When true, archive eligible notes. Defaults to false (dry run)." },
+                                "project": { "type": "string", "description": "Registered project key, used when the MCP client did not provide a workspace root." }
+                            }
+                        }
+                    },
+                    {
                         "name": "rms_checkpoint_save",
                         "description": "Create or update a session checkpoint (artifacts/checkpoints/<name>.md, status=active). Save before context compaction or a long pause so work can be resumed. Updating preserves id/created_at and keeps omitted fields.",
                         "inputSchema": {
@@ -1152,6 +1164,7 @@ impl McpServer {
                     "rms_overview" => {
                         crate::tools::continuity::execute_overview(&self.ctx, &args).await
                     }
+                    "rms_prune" => crate::tools::prune::execute(&self.ctx, &args).await,
                     "rms_checkpoint_save" => {
                         crate::tools::continuity::execute_checkpoint_save(&self.ctx, &args).await
                     }

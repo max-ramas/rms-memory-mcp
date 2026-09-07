@@ -2,7 +2,7 @@
 
 This document outlines the strategic direction and upcoming milestones for RMS Memory.
 
-**Current (2026-07-27):** MCP **`1.1.0`** · companion GUI **`1.1.0`** (unified numbering).
+**Current (2026-09-08):** MCP **`1.1.1`** · companion GUI **`1.1.1`** (unified numbering). Pre-release candidate — tag pending.
 
 ## v1.0 — Foundation & Open Source ✅ (Released)
 
@@ -13,7 +13,7 @@ This document outlines the strategic direction and upcoming milestones for RMS M
 - [x] Robust Cross-Platform CI (macOS Intel/ARM, Linux x64/ARM64, Windows).
 - [x] Publish on `crates.io` (`cargo install rms-memory`).
 - [x] Hybrid search algorithms (LanceDB vector + Tantivy FTS).
-- [x] Dynamic IDE Auto-Installer (12 IDEs: Claude, Cursor, Zed, OpenCode, VSCode, etc).
+- [x] Dynamic IDE Auto-Installer (13 IDEs: Claude Desktop, Cursor, Zed, Roo/Cline, Windsurf, Antigravity, Gemini, Qwen, OpenCode, Codex, ZCode, Nova).
 - [x] Rules-as-Code IDE Patching (non-destructive AST block injection).
 - [x] Linked Documents architecture (zero-copy import with transparent read/write routing).
 - [x] Write-Guard snapshotting with rolling `.bak` backups and fsync-backed atomic Markdown replacement for `create`/`replace`.
@@ -142,8 +142,18 @@ This document outlines the strategic direction and upcoming milestones for RMS M
 **Why 1.1.0:** 1.0.9 shipped with import link stubs broken in the GUI (`link:` could not resolve to `code_path`).
 
 - [x] Restore link resolution to registered `code_path` (security: no escape outside vault+repo).
-- [x] Restore automatic crates.io publish on tag push (workspace members in dependency order).
+- [x] Restore automatic crates.io publish on tag push (**umbrella only** via flatten staging; members stay `publish = false`).
 - [x] Unified product version **1.1.0** with companion GUI.
+
+## v1.1.1 — Prune + CLI extract slice (2026-09-08)
+
+**Why 1.1.1:** first safe archive path for aged superseded notes; start moving cycle-free CLI into `rms-memory-cli`; stdio smoke gate.
+
+- [x] `rms-memory prune` (dry-run default / `--apply`) → `artifacts/pruned/YYYY-MM-DD/` + `manifest.jsonl`; never deletes; skips pinned/wiki/trash.
+- [x] MCP tool `rms_prune` (`apply` defaults false).
+- [x] `gc` + `prune` implementations in `rms-memory-cli`; umbrella re-exports; `serve` stays local.
+- [x] `tests/mcp_stdio_smoke.rs` in CI.
+- [x] Unified product version **1.1.1** with companion GUI (Graph edges, status bar toggle, Project Git card, optional signed updater).
 
 ## v1.0.9 — Federated search + concurrent binds (2026-07-26)
 
@@ -155,25 +165,30 @@ This document outlines the strategic direction and upcoming milestones for RMS M
 - [x] Concurrent bind cache: `MAX_BOUND_PROJECTS = 4`, LRU by last tool-call, eviction joins watcher tasks.
 - [x] `cargo deny` CI gate + spin 0.10.1 yank hygiene.
 - [x] ADRs: cross-project federated search; concurrent bound projects.
-- [x] Crate-split **dependency analysis** + inversions + physical workspace (`crates/rms-memory-{core,index,vault}`, reserved cli); umbrella re-exports keep GUI paths stable (`docs/crate-split.md`).
+- [x] Crate-split **dependency analysis** + inversions + physical workspace (`crates/rms-memory-{core,index,vault,cli}`); umbrella re-exports keep GUI paths stable (`docs/crate-split.md`).
 - [x] Unified product version **1.0.9** with companion GUI.
 - [x] Release asset-name CI contract (`scripts/check-release-asset-names.sh`).
 
 **Explicitly deferred (post-1.0.9):**
 
 - crates.io publish of internal workspace members (path-only / `publish = false` today).
-- Agentic pruning / consolidation (distinct from supersession).
+- Full agentic consolidation (auto-summarize / merge cold active notes). First non-agentic prune slice shipped: `rms-memory prune` archives aged `status: superseded` notes under `artifacts/pruned/` (dry-run by default; pinned notes skipped).
 - Remote Vector DB backends.
 
 ## v1.1 — Ecosystem packaging (Next)
 
 **Goal:** Make the workspace crates independently useful to downstream consumers (and publishable to crates.io), not just path-only members of the umbrella.
 
-Landed in **1.0.9:** physical extraction with stable facade. Remaining:
+Landed in **1.0.9:** physical extraction with stable facade.  
+Landed in **1.1.0:** crates.io publishes the flattened **umbrella only** (`scripts/flatten-for-crates-io.py`); do not re-publish internal members (name-reuse lock after the 1.0.9 orphan incident).
 
-- Publish strategy for `rms-memory-core` / `index` / `vault` (or vendor into the umbrella for crates.io).
-- Move CLI/commands out of the umbrella into `rms-memory-cli` without a cycle through `mcp_server`.
+Remaining:
+
+- Optional independent publish of `rms-memory-core` / `index` / `vault` **or** keep vendor/flatten forever (current recommendation).
+- Further CLI extraction beyond `gc`/`prune` without a cycle through `mcp_server` (`serve` stays umbrella-local).
 - Document consuming `rms-memory-index` alone (no MCP layer).
+
+**Landed in 1.1.1:** `rms-memory prune` + MCP `rms_prune`; `gc`/`prune` in `rms-memory-cli`; stdio smoke CI.
 
 The companion GUI already consumes the umbrella through Tauri commands. MCP remains the IDE/agent protocol.
 
@@ -189,9 +204,11 @@ The detailed production contract and delivery slices are maintained privately in
 
 ## Post-1.0.9 / former v2.0 — Agentic pruning & remote backends (Future)
 
-- Agentic memory graphs: autonomous summarization and knowledge consolidation.
-  Stale **pruning** (delete/archive cold notes) is distinct from vault-native **supersession**
-  (`status` / `supersedes` / `superseded_by`) and temporal validity (`valid_from` / `valid_until`),
-  which already gate recall and doctor freshness lint — pruning remains a later agentic step.
+- [x] **Manual / CLI prune (first slice):** `rms-memory prune` archives aged superseded notes
+  under `artifacts/pruned/YYYY-MM-DD/` with a JSONL manifest (dry-run default; never deletes;
+  skips `pinned`). Distinct from vault-native **supersession** and from `rms-memory gc`
+  (orphan LanceDB dirs).
+- Agentic memory graphs: autonomous summarization and knowledge consolidation of *active*
+  cold notes remain future work.
 - Remote backends: cloud-hosted Vector DBs (managed LanceDB, Qdrant) beyond local `.lancedb`.
 - Physical multi-vault merge (vaults stay isolated; 1.0.9 federated search + concurrent binds cover the multi-root IDE case without merging).

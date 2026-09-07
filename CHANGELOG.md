@@ -2,6 +2,24 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.1.1] - 2026-09-08
+
+Pre-release hardening after **1.1.0**: safe vault prune (CLI + MCP), CLI crate extraction slice, stdio smoke gate. Companion GUI adopts the **same `1.1.1` product version**.
+
+### Added
+- **`rms-memory prune`:** dry-run (default) / `--apply` archives superseded notes older than `--older-than-days` (default 30) under `artifacts/pruned/YYYY-MM-DD/` with `manifest.jsonl`. Skips pinned notes, wiki, trash, and prior prune batches. Never deletes.
+- **`rms_prune` MCP tool:** same safe-by-default pruning flow for agents; structured JSON report; `apply` defaults to `false`.
+- **MCP stdio smoke test:** `tests/mcp_stdio_smoke.rs` (initialize + `tools/list`, asserts `rms_prune`) wired in CI (`test.yml`).
+
+### Changed
+- **CLI crate extraction (first slice):** cycle-free `gc` and `prune` live in `rms-memory-cli`; umbrella keeps thin re-exports; `serve` stays local (no cycle through `mcp_server`).
+- **Toolchain:** `rust-toolchain.toml` + Dockerfile pin **Rust 1.96.1**.
+- Docs / ROADMAP / Walkthrough / README MCP tools / `docs/crate-split.md` / GUI-README aligned to prune + cli slice + **1.1.1**.
+
+### Verification
+- `cargo fmt --all`, `cargo clippy --workspace --all-targets -- -D warnings`, workspace tests + stdio smoke.
+- Doctor remains 7/7; prune never deletes and skips pinned/wiki/trash.
+
 ## [1.1.0] - 2026-07-27
 
 Hotfix release: **1.0.9 shipped with broken import link stubs** in the GUI editor (vault `link:` files could not resolve to repository sources). Companion GUI adopts the **same `1.1.0` product version**.

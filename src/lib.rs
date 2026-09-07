@@ -11,7 +11,7 @@ pub use rms_memory_index::{
     code_indexer, code_parser, graph, graph_store, index_lock, indexer, jobs, retrieval,
     semantic_graph, store, vault_graph, wiki,
 };
-pub use rms_memory_vault::{document_service, import, project_migrate, project_service};
+pub use rms_memory_vault::{document_service, import, project_migrate, project_service, prune};
 
 pub mod tools;
 

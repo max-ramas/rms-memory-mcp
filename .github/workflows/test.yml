@@ -85,6 +85,9 @@ jobs:
           echo "::endgroup::"
         done
 
+    - name: MCP stdio smoke
+      run: cargo test -p rms-memory-mcp --test mcp_stdio_smoke --verbose
+
     - name: Record grammar dependency graph
       run: cargo tree -i tree-sitter
 

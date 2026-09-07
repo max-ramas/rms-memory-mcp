@@ -1,6 +1,6 @@
 # RMS Memory GUI
 
-**Current release:** GUI `1.1.0` (2026-07-27) with MCP `1.1.0` (unified numbering).
+**Current release:** GUI `1.1.1` (2026-09-08) with MCP `1.1.1` (unified numbering).
 
 RMS Memory GUI is the optional commercial desktop application for
 [RMS Memory MCP](https://github.com/max-ramas/rms-memory-mcp). It is a Tauri
@@ -14,14 +14,14 @@ the same vaults and projects served by MCP.
 | Dashboard | Project health, document/store status, grouped Doctor findings, one-click repair for missing IDs, Continuity teaser (active checkpoints → Continuity tab) |
 | Continuity | Create/continue/complete checkpoints, recent notes, overview counts (camelCase via GUI `serde_gui`; core remains snake_case) |
 | Search | Bounded memory search (same inject/abstain envelope as `rms_search`), corpus selector, optional multi-project federation (max 8; busy cleared on project switch), optional `min_score`, retrieval-mode badge, pinned hit badge |
-| About / license | Pro vs trial panel: hide trial chrome + key form when licensed; show license expiry from signed payload when present |
 | Editor | Visual (Milkdown) and Raw (Monaco) Markdown editing, create/rename/delete files and folders, dirty-state protection |
-| Hybrid graph | Full WebGL Markdown + code + semantic graph, independent filters, search and deep zoom, no sampling or node cap |
-| Source control | Per-project Git status/diff/history plus a separate global Vault Git/GitHub sync (safe commit → pull → push) |
+| Hybrid graph | Full WebGL Markdown + code + semantic graph; create user edges; suppress/restore durable overrides; independent filters, search and deep zoom |
+| Source control | Per-project Git status/diff/history plus a separate global Vault Git/GitHub sync (safe commit → pull → push); Project Git automation card in Settings |
 | Doctor & Setup | Init, MCP client installation, indexing, sync, GC, doctor and Wiki generation from one screen |
 | AI & Wiki (optional) | Bring-your-own-key organizer across 12 providers; proposal-only workflow — every change is reviewed with sources and a before/after diff before it touches the vault |
-| Spend | Local token/cost ledger across your AI coding tools, with optional cloud sync (serialized `spend-sync.json` updates) |
-| Other | Backup history with restore, `llms.txt`/Graphviz export, live log viewer, light/dark themes, 7 UI languages |
+| Spend | Local token/cost ledger across your AI coding tools, with optional cloud sync (serialized `spend-sync.json` updates). Full Spend Settings live in the separate `rms-spend` app |
+| About / license | Pro vs trial panel; optional in-app **Install** when signed `latest.json` is on the matching MCP release |
+| Other | Backup history with restore, `llms.txt`/Graphviz export, live log viewer, Appearance status-bar toggle, light/dark themes, 7 UI languages |
 
 AI, Spend cloud sync and Vault GitHub sync are the only features gated behind
 the GUI's own license after the trial period — everything above still starts
@@ -53,11 +53,13 @@ the asset whose platform and architecture match your machine:
 | Linux x64 | `.AppImage`, `.deb`, or `.rpm` |
 
 The public release uses the same `v<version>` tag as the GUI build (unified with MCP:
-**`v1.0.9`**). Installer assets are named `rms_memory_gui_<version>_*` (publish fails
+**`v1.1.1`**). Installer assets are named `rms_memory_gui_<version>_*` (publish fails
 if the version is missing from the basename) and checksums live in
 `rms_memory_gui_SHA256SUMS.txt`. The GUI pipeline runs both for a pushed `v*` tag
 and for a manual dispatch that supplies the same version tag as
 `src-tauri/tauri.conf.json`. Cross-repo MCP checkout is pinned to that same tag.
+When `TAURI_SIGNING_PRIVATE_KEY` is set on the GUI repo, CI may also attach
+signed updater metadata (`latest.json` / `.sig`) to that public release.
 
 ### Known macOS distribution issue
 
@@ -86,9 +88,10 @@ internal artifact containing only allowed installer extensions, then uses a
 repository-scoped deploy credential to create or update the matching public MCP
 release. It explicitly rejects all other files.
 
-The workflow never transfers GUI source code, build logs, updater metadata,
-license credentials, provider credentials or a private GUI release archive to
-this public repository. On the GUI repository, the required
+The workflow never transfers GUI source code, build logs, license credentials,
+provider credentials or a private GUI release archive to this public repository.
+Installer binaries (and, when updater signing is enabled, `latest.json` / `.sig`
+only) are the intentional public artifacts. On the GUI repository, the required
 `RMS_MEMORY_MCP_TOKEN` must be a fine-grained GitHub PAT that has only
 **Contents: Read and write** access to `max-ramas/rms-memory-mcp`. It is stored
 as a GitHub Actions secret and is never embedded in the application or checked

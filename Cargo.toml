@@ -10,7 +10,7 @@ resolver = "3"
 
 [package]
 name = "rms-memory-mcp"
-version = "1.1.0"
+version = "1.1.1"
 edition = "2024"
 description = "Persistent, local-first memory for your AI coding agents."
 license = "MIT"
@@ -42,6 +42,7 @@ pathdiff = "0.2.3"
 pulldown-cmark = "0.13.4"
 regex = "1.12.4"
 rms-memory-core = { path = "crates/rms-memory-core" }
+rms-memory-cli = { path = "crates/rms-memory-cli" }
 rms-memory-index = { path = "crates/rms-memory-index" }
 rms-memory-vault = { path = "crates/rms-memory-vault" }
 serde = { version = "1.0.228", features = ["derive"] }
