@@ -83,6 +83,7 @@ fn mcp_stdio_initialize_and_tools_list() {
         "rms_code_search",
         "rms_read",
         "rms_write",
+        "rms_file_history",
         "rms_projects",
         "rms_overview",
         "rms_prune",

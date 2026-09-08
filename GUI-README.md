@@ -1,6 +1,7 @@
 # RMS Memory GUI
 
-**Current release:** GUI `1.1.1` (2026-09-08) with MCP `1.1.1` (unified numbering).
+**Current release candidate:** GUI `1.1.2` with MCP `1.1.2` (unified numbering; tag-pending). Last published installers: `1.1.1`.  
+MCP **1.1.2** adds agent/CLI `rms_write(dry_run)` and `rms_file_history` — no GUI panels for these yet.
 
 RMS Memory GUI is the optional commercial desktop application for
 [RMS Memory MCP](https://github.com/max-ramas/rms-memory-mcp). It is a Tauri
@@ -53,13 +54,15 @@ the asset whose platform and architecture match your machine:
 | Linux x64 | `.AppImage`, `.deb`, or `.rpm` |
 
 The public release uses the same `v<version>` tag as the GUI build (unified with MCP:
-**`v1.1.1`**). Installer assets are named `rms_memory_gui_<version>_*` (publish fails
+**`v1.1.2`** when tagged). Installer assets are named `rms_memory_gui_<version>_*` (publish fails
 if the version is missing from the basename) and checksums live in
 `rms_memory_gui_SHA256SUMS.txt`. The GUI pipeline runs both for a pushed `v*` tag
 and for a manual dispatch that supplies the same version tag as
 `src-tauri/tauri.conf.json`. Cross-repo MCP checkout is pinned to that same tag.
-When `TAURI_SIGNING_PRIVATE_KEY` is set on the GUI repo, CI may also attach
-signed updater metadata (`latest.json` / `.sig`) to that public release.
+When `TAURI_SIGNING_PRIVATE_KEY` is set on the GUI repo, CI mirrors signed
+updater metadata (`latest.json`, companion `.sig`, arch-qualified macOS
+`*.app.tar.gz`) onto that public release so in-app Install can use
+`…/releases/latest/download/latest.json`.
 
 ### Known macOS distribution issue
 
@@ -90,8 +93,9 @@ release. It explicitly rejects all other files.
 
 The workflow never transfers GUI source code, build logs, license credentials,
 provider credentials or a private GUI release archive to this public repository.
-Installer binaries (and, when updater signing is enabled, `latest.json` / `.sig`
-only) are the intentional public artifacts. On the GUI repository, the required
+Installer binaries and, when updater signing is enabled, `latest.json` /
+arch-qualified `*.app.tar.gz` / companion `.sig` are the intentional public
+artifacts. On the GUI repository, the required
 `RMS_MEMORY_MCP_TOKEN` must be a fine-grained GitHub PAT that has only
 **Contents: Read and write** access to `max-ramas/rms-memory-mcp`. It is stored
 as a GitHub Actions secret and is never embedded in the application or checked

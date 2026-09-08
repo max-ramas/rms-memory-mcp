@@ -968,7 +968,8 @@ impl McpServer {
                                 "include_content": { "type": "boolean", "description": "Whether to include full chunk text in results." },
                                 "min_confidence": { "type": "number", "description": "Optional minimum confidence threshold (0.0–1.0). Records with NULL confidence are always included. CAUTION: do NOT use high values (e.g. 0.9+) unless you need strict filtering. If zero results, retry without this parameter." },
                                 "max_chars": { "type": "integer", "description": "Maximum total characters of injected content across results (default 2000). Truncates/drops weaker hits to stay within budget." },
-                                "min_score": { "type": "number", "description": "Optional minimum relevance in 0..1 (distance and RRF normalized). If the best hit is weaker, rms_search abstains with an empty results list (fail-closed)." }
+                                "min_score": { "type": "number", "description": "Optional minimum relevance in 0..1 (distance and RRF normalized). If the best hit is weaker, rms_search abstains with an empty results list (fail-closed)." },
+                                "include_file_history": { "type": "boolean", "description": "When true, attach the last 3 commits from the derived code_path git-history cache to each code hit (lazy catch-up). Not allowed together with projects: […] federation. Default false." }
                             },
                             "required": ["query"]
                         }
@@ -983,7 +984,8 @@ impl McpServer {
                                 "project": { "type": "string", "description": "Registered project key, used when the MCP client did not provide a workspace root. Ignored when `projects` is also set." },
                                 "projects": { "type": "array", "items": { "type": "string" }, "description": "Explicit list of registered project keys for read-only federated code search (max 8 after dedupe). Does not change the active bind. When set together with `project`, this list wins." },
                                 "limit": { "type": "integer", "description": "Maximum results; default 10, maximum 100." },
-                                "include_content": { "type": "boolean", "description": "Whether to include indexed code content; default true." }
+                                "include_content": { "type": "boolean", "description": "Whether to include indexed code content; default true." },
+                                "include_file_history": { "type": "boolean", "description": "When true, attach the last 3 commits from the derived code_path git-history cache to each code hit. Not allowed together with projects: […] federation. Default false." }
                             },
                             "required": ["query"]
                         }
@@ -1017,9 +1019,24 @@ impl McpServer {
                                 "source": { "type": "string", "description": "Optional free-text citation or source reference for this record." },
                                 "status": { "type": "string", "description": "Optional lifecycle status: active, draft, or superseded." },
                                 "pinned": { "type": "boolean", "description": "When true, the note bypasses temporal and min_confidence recall gates (status still applies)." },
-                                "supersedes": { "type": "string", "description": "Optional relative vault path of a prior note to soft-supersede (marks it status=superseded and links both sides)." }
+                                "supersedes": { "type": "string", "description": "Optional relative vault path of a prior note to soft-supersede (marks it status=superseded and links both sides)." },
+                                "dry_run": { "type": "boolean", "description": "When true, classify create/update/noop and return a JSON preview without writing disk or touching the index. Defaults to false.", "default": false }
                             },
                             "required": ["path", "mode", "content"]
+                        }
+                    },
+                    {
+                        "name": "rms_file_history",
+                        "description": "Query the derived code_path git file→commit history cache (no shell). Prefer this over `git log` for when a source file changed. Lazy catch-up on query; use action=reindex after force-push/rebase (requires explicit `project`). Default response omits commit messages. Catch-up/reindex enforce commit-count budgets.",
+                        "inputSchema": {
+                            "type": "object",
+                            "properties": {
+                                "path": { "type": "string", "description": "Path relative to the project code_path (required for action=query)." },
+                                "limit": { "type": "integer", "description": "Max commits to return (default 20, max 200)." },
+                                "include_message": { "type": "boolean", "description": "Include commit subject lines. Default false." },
+                                "action": { "type": "string", "enum": ["query", "catch_up", "reindex"], "description": "query (default), catch_up, or reindex (full rebuild; requires project)." },
+                                "project": { "type": "string", "description": "Registered project key. Required for action=reindex; recommended for all actions when the MCP client did not provide a workspace root." }
+                            }
                         }
                     },
                     {
@@ -1161,6 +1178,9 @@ impl McpServer {
                     "rms_code_search" => crate::tools::search::execute_code(&self.ctx, &args).await,
                     "rms_read" => crate::tools::read::execute(&self.ctx, &args).await,
                     "rms_write" => crate::tools::write::execute(&self.ctx, &args).await,
+                    "rms_file_history" => {
+                        crate::tools::file_history::execute(&self.ctx, &args).await
+                    }
                     "rms_overview" => {
                         crate::tools::continuity::execute_overview(&self.ctx, &args).await
                     }

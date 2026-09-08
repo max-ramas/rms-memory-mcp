@@ -1,6 +1,6 @@
 # RMS Memory MCP Server — Walkthrough
 
-Updated: 2026-09-08 · MCP `1.1.1` / GUI `1.1.1`
+Updated: 2026-09-08 · MCP `1.1.2` / GUI `1.1.2`
 
 RMS Memory is a specialized Model Context Protocol (MCP) server that acts as localized persistent memory for LLM agents. It keeps human-authored knowledge in centralized Markdown Vaults and can optionally maintain a separate derived semantic index for source code, solving context fragmentation across multiple IDEs (Cursor, Zed, VS Code, Claude Code, Codex).
 
@@ -261,14 +261,24 @@ Mind-inspired checkpoints/orientation, corrected for the vault-first stack: no S
 - **Vault opt-in:** `cross_project_vault` (default false) is consulted **only when `projects.len() > 1`** with `corpus=vault|all`. Missing opt-in → hard tool error (never silent degrade). Single-element `projects=[A]` is equivalent to `project=A` and skips the gate. CLI: `rms-memory config --cross-project-vault true`.
 - **Concurrent bind cache:** up to 4 warm Store+watcher pairs (`MAX_BOUND_PROJECTS`); LRU by last successful tool-call; eviction cancels **and joins** watcher tasks. Indexer stays process-singleton.
 - **Versioned assets only:** portable MCP archives are `rms_memory_mcp_<version>_<target>.*`; GUI installers must match `rms_memory_gui_<version>_*` or the publish job fails. No unversioned fallback. CI contract: `scripts/check-release-asset-names.sh` (wired in `test.yml`).
-- **Cargo workspace crate-split:** path-only members `crates/rms-memory-{core,index,vault}` (+ reserved `rms-memory-cli`). Root `rms-memory-mcp` stays the umbrella binary/MCP/tools/rules_injector and re-exports every former `rms_memory_mcp::<mod>` path for the GUI. Inversions: `Store::for_workspace`, `InjectOptions` in workspace, `audit::inject_audit_metadata`. See `docs/crate-split.md`. crates.io publish of internal members remains post-1.0.9 (`publish = false` today).
+- **Cargo workspace crate-split:** path-only members `crates/rms-memory-{core,index,vault,cli}`. Root `rms-memory-mcp` stays the umbrella binary/MCP/tools/rules_injector and re-exports every former `rms_memory_mcp::<mod>` path for the GUI. Inversions: `Store::for_workspace`, `InjectOptions` in workspace, `audit::inject_audit_metadata`. See `docs/crate-split.md`. crates.io publish of internal members remains deferred (`publish = false`; umbrella flatten only).
 - **Supply-chain gate:** `cargo deny` CI job (advisories/bans/sources) + yanked `spin 0.10.1` hygiene.
 
 ### 26. Safe prune + CLI extract slice (v1.1.1)
 
-First non-agentic consolidation step after supersession lifecycle (see §21).
+First non-agentic consolidation step after supersession lifecycle (see §21). **Released** 2026-09-08 (`v1.1.1` / crates.io **1.1.1**).
 
 - **`rms-memory prune`:** dry-run by default; `--apply` moves aged `status: superseded` notes under `artifacts/pruned/YYYY-MM-DD/` with `manifest.jsonl`. Never deletes. Skips `pinned`, wiki, trash, and prior prune batches. Distinct from `rms-memory gc` (orphan LanceDB dirs).
 - **`rms_prune` MCP tool:** same policy for agents (`apply` defaults false); smoke test expects the tool in `tools/list`.
-- **`rms-memory-cli`:** hosts cycle-free `gc` + `prune`; clap tree / `serve` remain in the umbrella. See `docs/crate-split.md`.
+- **`rms-memory-cli`:** hosts cycle-free `gc` + `prune`; clap tree / `serve` remain in the umbrella. Flatten staging for crates.io inlines this crate with core/index/vault. See `docs/crate-split.md`.
 - **CI:** `tests/mcp_stdio_smoke.rs` (initialize + tools/list) in `test.yml`.
+- **Companion GUI on the same tag:** installers + `rms_memory_gui_SHA256SUMS.txt` + signed updater (`latest.json`, arch-qualified `*.app.tar.gz`) on the public MCP release.
+
+### 27. Write dry_run + file git history (v1.1.2)
+
+ADRs: dry-run fingerprint; file git-history index. Tag-pending with unified GUI **1.1.2**.
+
+- **`rms_write(dry_run)`:** plan→commit split; JSON create/update/noop preview; fingerprint strips `timestamp`/`last_modified_by`; create without `id` uses UUID v5(`project:path`) so `item_key` is stable across dry_run → write.
+- **`rms_file_history`:** Lance normalized `(file_path, commit_sha)` over registered `code_path` git (`--no-merges`; no `-M`/`--follow`); lazy `catch_up`; explicit `reindex` requires MCP `project` / CLI `--project`; commit budgets 2k catch-up / 50k reindex; hex SHA allowlist; advance `last_indexed_sha` only after upsert.
+- **Surfaces:** MCP + CLI; search `include_file_history` (last 3 on **code** hits; refused with `projects` federation); `rms_system_instructions`; smoke asserts tool in `tools/list`.
+- **Non-goals:** vault-git history index; rename follow; GUI panels for these tools.

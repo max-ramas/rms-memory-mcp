@@ -2,7 +2,7 @@
 
 # 🧠 RMS Memory MCP
 
-**Version:** `1.1.1` (2026-09-08) · companion GUI `1.1.1` (unified numbering)
+**Version:** `1.1.2` (2026-09-08) · companion GUI `1.1.2` (unified numbering)
 
 **Persistent, local-first memory for your AI coding agents.**
 
@@ -37,6 +37,10 @@ You're developing a single project but switching between different agents — Cu
 
 **RMS Memory MCP** bridges this gap: a single, isolated, centralized Markdown vault — perfectly structured for LLM consumption — that any MCP-compatible IDE can read from and write to.
 
+### 🖥️ Prefer a GUI over raw Markdown?
+
+**[RMS Memory GUI](./GUI-README.md)** turns your vault into a visual workspace — full graph editor, per-project Git & GitHub sync, one-click Doctor repair, and an AI-assisted Wiki generator (bring your own key). One-time desktop app, works on top of everything below. The MCP server stays 100% free and standalone either way.
+
 ## ✨ Key Features
 
 | | |
@@ -59,7 +63,8 @@ You're developing a single project but switching between different agents — Cu
 | 📦 **Unified Releases** | Public assets use `rms_memory_mcp_<version>_<target>.*` / `rms_memory_gui_<version>_*` on the **same** `vX.Y.Z` tag (MCP + GUI share numbering). Unversioned names are no longer published. |
 | ⚙️ **Dynamic Auto-Installer** | `rms-memory install` scans your system and wires itself into every supported IDE. |
 | 📜 **Rules-as-Code Patching** | Non-destructive AST patching of `.cursorrules`, `.zed/assistant.md`, etc. Opt-in by default. |
-| 🧪 **Durable Vault Writes** | `rms_write` creates rolling `.bak` backups and atomically replaces `create`/`replace` targets after fsync, so interrupted writes never expose a truncated Markdown file. |
+| 🧪 **Durable Vault Writes** | `rms_write` creates rolling `.bak` backups and atomically replaces `create`/`replace` targets after fsync, so interrupted writes never expose a truncated Markdown file. Optional `dry_run` previews create/update/noop without touching disk or the index (fingerprint ignores volatile audit stamps). |
+| 📜 **File git history (v1.1.2)** | Derived `code_path` file→commit cache (`rms_file_history` / `rms-memory file-history`); agents should not shell `git log`. Optional search `include_file_history` attaches the last 3 commits per **code** hit (not with federated `projects`). |
 | 📚 **Canonical Wiki Isolation** | Generated `<vault>/wiki/**` stay Git-synchronized but are excluded from indexes/search/watchers/graph/packs; MCP write and canonical DocumentService also reject wiki paths (wiki-safe writers only). |
 | 🛡️ **Ten-Point Resiliency** | GC, background sync, write-guard snapshots, macOS sandbox bypass, `llms.txt` export, path traversal + injection protection, zombie prevention, graceful shutdown. |
 | 🔒 **Security Hardened** | Panic-free database layer, symlink traversal blocked, JSON-RPC error responses, request size limits. See [SECURITY.md](./SECURITY.md) and [NOTICE](./NOTICE). |
@@ -114,10 +119,11 @@ cp target/release/rms-memory ~/.cargo/bin/
 ### crates.io (`cargo install`)
 
 As of **1.1.0+**, tag push publishes **only** the umbrella crate `rms-memory-mcp`
-to crates.io. Internal workspace members (`rms-memory-core` / `index` / `vault`)
-stay `publish = false` (path deps for local builds and the companion GUI).
+to crates.io. Internal workspace members (`rms-memory-core` / `index` / `vault` /
+`cli`) stay `publish = false` (path deps for local builds and the companion GUI).
 Release packaging flattens those crates into a staging tree via
-`scripts/flatten-for-crates-io.py` before `cargo publish` — see
+`scripts/flatten-for-crates-io.py` before `cargo publish` (as of **1.1.1** the
+staging tree also inlines `rms-memory-cli`) — see
 [docs/crate-split.md](./docs/crate-split.md).
 
 ```bash
@@ -143,9 +149,11 @@ under the matching `v<version>` tag. Until Apple/Windows signing certificates
 exist, macOS builds may be unsigned — see [GUI-README.md](./GUI-README.md) for
 Gatekeeper notes. The private GUI workflow transfers only the completed
 `.dmg`, `.msi`/`.exe`, `.AppImage`, `.deb`, and `.rpm` installer files (plus
-`SHA256SUMS.txt` when present). When GUI updater signing is enabled, the same
-flow may also attach signed `latest.json` / `.sig` for in-app Install. It never
-mirrors GUI source, build logs, credentials, or private GUI release archives.
+`SHA256SUMS.txt` when present). With updater signing enabled, the GUI pipeline
+mirrors signed `latest.json`, companion `.sig` files, and macOS `*.app.tar.gz`
+onto this public release (URLs rewritten to `rms-memory-mcp`; in-app Install
+reads `…/releases/latest/download/latest.json`). It never mirrors GUI source,
+build logs, credentials, or private GUI release archives.
 The same publication flow runs for a `v*` GUI tag and for a manually dispatched,
 version-validated GUI release.
 
@@ -252,6 +260,7 @@ Supported names are `rust`, `go`, `javascript`, `jsx`, `typescript`, `tsx`, `pyt
 | `rms-memory sync` | Incremental LanceDB delete-then-insert sync (also runs automatically during `serve`). |
 | `rms-memory gc` | Prunes orphaned LanceDB indices belonging to deleted vaults. |
 | `rms-memory prune [--older-than-days N] [--apply]` | Archives superseded notes older than N days (default 30) under `artifacts/pruned/YYYY-MM-DD/`. Dry-run by default; never deletes. Distinct from `gc` (orphan DBs) and from supersession (lifecycle marking). |
+| `rms-memory file-history catch-up\|reindex\|query` | Derived `code_path` git file→commit cache (Lance). `reindex` requires `--project`. Prefer MCP `rms_file_history` for agents. |
 | `rms-memory log` | Tails the telemetry log (`~/.rms-memory/rms.log`). |
 | `rms-memory export-llms` | Compiles the current vault into a single `llms.txt` payload. |
 | `rms-memory projects list` | Lists registered project keys and their code/vault paths. |
@@ -270,8 +279,8 @@ Tool descriptions are written to be **action-oriented**, so agents use the vault
 <tr><th>Tool</th><th>Purpose</th><th>Input</th></tr>
 <tr>
 <td><code>rms-memory_rms_search</code></td>
-<td>Searches Markdown memory by default. Set <code>corpus</code> to <code>code</code> or <code>all</code>; <code>all</code> uses Reciprocal Rank Fusion. Pass <code>projects: [key, …]</code> for read-only cross-project federation (mutually exclusive with <code>project</code>); vault/all with <code>len&gt;1</code> requires <code>cross_project_vault=true</code> on every listed key (hard fail — no silent degrade). Returns an inject/abstain decision envelope (<code>decision</code>, <code>reason</code>, <code>injected_ids</code>, optional <code>retrieval_mode</code>). Agents are instructed to call this <em>first</em>.</td>
-<td><code>{ query, project?, projects?, corpus: vault|code|all, limit, include_content, min_confidence, max_chars?, min_score? }</code></td>
+<td>Searches Markdown memory by default. Set <code>corpus</code> to <code>code</code> or <code>all</code>; <code>all</code> uses Reciprocal Rank Fusion. Pass <code>projects: [key, …]</code> for read-only cross-project federation (mutually exclusive with <code>project</code>); vault/all with <code>len&gt;1</code> requires <code>cross_project_vault=true</code> on every listed key (hard fail — no silent degrade). Returns an inject/abstain decision envelope (<code>decision</code>, <code>reason</code>, <code>injected_ids</code>, optional <code>retrieval_mode</code>). Optional <code>include_file_history</code> attaches the last 3 commits from the derived <code>code_path</code> git cache (lazy catch-up). Agents are instructed to call this <em>first</em>.</td>
+<td><code>{ query, project?, projects?, corpus: vault|code|all, limit, include_content, min_confidence, max_chars?, min_score?, include_file_history? }</code></td>
 </tr>
 <tr>
 <td><code>rms-memory_rms_code_search</code></td>
@@ -285,8 +294,13 @@ Tool descriptions are written to be **action-oriented**, so agents use the vault
 </tr>
 <tr>
 <td><code>rms-memory_rms_write</code></td>
-<td>Persists new decisions, constraints, or rules. Agents are prompted to call this <em>proactively</em> after solving a tricky bug or learning a preference. Auto-injects audit metadata. Optional soft supersede of a prior note.</td>
-<td><code>{ path, project?, content, mode: replace|append|create, confidence, source, status?, supersedes? }</code></td>
+<td>Persists new decisions, constraints, or rules. Agents are prompted to call this <em>proactively</em> after solving a tricky bug or learning a preference. Auto-injects audit metadata. Optional soft supersede of a prior note. Optional <code>dry_run</code> previews create/update/noop without disk or index side effects.</td>
+<td><code>{ path, project?, content, mode: replace|append|create, confidence, source, status?, supersedes?, dry_run? }</code></td>
+</tr>
+<tr>
+<td><code>rms-memory_rms_file_history</code></td>
+<td>Derived <code>code_path</code> git file→commit history (no shell). Lazy catch-up; <code>action=reindex</code> requires explicit <code>project</code> (after force-push). Prefer over <code>git log</code>. Search may set <code>include_file_history</code> for the last 3 commits on code hits (not with <code>projects</code> federation).</td>
+<td><code>{ path?, project?, limit?, include_message?, action?: query|catch_up|reindex }</code></td>
 </tr>
 <tr>
 <td><code>rms-memory_rms_projects</code></td>

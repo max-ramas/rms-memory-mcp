@@ -58,6 +58,9 @@ pub struct UnifiedSearchResult {
     pub segment_index: Option<u32>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub pinned: Option<bool>,
+    /// Last few commits for this path when `include_file_history` is set.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub file_history: Option<Vec<serde_json::Value>>,
 }
 
 impl UnifiedSearchResult {
@@ -78,6 +81,7 @@ impl UnifiedSearchResult {
             end_line: None,
             segment_index: None,
             pinned: result.pinned,
+            file_history: None,
         }
     }
 
@@ -98,6 +102,7 @@ impl UnifiedSearchResult {
             end_line: Some(result.end_line),
             segment_index: Some(result.segment_index),
             pinned: None,
+            file_history: None,
         }
     }
 
@@ -331,11 +336,16 @@ async fn execute_inner(
         .get("min_score")
         .and_then(|value| value.as_f64())
         .map(|value| value as f32);
+    let include_file_history = args
+        .get("include_file_history")
+        .and_then(|value| value.as_bool())
+        .unwrap_or(false);
     let corpus = forced_corpus.unwrap_or(Corpus::parse(
         args.get("corpus").and_then(|value| value.as_str()),
     )?);
 
     let project_keys = parse_projects_arg(args)?;
+    reject_federated_include_file_history(include_file_history, project_keys.is_some())?;
     let indexer = ctx
         .indexer
         .as_ref()
@@ -373,13 +383,55 @@ async fn execute_inner(
         search_single_store(store, query_vector, query, limit, min_confidence, corpus).await?
     };
 
-    Ok(apply_bounded_recall(
+    let mut envelope = apply_bounded_recall(
         results,
         include_content,
         max_chars,
         min_score,
         retrieval_mode,
-    ))
+    );
+
+    if include_file_history
+        && envelope.decision == SearchDecision::Inject
+        && envelope.results.iter().any(|r| r.source == "code")
+        && let (Some(store), Some(code_path)) = (ctx.store.as_ref(), ctx.code_path.as_ref())
+    {
+        // Fail closed: do not silently attach stale/empty history when catch-up dies.
+        rms_memory_index::file_history::catch_up_file_history(store, code_path).await?;
+        for result in &mut envelope.results {
+            if result.source != "code" {
+                continue;
+            }
+            match store.query_file_history(&result.path, 3).await {
+                Ok(rows) if !rows.is_empty() => {
+                    result.file_history =
+                        Some(crate::tools::file_history::rows_to_json(&rows, false));
+                }
+                Ok(_) => {}
+                Err(error) => {
+                    return Err(anyhow!(
+                        "include_file_history query failed for {}: {error:#}",
+                        result.path
+                    ));
+                }
+            }
+        }
+    }
+
+    Ok(envelope)
+}
+
+/// Federated search must not attach sticky-bind file history (wrong project).
+fn reject_federated_include_file_history(
+    include_file_history: bool,
+    federated: bool,
+) -> Result<()> {
+    if include_file_history && federated {
+        return Err(anyhow!(
+            "include_file_history is not supported with projects: […] federation (would attach the sticky-bound project's git cache). Search a single project or call rms_file_history per key."
+        ));
+    }
+    Ok(())
 }
 
 /// Parse the optional `projects` array.
@@ -763,6 +815,7 @@ mod tests {
             end_line: None,
             segment_index: None,
             pinned: None,
+            file_history: None,
         }
     }
 
@@ -954,6 +1007,13 @@ mod tests {
             Corpus::Vault,
         )
         .unwrap();
+    }
+
+    #[test]
+    fn include_file_history_rejected_with_federation() {
+        assert!(reject_federated_include_file_history(true, true).is_err());
+        assert!(reject_federated_include_file_history(true, false).is_ok());
+        assert!(reject_federated_include_file_history(false, true).is_ok());
     }
 
     #[test]

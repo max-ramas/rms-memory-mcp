@@ -4,8 +4,8 @@
 
 | Component | Version | Supported |
 |-----------|---------|-----------|
-| `rms-memory` CLI / MCP (`rms-memory-mcp`) | **1.1.1** (2026-09-08) | Yes |
-| RMS Memory GUI (`rms-memory-gui`) | **1.1.1** (2026-09-08) | Yes |
+| `rms-memory` CLI / MCP (`rms-memory-mcp`) | **1.1.2** (2026-09-08; tag-pending) | Yes |
+| RMS Memory GUI (`rms-memory-gui`) | **1.1.2** (2026-09-08; tag-pending) | Yes |
 
 Older pre-1.0 builds are unsupported.
 
@@ -53,3 +53,4 @@ Out of scope (unless chained into a higher impact):
 - Federated `projects` lists are capped (8 keys after dedupe) so fan-out cannot unbounded-open LanceDB stores outside the bind cache.
 - Bind-cache eviction cancels watchers and aborts tasks that miss the join timeout, so detached notify/sync loops do not accumulate after Store drop.
 - CI runs `cargo deny --locked check advisories bans sources` (`deny.toml`) so known RUSTSEC advisories and yanked crates fail the build (with a documented ignore list for unfixable transitive deps).
+- **`rms_file_history` (1.1.2):** runs `git log` only against the registered project `code_path` and stores a derived Lance cache (not vault Markdown). MCP `reindex` requires explicit `project`. Catch-up/reindex enforce commit budgets; hex SHA allowlist on revision args. Agents should use the tool instead of arbitrary shell `git`; v1 does not follow renames across paths. Search `include_file_history` is refused with federated `projects`.

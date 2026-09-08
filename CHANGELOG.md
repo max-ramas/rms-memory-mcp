@@ -2,9 +2,33 @@
 
 All notable changes to this project will be documented in this file.
 
+## [Unreleased]
+
+## [1.1.2] - 2026-09-08
+
+After **1.1.1**: write dry-run previews and derived `code_path` file→commit history. Companion GUI adopts the **same `1.1.2` product version** (docs/path-dep; no new GUI panels for these MCP tools). ADRs: `decisions/rms-write-dry-run-2026-09-08.md`, `decisions/file-git-history-index-2026-09-08.md`.
+
+### Added
+- **`rms_write(dry_run)`:** plan→commit split; JSON preview of create/update/noop without disk or index side effects. Content fingerprint strips volatile `timestamp` / `last_modified_by` so stamp-only refreshes are noop. Create without `id` uses stable UUID v5 (`project:path`) so dry_run `item_key` matches a subsequent write.
+- **`rms_file_history`:** derived `code_path` git file→commit cache in Lance as normalized `(file_path, commit_sha)` rows. Actions: `query` / `catch_up` / `reindex` (MCP `reindex` requires explicit `project`). Lazy SHA catch-up; advance `last_indexed_sha` only after successful upsert. Default `git log --no-merges`; v1 does **not** use `-M`/`--follow`. Catch-up/reindex enforce commit-count budgets (2k / 50k); hex SHA allowlist on meta/range args.
+- **CLI** `rms-memory file-history catch-up|reindex|query` — `reindex` requires `--project`.
+- **Search** optional `include_file_history` attaches the last 3 commits to **code** hits (lazy catch-up, fail-closed). **Rejected** together with `projects: […]` federation. Stdio smoke expects `rms_file_history` in `tools/list`.
+
+### Changed
+- `rms_system_instructions` mentions `dry_run` and `rms_file_history` (prefer over shell `git log`).
+- `inject_audit_metadata` honors `args.id` when minting frontmatter id.
+- Root docs aligned to **1.1.2**.
+
+### Explicitly out of this release
+- Vault-git history index; rename-follow; GUI Search/Editor panels for dry_run / file history; merging `sync_vault` with git pull semantics.
+
+### Verification
+- Unit: write dry_run (create / stamp-only noop / update / stable item_key / real write); file_history parse + SHA reject; federation+history guard; `mcp_stdio_smoke` lists `rms_file_history`.
+- `cargo fmt --all`, `cargo clippy` on touched crates with `-D warnings`.
+
 ## [1.1.1] - 2026-09-08
 
-Pre-release hardening after **1.1.0**: safe vault prune (CLI + MCP), CLI crate extraction slice, stdio smoke gate. Companion GUI adopts the **same `1.1.1` product version**.
+Released after **1.1.0**: safe vault prune (CLI + MCP), CLI crate extraction slice, stdio smoke gate, crates.io flatten fix for `rms-memory-cli`. Companion GUI adopts the **same `1.1.1` product version** (installers + signed updater on this release page).
 
 ### Added
 - **`rms-memory prune`:** dry-run (default) / `--apply` archives superseded notes older than `--older-than-days` (default 30) under `artifacts/pruned/YYYY-MM-DD/` with `manifest.jsonl`. Skips pinned notes, wiki, trash, and prior prune batches. Never deletes.
@@ -20,6 +44,7 @@ Pre-release hardening after **1.1.0**: safe vault prune (CLI + MCP), CLI crate e
 ### Verification
 - `cargo fmt --all`, `cargo clippy --workspace --all-targets -- -D warnings`, workspace tests + stdio smoke.
 - Doctor remains 7/7; prune never deletes and skips pinned/wiki/trash.
+- Tag `v1.1.1`: GitHub Release (portable + deb/rpm) + crates.io **`rms-memory-mcp` 1.1.1**; GUI installers and `latest.json` updater mirror attached to the same public release.
 
 ## [1.1.0] - 2026-07-27
 

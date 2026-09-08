@@ -2,7 +2,7 @@
 
 This document outlines the strategic direction and upcoming milestones for RMS Memory.
 
-**Current (2026-09-08):** MCP **`1.1.1`** · companion GUI **`1.1.1`** (unified numbering). Pre-release candidate — tag pending.
+**Current (2026-09-08):** MCP **`1.1.2`** · companion GUI **`1.1.2`** (unified numbering). Tag-pending after dry_run + file history. Prior **1.1.1** remains the last published crates.io/GitHub line until `v1.1.2` ships.
 
 ## v1.0 — Foundation & Open Source ✅ (Released)
 
@@ -153,7 +153,19 @@ This document outlines the strategic direction and upcoming milestones for RMS M
 - [x] MCP tool `rms_prune` (`apply` defaults false).
 - [x] `gc` + `prune` implementations in `rms-memory-cli`; umbrella re-exports; `serve` stays local.
 - [x] `tests/mcp_stdio_smoke.rs` in CI.
-- [x] Unified product version **1.1.1** with companion GUI (Graph edges, status bar toggle, Project Git card, optional signed updater).
+- [x] crates.io flatten inlines `rms-memory-cli` (with core/index/vault) so umbrella publish succeeds after the CLI slice.
+- [x] Unified product version **1.1.1** with companion GUI (Graph edges, status bar toggle, Project Git card, signed updater mirrored to public MCP `latest.json`).
+- [x] Tag + publish: portable MCP packages, GUI installers on the same release, crates.io **1.1.1**.
+
+## v1.1.2 — write dry_run + file git history (2026-09-08)
+
+Additive MCP/CLI APIs after **1.1.1**. ADRs accepted; federated `include_file_history` refused; MCP `reindex` requires `project`; catch-up/reindex commit budgets.
+
+- [x] **A** `rms_write(dry_run)` + `content_fingerprint` ignoring volatile audit stamps; stamp-only → noop; stable create `item_key` (ADR).
+- [x] **B** Lance normalized `(file_path, commit_sha)` over `code_path` git; failure-atomic `last_indexed_sha`; `--no-merges`; no `-M`/`--follow` (ADR).
+- [x] MCP `rms_file_history` (`query` / `catch_up` / `reindex`) + CLI `rms-memory file-history …`.
+- [x] Search `include_file_history` (last 3 on code hits; not with `projects`) + `rms_system_instructions` / stdio smoke / root docs.
+- [ ] Tag + publish `v1.1.2` (MCP then GUI lockstep) + crates.io flatten.
 
 ## v1.0.9 — Federated search + concurrent binds (2026-07-26)
 
@@ -180,11 +192,12 @@ This document outlines the strategic direction and upcoming milestones for RMS M
 **Goal:** Make the workspace crates independently useful to downstream consumers (and publishable to crates.io), not just path-only members of the umbrella.
 
 Landed in **1.0.9:** physical extraction with stable facade.  
-Landed in **1.1.0:** crates.io publishes the flattened **umbrella only** (`scripts/flatten-for-crates-io.py`); do not re-publish internal members (name-reuse lock after the 1.0.9 orphan incident).
+Landed in **1.1.0:** crates.io publishes the flattened **umbrella only** (`scripts/flatten-for-crates-io.py`); do not re-publish internal members (name-reuse lock after the 1.0.9 orphan incident).  
+Landed in **1.1.1:** flatten staging also inlines `rms-memory-cli` (required after `gc`/`prune` extraction).
 
 Remaining:
 
-- Optional independent publish of `rms-memory-core` / `index` / `vault` **or** keep vendor/flatten forever (current recommendation).
+- Optional independent publish of `rms-memory-core` / `index` / `vault` / `cli` **or** keep vendor/flatten forever (current recommendation).
 - Further CLI extraction beyond `gc`/`prune` without a cycle through `mcp_server` (`serve` stays umbrella-local).
 - Document consuming `rms-memory-index` alone (no MCP layer).
 

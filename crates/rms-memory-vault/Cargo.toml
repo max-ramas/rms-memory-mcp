@@ -1,6 +1,6 @@
 [package]
 name = "rms-memory-vault"
-version = "1.1.1"
+version = "1.1.2"
 edition = "2024"
 description = "Document and project services for RMS Memory."
 license = "MIT"

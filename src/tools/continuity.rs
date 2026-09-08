@@ -522,7 +522,8 @@ pub fn system_instructions(project: Option<&str>) -> String {
 1. SEARCH FIRST: call `rms_search` before substantial changes. It returns a decision envelope (inject/abstain); trust an abstain instead of forcing weak context.
 2. READ CONTEXT: call `rms_read` on relevant hits (ADRs, rules) to ingest full documents.
 3. ORIENT: call `rms_overview` at session start for counts, recent notes, and active checkpoints of the current project.
-4. PERSIST: at task end, save new conventions, tricky fixes, and decisions with `rms_write`. Folders: architecture/, rules/, decisions/, artifacts/, docs/, api/.
+4. PERSIST: at task end, save new conventions, tricky fixes, and decisions with `rms_write`. Folders: architecture/, rules/, decisions/, artifacts/, docs/, api/. Prefer `rms_write` with `dry_run: true` first when unsure whether a note would create, update, or be a no-op.
+5. FILE HISTORY: for when a source file changed in git, call `rms_file_history` (do not shell `git log`). Optional `include_file_history` on search attaches the last 3 commits per hit.
 
 ## Session continuity
 - Before context compaction or a long pause, save progress: `rms_checkpoint_save` with name, goal, pending work, and linked vault paths.

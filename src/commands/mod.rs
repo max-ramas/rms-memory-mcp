@@ -1,4 +1,5 @@
 pub mod config;
+pub mod file_history;
 pub mod gc;
 pub mod hook;
 pub mod init;

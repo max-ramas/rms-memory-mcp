@@ -1,6 +1,6 @@
 [package]
 name = "rms-memory-core"
-version = "1.1.1"
+version = "1.1.2"
 edition = "2024"
 description = "Core documents, configuration, and workspace discovery for RMS Memory."
 license = "MIT"
@@ -23,6 +23,6 @@ tempfile = "3.27.0"
 tokio = { version = "1.52.3", features = ["sync"] }
 toml = "1.1.2"
 tracing = "0.1.44"
-uuid = { version = "1.23.4", features = ["v4"] }
+uuid = { version = "1.23.4", features = ["v4", "v5"] }
 
 [dev-dependencies]
