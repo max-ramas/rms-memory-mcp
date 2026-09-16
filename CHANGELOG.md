@@ -2,8 +2,6 @@
 
 All notable changes to this project will be documented in this file.
 
-## [Unreleased]
-
 ## [1.2.0] - 2026-09-15
 
 After **1.1.2**: agent-facing durable knowledge graph over MCP, post-`rms_write` vault graph refresh, and honest CLI GUI/AI status labels. ADRs: `decisions/agent-facing-knowledge-graph-mcp.md`, capability matrix `artifacts/agent-capability-matrix-2026-09-15.md`.
