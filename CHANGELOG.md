@@ -4,6 +4,32 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [1.2.0] - 2026-09-15
+
+After **1.1.2**: agent-facing durable knowledge graph over MCP, post-`rms_write` vault graph refresh, and honest CLI GUI/AI status labels. ADRs: `decisions/agent-facing-knowledge-graph-mcp.md`, capability matrix `artifacts/agent-capability-matrix-2026-09-15.md`.
+
+### Added
+- **`rms_graph` MCP tool:** `status` / `ensure` / `neighbors` / `path` / `snapshot` / `semantic` / `create_edge` / `suppress_edge` / `edge_override` / `export_dot`. Mutations require explicit `project`. Durable Markdown/code graph is MCP-first (not GUI-only). Structured JSON responses.
+- **CLI** `rms-memory graph …` mirrors the MCP graph actions.
+- **`rms_doctor` / `rms_reindex` / `rms_sync` MCP tools:** seven-point health report; full rebuild (requires `project`); incremental sync.
+- **Search** optional `include_graph_neighbors` attaches neighbor summaries per hit. **Rejected** together with `projects: […]` federation.
+- **Post-write vault graph refresh:** successful `rms_write` reconciles Markdown links and returns `graph_refresh` status in structuredContent (write still commits if refresh fails).
+- **CLI** `rms-memory features` + top-level `--help` status banner: real local GUI/AI detection (`GUI: installed|not installed · AI: configured|not configured`). Catalog tags `GUI` / `AI` / `GUI+AI` are yellow when GUI is absent, gray when installed. Soft CTA only when GUI is missing. Never paywalls MCP core; no visual GraphView/editor in CLI.
+- Doctor prints the same status banner tip.
+
+### Changed
+- `rms_system_instructions` documents GRAPH + MAINTENANCE loops.
+- Injected rule templates mention graph traversal alongside search/read/write.
+- Root docs aligned to **1.2.0**; companion GUI lockstep **1.2.0**.
+- README federation wording: when both `project` and `projects` are set, `projects` wins.
+
+### Explicitly out of this release
+- Porting visual GraphView / Markdown editor into CLI; Doctor/reindex as MCP tools (P1); paywalling any MCP core surface.
+
+### Verification
+- Unit: write→graph neighbors freshness; graph neighbors/path; federation+graph refuse; companion status banner / label modes; `mcp_stdio_smoke` lists `rms_graph`.
+- `cargo fmt --all`, `cargo clippy` on touched crates with `-D warnings`.
+
 ## [1.1.2] - 2026-09-08
 
 After **1.1.1**: write dry-run previews and derived `code_path` file→commit history. Companion GUI adopts the **same `1.1.2` product version** (docs/path-dep; no new GUI panels for these MCP tools). ADRs: `decisions/rms-write-dry-run-2026-09-08.md`, `decisions/file-git-history-index-2026-09-08.md`.

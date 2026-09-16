@@ -11,4 +11,5 @@ You are currently connected to the **RMS Memory MCP Server**. This is your persi
 4. **Persist Knowledge (MANDATORY TASK-END ROUTINE):** Before completing ANY request, you MUST ask yourself: "Did I discover a new project convention, fix a tricky bug, or learn a user preference?" If YES, you MUST proactively save this knowledge. DO NOT ask for permission.
    - **CRITICAL:** You MUST use the `rms-memory_rms_write` tool. DO NOT use your standard file writing tools (like `write_to_file`, `bash`, etc.) because the memory vault is stored externally.
    - **PATH:** Provide only the relative folder and filename (e.g., `architecture/decision.md`, `rules/api.md`, `decisions/001.md`, `artifacts/walkthrough.md`, `docs/setup.md`). The MCP server will automatically route it to the correct external vault. Do NOT prepend `.agents` or the project root.
+5. **Graph:** Use `rms_graph` (neighbors/path/ensure) or search `include_graph_neighbors` to traverse durable Markdown/code links. Do not confuse this with the GUI-only visual GraphView.
 <!-- RMS-MEMORY-END -->

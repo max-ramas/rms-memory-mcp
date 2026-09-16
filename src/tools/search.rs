@@ -61,6 +61,9 @@ pub struct UnifiedSearchResult {
     /// Last few commits for this path when `include_file_history` is set.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub file_history: Option<Vec<serde_json::Value>>,
+    /// Graph neighbors when `include_graph_neighbors` is set.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub graph_neighbors: Option<Vec<serde_json::Value>>,
 }
 
 impl UnifiedSearchResult {
@@ -82,6 +85,7 @@ impl UnifiedSearchResult {
             segment_index: None,
             pinned: result.pinned,
             file_history: None,
+            graph_neighbors: None,
         }
     }
 
@@ -103,6 +107,7 @@ impl UnifiedSearchResult {
             segment_index: Some(result.segment_index),
             pinned: None,
             file_history: None,
+            graph_neighbors: None,
         }
     }
 
@@ -340,12 +345,17 @@ async fn execute_inner(
         .get("include_file_history")
         .and_then(|value| value.as_bool())
         .unwrap_or(false);
+    let include_graph_neighbors = args
+        .get("include_graph_neighbors")
+        .and_then(|value| value.as_bool())
+        .unwrap_or(false);
     let corpus = forced_corpus.unwrap_or(Corpus::parse(
         args.get("corpus").and_then(|value| value.as_str()),
     )?);
 
     let project_keys = parse_projects_arg(args)?;
     reject_federated_include_file_history(include_file_history, project_keys.is_some())?;
+    reject_federated_include_graph_neighbors(include_graph_neighbors, project_keys.is_some())?;
     let indexer = ctx
         .indexer
         .as_ref()
@@ -418,6 +428,15 @@ async fn execute_inner(
         }
     }
 
+    if include_graph_neighbors
+        && envelope.decision == SearchDecision::Inject
+        && let Some(store) = ctx.store.as_ref()
+    {
+        crate::tools::graph::attach_neighbors_to_hits(store, &mut envelope.results, 8)
+            .await
+            .map_err(|error| anyhow!("include_graph_neighbors query failed: {error:#}"))?;
+    }
+
     Ok(envelope)
 }
 
@@ -429,6 +448,19 @@ fn reject_federated_include_file_history(
     if include_file_history && federated {
         return Err(anyhow!(
             "include_file_history is not supported with projects: […] federation (would attach the sticky-bound project's git cache). Search a single project or call rms_file_history per key."
+        ));
+    }
+    Ok(())
+}
+
+/// Federated search must not attach sticky-bind graph neighbors (wrong vault).
+fn reject_federated_include_graph_neighbors(
+    include_graph_neighbors: bool,
+    federated: bool,
+) -> Result<()> {
+    if include_graph_neighbors && federated {
+        return Err(anyhow!(
+            "include_graph_neighbors is not supported with projects: […] federation (would attach the sticky-bound project's graph). Search a single project or call rms_graph per key."
         ));
     }
     Ok(())
@@ -816,6 +848,7 @@ mod tests {
             segment_index: None,
             pinned: None,
             file_history: None,
+            graph_neighbors: None,
         }
     }
 
@@ -1014,6 +1047,13 @@ mod tests {
         assert!(reject_federated_include_file_history(true, true).is_err());
         assert!(reject_federated_include_file_history(true, false).is_ok());
         assert!(reject_federated_include_file_history(false, true).is_ok());
+    }
+
+    #[test]
+    fn include_graph_neighbors_rejected_with_federation() {
+        assert!(reject_federated_include_graph_neighbors(true, true).is_err());
+        assert!(reject_federated_include_graph_neighbors(true, false).is_ok());
+        assert!(reject_federated_include_graph_neighbors(false, true).is_ok());
     }
 
     #[test]

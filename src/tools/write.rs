@@ -54,10 +54,28 @@ pub async fn execute(
     // Real writes always commit (including stamp-only refreshes) for backward
     // compatibility — noop classification is meaningful only for dry_run.
     commit_write(ctx, &plan)?;
-    Ok(super::response::json_text_response(&format!(
-        "Successfully wrote to {}",
-        plan.path_str
-    )))
+    // Watcher debounce can lag several seconds; refresh the durable vault graph
+    // immediately so agents can traverse new Markdown links via `rms_graph`.
+    let graph_refresh = super::graph::refresh_vault_graph_after_write(ctx).await;
+    let message = match &graph_refresh {
+        super::graph::GraphRefreshOutcome::Ok => {
+            format!("Successfully wrote to {}", plan.path_str)
+        }
+        super::graph::GraphRefreshOutcome::Skipped { reason } => format!(
+            "Successfully wrote to {}\n(warning: vault graph refresh skipped: {reason})",
+            plan.path_str
+        ),
+        super::graph::GraphRefreshOutcome::Failed { error } => format!(
+            "Successfully wrote to {}\n(warning: vault graph refresh failed: {error})",
+            plan.path_str
+        ),
+    };
+    super::response::json_structured_response(&serde_json::json!({
+        "message": message,
+        "file_path": plan.path_str,
+        "action": plan.action.as_str(),
+        "graph_refresh": graph_refresh,
+    }))
 }
 
 fn plan_write(
@@ -582,5 +600,52 @@ mod tests {
         args.insert("dry_run".into(), serde_json::json!(false));
         execute(&ctx, &args).await.expect("write");
         assert!(dir.path().join("decisions/x.md").exists());
+    }
+
+    #[tokio::test]
+    async fn successful_write_refreshes_vault_graph_neighbors() {
+        let dir = tempdir().unwrap();
+        let root = dir.path().to_path_buf();
+        std::fs::write(root.join("b.md"), "---\nid: doc-b\n---\n# B\n").unwrap();
+        let store = crate::store::Store::init(&root.join("db").to_string_lossy(), "memory")
+            .await
+            .unwrap();
+        let mut ctx = make_ctx(root.clone());
+        ctx.code_path = Some(root.clone());
+        ctx.store = Some(store);
+
+        let mut args = serde_json::Map::new();
+        args.insert("path".into(), serde_json::json!("a.md"));
+        args.insert("mode".into(), serde_json::json!("create"));
+        args.insert(
+            "content".into(),
+            serde_json::json!("---\nid: doc-a\n---\n[Read B](b.md)\n"),
+        );
+        execute(&ctx, &args).await.expect("write");
+
+        let neighbors =
+            crate::tools::graph::neighbors_for_path(ctx.store.as_ref().unwrap(), "a.md", 8)
+                .await
+                .expect("neighbors");
+        assert_eq!(neighbors.len(), 1);
+        assert_eq!(neighbors[0]["direction"], "out");
+        assert_eq!(neighbors[0]["neighbor"]["path"], "b.md");
+
+        args.insert("mode".into(), serde_json::json!("replace"));
+        args.insert(
+            "content".into(),
+            serde_json::json!("---\nid: doc-a\n---\n[Read B](b.md)\nUpdated.\n"),
+        );
+        let response = execute(&ctx, &args).await.expect("rewrite");
+        assert_eq!(
+            response["structuredContent"]["graph_refresh"]["status"],
+            "ok"
+        );
+        assert!(
+            response["structuredContent"]["message"]
+                .as_str()
+                .unwrap()
+                .contains("Successfully wrote")
+        );
     }
 }

@@ -2,7 +2,12 @@ use anyhow::Result;
 use clap::{Parser, Subcommand};
 
 #[derive(Parser)]
-#[command(name = "rms-memory", version = env!("CARGO_PKG_VERSION"), about = "RMS Memory MCP Server")]
+#[command(
+    name = "rms-memory",
+    version = env!("CARGO_PKG_VERSION"),
+    about = "RMS Memory MCP Server",
+    after_help = "Status: run `rms-memory features` for live GUI/AI detection and the capability catalog.\nMCP core (search, write, durable graph, checkpoints) is never paywalled; GUI/AI tags are informational only."
+)]
 pub struct Cli {
     /// Override the scope identifier (path, thread ID, project name, etc.)
     #[arg(long, short = 's', global = true)]
@@ -56,10 +61,15 @@ pub enum Commands {
         #[command(subcommand)]
         command: crate::commands::projects::ProjectsCommands,
     },
+    /// Show companion GUI/AI status and capability catalog (soft labels only)
+    Features(crate::commands::features::FeaturesArgs),
+    /// Query/mutate the durable knowledge graph (MCP-first; same actions as rms_graph)
+    Graph(crate::commands::graph::GraphArgs),
 }
 
 impl Cli {
     pub async fn execute() -> Result<()> {
+        maybe_print_help_status_banner();
         let cli = Cli::parse();
         let scope = cli.scope.clone();
         match &cli.command {
@@ -81,6 +91,48 @@ impl Cli {
             Commands::ExportLlms(args) => args.run(scope).await,
             Commands::Wiki { command } => command.run(scope).await,
             Commands::Projects { command } => Ok(command.run()?),
+            Commands::Features(args) => args.run(scope).await,
+            Commands::Graph(args) => args.run(scope).await,
         }
     }
+}
+
+/// Print the live companion status banner before clap root help.
+fn maybe_print_help_status_banner() {
+    let args: Vec<String> = std::env::args().skip(1).collect();
+    let has_help = args
+        .iter()
+        .any(|a| a == "--help" || a == "-h" || a == "help");
+    if !has_help {
+        return;
+    }
+    const SUBCOMMANDS: &[&str] = &[
+        "config",
+        "init",
+        "inject-rules",
+        "import",
+        "serve",
+        "reindex",
+        "doctor",
+        "install",
+        "uninstall",
+        "gc",
+        "prune",
+        "file-history",
+        "hook",
+        "sync",
+        "log",
+        "export-llms",
+        "wiki",
+        "graph",
+        "features",
+    ];
+    if args.iter().any(|a| SUBCOMMANDS.contains(&a.as_str())) {
+        return;
+    }
+    print!(
+        "{}",
+        crate::companion_status::format_status_banner(&crate::companion_status::detect())
+    );
+    println!();
 }

@@ -1,6 +1,6 @@
 # RMS Memory MCP Server — Walkthrough
 
-Updated: 2026-09-08 · MCP `1.1.2` / GUI `1.1.2`
+Updated: 2026-09-16 · MCP `1.2.0` / GUI `1.2.0`
 
 RMS Memory is a specialized Model Context Protocol (MCP) server that acts as localized persistent memory for LLM agents. It keeps human-authored knowledge in centralized Markdown Vaults and can optionally maintain a separate derived semantic index for source code, solving context fragmentation across multiple IDEs (Cursor, Zed, VS Code, Claude Code, Codex).
 
@@ -282,3 +282,13 @@ ADRs: dry-run fingerprint; file git-history index. Tag-pending with unified GUI 
 - **`rms_file_history`:** Lance normalized `(file_path, commit_sha)` over registered `code_path` git (`--no-merges`; no `-M`/`--follow`); lazy `catch_up`; explicit `reindex` requires MCP `project` / CLI `--project`; commit budgets 2k catch-up / 50k reindex; hex SHA allowlist; advance `last_indexed_sha` only after upsert.
 - **Surfaces:** MCP + CLI; search `include_file_history` (last 3 on **code** hits; refused with `projects` federation); `rms_system_instructions`; smoke asserts tool in `tools/list`.
 - **Non-goals:** vault-git history index; rename follow; GUI panels for these tools.
+
+### 28. Agent-facing graph + honest CLI labels (v1.2.0)
+
+ADR: `decisions/agent-facing-knowledge-graph-mcp.md`. Capability matrix: `artifacts/agent-capability-matrix-2026-09-15.md`.
+
+- **`rms_graph`:** status/ensure/neighbors/path/snapshot/semantic/export_dot; mutations require explicit `project`. Post-`rms_write` vault graph reconcile with `graph_refresh` in the write response. CLI: `rms-memory graph …`.
+- **Search** `include_graph_neighbors` (refused with `projects` federation).
+- **Maintenance MCP:** `rms_doctor` / `rms_reindex` (requires `project`) / `rms_sync`.
+- **CLI** `rms-memory features` + help/doctor status banner: real GUI/AI detection; yellow tags when GUI absent, gray when installed; soft CTA only when missing. No visual GraphView/editor in CLI. MCP core never paywalled.
+- **Smoke** expects `rms_graph`, `rms_doctor`, `rms_reindex`, `rms_sync` in `tools/list`; system instructions mention GRAPH + MAINTENANCE.

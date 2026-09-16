@@ -2,7 +2,7 @@
 
 # 🧠 RMS Memory MCP
 
-**Version:** `1.1.2` (2026-09-08) · companion GUI `1.1.2` (unified numbering)
+**Version:** `1.2.0` (2026-09-16) · companion GUI `1.2.0` (unified numbering)
 
 **Persistent, local-first memory for your AI coding agents.**
 
@@ -50,7 +50,7 @@ You're developing a single project but switching between different agents — Cu
 | 🌐 **Multilingual Semantic Parsing** | `fastembed-rs` + `multilingual-e5-small` — native Russian & English understanding. |
 | 🌳 **AST Markdown Chunker** | `pulldown-cmark`-based chunking keeps code blocks and lists bound to their parent heading. |
 | 🧩 **Semantic Code Memory** | Optional Tree-sitter indexing for Rust, Go, JS/JSX, TS/TSX, Python, C/C++, Java, Ruby, Swift, and Vue `<script>` blocks; stable segment identities and repeated preambles preserve context when large implementations split. Opt-in `watch` mode reindexes **only dirty paths** (with full-walk fallback). |
-| 🕸️ **Knowledge Graph Foundation** | Derived Markdown/code relationships and durable user overrides are stored separately from retrieval chunks and consumed by the companion GUI graph. |
+| 🕸️ **Knowledge Graph (v1.2.0)** | Durable Markdown/code relationships via MCP `rms_graph` (neighbors, path, snapshot, mutations) and optional search `include_graph_neighbors`. Companion GUI still owns the visual GraphView. |
 | 🧹 **Safe Project Lifecycle** | Unregistering preserves vault/index data; permanent GUI deletion requires the exact project key, is confined to the master vault, and never touches source code. |
 | 🔀 **Federated Corpus Search** | Search `vault`, `code`, or `all`; mixed results use Reciprocal Rank Fusion rather than incompatible raw vector distances. |
 | 🎯 **Bounded Recall (v1.0.7)** | `rms_search` returns an inject/abstain envelope with `max_chars`, optional `min_score`, fail-closed errors, and `retrieval_mode` (`hybrid` or short-query `fts_prefer`). |
@@ -261,6 +261,8 @@ Supported names are `rust`, `go`, `javascript`, `jsx`, `typescript`, `tsx`, `pyt
 | `rms-memory gc` | Prunes orphaned LanceDB indices belonging to deleted vaults. |
 | `rms-memory prune [--older-than-days N] [--apply]` | Archives superseded notes older than N days (default 30) under `artifacts/pruned/YYYY-MM-DD/`. Dry-run by default; never deletes. Distinct from `gc` (orphan DBs) and from supersession (lifecycle marking). |
 | `rms-memory file-history catch-up\|reindex\|query` | Derived `code_path` git file→commit cache (Lance). `reindex` requires `--project`. Prefer MCP `rms_file_history` for agents. |
+| `rms-memory features` | Live GUI/AI status banner + capability catalog (`GUI`/`AI` tags; soft yellow when GUI absent, gray when installed). Informational only — MCP core is never paywalled. |
+| `rms-memory graph status\|ensure\|neighbors\|path\|snapshot\|export-dot\|…` | Durable knowledge graph (same actions as MCP `rms_graph`). Mutations require `--project`. |
 | `rms-memory log` | Tails the telemetry log (`~/.rms-memory/rms.log`). |
 | `rms-memory export-llms` | Compiles the current vault into a single `llms.txt` payload. |
 | `rms-memory projects list` | Lists registered project keys and their code/vault paths. |
@@ -279,13 +281,13 @@ Tool descriptions are written to be **action-oriented**, so agents use the vault
 <tr><th>Tool</th><th>Purpose</th><th>Input</th></tr>
 <tr>
 <td><code>rms-memory_rms_search</code></td>
-<td>Searches Markdown memory by default. Set <code>corpus</code> to <code>code</code> or <code>all</code>; <code>all</code> uses Reciprocal Rank Fusion. Pass <code>projects: [key, …]</code> for read-only cross-project federation (mutually exclusive with <code>project</code>); vault/all with <code>len&gt;1</code> requires <code>cross_project_vault=true</code> on every listed key (hard fail — no silent degrade). Returns an inject/abstain decision envelope (<code>decision</code>, <code>reason</code>, <code>injected_ids</code>, optional <code>retrieval_mode</code>). Optional <code>include_file_history</code> attaches the last 3 commits from the derived <code>code_path</code> git cache (lazy catch-up). Agents are instructed to call this <em>first</em>.</td>
-<td><code>{ query, project?, projects?, corpus: vault|code|all, limit, include_content, min_confidence, max_chars?, min_score?, include_file_history? }</code></td>
+<td>Searches Markdown memory by default. Set <code>corpus</code> to <code>code</code> or <code>all</code>; <code>all</code> uses Reciprocal Rank Fusion. Pass <code>projects: [key, …]</code> for read-only cross-project federation (when both <code>project</code> and <code>projects</code> are set, <code>projects</code> wins); vault/all with <code>len&gt;1</code> requires <code>cross_project_vault=true</code> on every listed key (hard fail — no silent degrade). Returns an inject/abstain decision envelope (<code>decision</code>, <code>reason</code>, <code>injected_ids</code>, optional <code>retrieval_mode</code>). Optional <code>include_file_history</code> / <code>include_graph_neighbors</code> enrich hits (not with federated <code>projects</code>). Agents are instructed to call this <em>first</em>.</td>
+<td><code>{ query, project?, projects?, corpus: vault|code|all, limit, include_content, min_confidence, max_chars?, min_score?, include_file_history?, include_graph_neighbors? }</code></td>
 </tr>
 <tr>
 <td><code>rms-memory_rms_code_search</code></td>
-<td>Convenience endpoint for the derived semantic code index. Results include file, symbol, kind, line range, and segment index. Same optional <code>projects: […]</code> federation as <code>rms_search</code> (code-only; does not change the active bind).</td>
-<td><code>{ query, project?, projects?, limit, include_content }</code></td>
+<td>Convenience endpoint for the derived semantic code index. Results include file, symbol, kind, line range, and segment index. Same optional <code>projects: […]</code> federation as <code>rms_search</code> (code-only; does not change the active bind). Optional <code>include_graph_neighbors</code>.</td>
+<td><code>{ query, project?, projects?, limit, include_content, include_file_history?, include_graph_neighbors? }</code></td>
 </tr>
 <tr>
 <td><code>rms-memory_rms_read</code></td>
@@ -301,6 +303,26 @@ Tool descriptions are written to be **action-oriented**, so agents use the vault
 <td><code>rms-memory_rms_file_history</code></td>
 <td>Derived <code>code_path</code> git file→commit history (no shell). Lazy catch-up; <code>action=reindex</code> requires explicit <code>project</code> (after force-push). Prefer over <code>git log</code>. Search may set <code>include_file_history</code> for the last 3 commits on code hits (not with <code>projects</code> federation).</td>
 <td><code>{ path?, project?, limit?, include_message?, action?: query|catch_up|reindex }</code></td>
+</tr>
+<tr>
+<td><code>rms-memory_rms_graph</code></td>
+<td>Durable knowledge graph for agents: status/ensure/neighbors/path/snapshot/semantic/export_dot; create_edge and suppress/restore overrides (mutations require explicit <code>project</code>). Refreshed on sync and immediately after <code>rms_write</code> (write response includes <code>graph_refresh</code>). Visual GraphView remains GUI-only. Also available as CLI <code>rms-memory graph</code>.</td>
+<td><code>{ action?, project?, node?, path?, from?, to?, source?, target?, relation?, edge_key?, override_action?, force?, limit?, max_depth?, … }</code></td>
+</tr>
+<tr>
+<td><code>rms-memory_rms_doctor</code></td>
+<td>Seven-point vault health report (structure, IDs, links, LanceDB, wiki isolation, registry, freshness). <code>repair_frontmatter</code> requires explicit <code>project</code>.</td>
+<td><code>{ project?, repair_frontmatter? }</code></td>
+</tr>
+<tr>
+<td><code>rms-memory_rms_reindex</code></td>
+<td>Full vault/code/all index rebuild. Requires explicit <code>project</code>.</td>
+<td><code>{ project, corpus?: vault\|code\|all }</code></td>
+</tr>
+<tr>
+<td><code>rms-memory_rms_sync</code></td>
+<td>Incremental vault index sync (prefer over reindex for routine catch-up).</td>
+<td><code>{ project? }</code></td>
 </tr>
 <tr>
 <td><code>rms-memory_rms_projects</code></td>

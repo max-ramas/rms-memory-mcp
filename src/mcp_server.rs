@@ -969,7 +969,8 @@ impl McpServer {
                                 "min_confidence": { "type": "number", "description": "Optional minimum confidence threshold (0.0–1.0). Records with NULL confidence are always included. CAUTION: do NOT use high values (e.g. 0.9+) unless you need strict filtering. If zero results, retry without this parameter." },
                                 "max_chars": { "type": "integer", "description": "Maximum total characters of injected content across results (default 2000). Truncates/drops weaker hits to stay within budget." },
                                 "min_score": { "type": "number", "description": "Optional minimum relevance in 0..1 (distance and RRF normalized). If the best hit is weaker, rms_search abstains with an empty results list (fail-closed)." },
-                                "include_file_history": { "type": "boolean", "description": "When true, attach the last 3 commits from the derived code_path git-history cache to each code hit (lazy catch-up). Not allowed together with projects: […] federation. Default false." }
+                                "include_file_history": { "type": "boolean", "description": "When true, attach the last 3 commits from the derived code_path git-history cache to each code hit (lazy catch-up). Not allowed together with projects: […] federation. Default false." },
+                                "include_graph_neighbors": { "type": "boolean", "description": "When true, attach durable graph neighbors for each hit path. Not allowed together with projects: […] federation. Default false." }
                             },
                             "required": ["query"]
                         }
@@ -985,7 +986,8 @@ impl McpServer {
                                 "projects": { "type": "array", "items": { "type": "string" }, "description": "Explicit list of registered project keys for read-only federated code search (max 8 after dedupe). Does not change the active bind. When set together with `project`, this list wins." },
                                 "limit": { "type": "integer", "description": "Maximum results; default 10, maximum 100." },
                                 "include_content": { "type": "boolean", "description": "Whether to include indexed code content; default true." },
-                                "include_file_history": { "type": "boolean", "description": "When true, attach the last 3 commits from the derived code_path git-history cache to each code hit. Not allowed together with projects: […] federation. Default false." }
+                                "include_file_history": { "type": "boolean", "description": "When true, attach the last 3 commits from the derived code_path git-history cache to each code hit. Not allowed together with projects: […] federation. Default false." },
+                                "include_graph_neighbors": { "type": "boolean", "description": "When true, attach durable graph neighbors for each hit path. Not allowed together with projects: […] federation. Default false." }
                             },
                             "required": ["query"]
                         }
@@ -1036,6 +1038,71 @@ impl McpServer {
                                 "include_message": { "type": "boolean", "description": "Include commit subject lines. Default false." },
                                 "action": { "type": "string", "enum": ["query", "catch_up", "reindex"], "description": "query (default), catch_up, or reindex (full rebuild; requires project)." },
                                 "project": { "type": "string", "description": "Registered project key. Required for action=reindex; recommended for all actions when the MCP client did not provide a workspace root." }
+                            }
+                        }
+                    },
+                    {
+                        "name": "rms_graph",
+                        "description": "Query and mutate the durable Markdown/code knowledge graph (MCP-first). Actions: status, ensure (reconcile vault links if empty or force=true), neighbors, path (BFS), snapshot, semantic (ephemeral embedding edges), create_edge / suppress_edge / edge_override (mutations require explicit `project`), export_dot. Prefer this for dependency traversal instead of guessing from search alone.",
+                        "inputSchema": {
+                            "type": "object",
+                            "properties": {
+                                "action": {
+                                    "type": "string",
+                                    "enum": ["status", "ensure", "neighbors", "path", "snapshot", "semantic", "create_edge", "suppress_edge", "edge_override", "export_dot"],
+                                    "description": "Graph action; default status."
+                                },
+                                "project": { "type": "string", "description": "Registered project key. Required for create_edge / suppress_edge / edge_override." },
+                                "node": { "type": "string", "description": "Node key (e.g. vault:doc-id) or vault path for neighbors." },
+                                "path": { "type": "string", "description": "Vault-relative path alias for neighbors." },
+                                "from": { "type": "string", "description": "Path/node for path search start." },
+                                "to": { "type": "string", "description": "Path/node for path search goal." },
+                                "source": { "type": "string", "description": "Source node_key for create_edge." },
+                                "target": { "type": "string", "description": "Target node_key for create_edge." },
+                                "relation": { "type": "string", "description": "Edge relation (lowercase + underscores); default links_to." },
+                                "edge_key": { "type": "string", "description": "Edge key for suppress/restore overrides." },
+                                "override_action": { "type": "string", "enum": ["suppress", "restore"], "description": "Override action for suppress_edge / edge_override." },
+                                "expected_revision": { "type": "integer", "description": "Optimistic concurrency revision for edge overrides; default 0." },
+                                "author": { "type": "string", "description": "Optional author for edge overrides." },
+                                "force": { "type": "boolean", "description": "ensure: rebuild vault links even when the graph is non-empty." },
+                                "limit": { "type": "integer", "description": "Max neighbors / snapshot / export rows." },
+                                "max_depth": { "type": "integer", "description": "Max BFS depth for path (default 8)." },
+                                "max_nodes": { "type": "integer", "description": "semantic: max nodes considered." },
+                                "neighbors_per_node": { "type": "integer", "description": "semantic: neighbors per node." },
+                                "confidence_threshold": { "type": "number", "description": "semantic: minimum similarity confidence." }
+                            }
+                        }
+                    },
+                    {
+                        "name": "rms_doctor",
+                        "description": "Run the seven-point vault health diagnostics (structure, IDs, links, LanceDB, wiki isolation, registry, freshness). Returns structured JSON. Set repair_frontmatter=true only with an explicit project (refuses sticky-bind repair).",
+                        "inputSchema": {
+                            "type": "object",
+                            "properties": {
+                                "project": { "type": "string", "description": "Registered project key. Required when repair_frontmatter=true." },
+                                "repair_frontmatter": { "type": "boolean", "description": "Attempt frontmatter ID repairs. Requires project. Default false." }
+                            }
+                        }
+                    },
+                    {
+                        "name": "rms_reindex",
+                        "description": "Full rebuild of vault and/or code indexes. Destructive to derived tables — requires explicit `project`. Prefer rms_sync for incremental catch-up.",
+                        "inputSchema": {
+                            "type": "object",
+                            "properties": {
+                                "project": { "type": "string", "description": "Registered project key (required)." },
+                                "corpus": { "type": "string", "enum": ["vault", "code", "all"], "description": "Which corpus to rebuild; default vault." }
+                            },
+                            "required": ["project"]
+                        }
+                    },
+                    {
+                        "name": "rms_sync",
+                        "description": "Incremental vault index sync (same as CLI `rms-memory sync`). Prefer an explicit `project` when the IDE is multi-root.",
+                        "inputSchema": {
+                            "type": "object",
+                            "properties": {
+                                "project": { "type": "string", "description": "Registered project key, used when the MCP client did not provide a workspace root." }
                             }
                         }
                     },
@@ -1181,6 +1248,14 @@ impl McpServer {
                     "rms_file_history" => {
                         crate::tools::file_history::execute(&self.ctx, &args).await
                     }
+                    "rms_graph" => crate::tools::graph::execute(&self.ctx, &args).await,
+                    "rms_doctor" => {
+                        crate::tools::maintenance::execute_doctor(&self.ctx, &args).await
+                    }
+                    "rms_reindex" => {
+                        crate::tools::maintenance::execute_reindex(&self.ctx, &args).await
+                    }
+                    "rms_sync" => crate::tools::maintenance::execute_sync(&self.ctx, &args).await,
                     "rms_overview" => {
                         crate::tools::continuity::execute_overview(&self.ctx, &args).await
                     }

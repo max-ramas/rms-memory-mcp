@@ -558,6 +558,17 @@ impl DoctorArgs {
             );
         }
 
+        let companion = crate::companion_status::detect();
+        print!(
+            "\n{}",
+            crate::companion_status::format_status_banner(&companion)
+        );
+        if !companion.gui_installed {
+            println!(
+                "Tip: `rms-memory features` lists optional GUI/AI capabilities (informational only)."
+            );
+        }
+
         // ─── Stamp Project ───
         if self.stamp_project {
             let project_key = self.project.clone().or_else(|| workspace.project_key());

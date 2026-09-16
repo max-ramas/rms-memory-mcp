@@ -1,7 +1,7 @@
 # RMS Memory GUI
 
-**Current release candidate:** GUI `1.1.2` with MCP `1.1.2` (unified numbering; tag-pending). Last published installers: `1.1.1`.  
-MCP **1.1.2** adds agent/CLI `rms_write(dry_run)` and `rms_file_history` — no GUI panels for these yet.
+**Current release candidate:** GUI `1.2.0` with MCP `1.2.0` (unified numbering).  
+MCP **1.2.0** adds `rms_graph`, CLI `graph`, post-write graph refresh, search `include_graph_neighbors`, `rms_doctor` / `rms_reindex` / `rms_sync`, and CLI `features` GUI/AI status labels.
 
 RMS Memory GUI is the optional commercial desktop application for
 [RMS Memory MCP](https://github.com/max-ramas/rms-memory-mcp). It is a Tauri

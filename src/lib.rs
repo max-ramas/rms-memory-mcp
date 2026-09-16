@@ -15,6 +15,11 @@ pub use rms_memory_vault::{document_service, import, project_migrate, project_se
 
 pub mod tools;
 
+#[doc(hidden)]
+pub mod companion_status;
+#[doc(hidden)]
+pub mod doctor;
+
 /// In-process `rms-memory --help` text for Wiki `self_cli_help` sources.
 /// Prefer this over shelling out so GUI / library hosts work without a PATH binary.
 pub fn render_cli_help(subcommand: &str) -> String {

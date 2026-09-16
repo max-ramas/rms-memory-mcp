@@ -2,7 +2,7 @@
 
 This document outlines the strategic direction and upcoming milestones for RMS Memory.
 
-**Current (2026-09-08):** MCP **`1.1.2`** · companion GUI **`1.1.2`** (unified numbering). Tag-pending after dry_run + file history. Prior **1.1.1** remains the last published crates.io/GitHub line until `v1.1.2` ships.
+**Current (2026-09-16):** MCP **`1.2.0`** · companion GUI **`1.2.0`** (unified numbering). Agent-facing durable graph + honest CLI GUI/AI labels + maintenance MCP tools.
 
 ## v1.0 — Foundation & Open Source ✅ (Released)
 
@@ -166,6 +166,18 @@ Additive MCP/CLI APIs after **1.1.1**. ADRs accepted; federated `include_file_hi
 - [x] MCP `rms_file_history` (`query` / `catch_up` / `reindex`) + CLI `rms-memory file-history …`.
 - [x] Search `include_file_history` (last 3 on code hits; not with `projects`) + `rms_system_instructions` / stdio smoke / root docs.
 - [ ] Tag + publish `v1.1.2` (MCP then GUI lockstep) + crates.io flatten.
+
+## v1.2.0 — agent-facing graph + honest CLI labels (2026-09-15)
+
+MCP-first durable graph for agents; desire-driven GUI/AI labels (no MCP paywall).
+
+- [x] ADR + capability matrix (`decisions/agent-facing-knowledge-graph-mcp.md`).
+- [x] `rms_graph` MCP + CLI `rms-memory graph` + post-`rms_write` refresh (`graph_refresh` in write response).
+- [x] Search `include_graph_neighbors` (refused with `projects` federation).
+- [x] CLI `features` / help / doctor status banner; yellow tags if GUI absent, gray if installed.
+- [x] `rms_doctor` / `rms_reindex` / `rms_sync` MCP tools.
+- [x] system_instructions + templates + smoke + docs aligned to **1.2.0**; GUI lockstep **1.2.0**.
+- [ ] Tag + publish `v1.2.0` (MCP + GUI).
 
 ## v1.0.9 — Federated search + concurrent binds (2026-07-26)
 
