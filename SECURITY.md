@@ -4,8 +4,8 @@
 
 | Component | Version | Supported |
 |-----------|---------|-----------|
-| `rms-memory` CLI / MCP (`rms-memory-mcp`) | **1.2.0** (2026-09-16) | Yes |
-| RMS Memory GUI (`rms-memory-gui`) | **1.2.0** (2026-09-16) | Yes |
+| `rms-memory` CLI / MCP (`rms-memory-mcp`) | **1.2.1** (2026-10-01) | Yes |
+| RMS Memory GUI (`rms-memory-gui`) | **1.2.1** (2026-10-01) | Yes |
 
 Older pre-1.0 builds are unsupported.
 

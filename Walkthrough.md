@@ -1,6 +1,6 @@
 # RMS Memory MCP Server — Walkthrough
 
-Updated: 2026-09-16 · MCP `1.2.0` / GUI `1.2.0`
+Updated: 2026-10-01 · MCP `1.2.1` / GUI `1.2.1`
 
 RMS Memory is a specialized Model Context Protocol (MCP) server that acts as localized persistent memory for LLM agents. It keeps human-authored knowledge in centralized Markdown Vaults and can optionally maintain a separate derived semantic index for source code, solving context fragmentation across multiple IDEs (Cursor, Zed, VS Code, Claude Code, Codex).
 
@@ -276,7 +276,7 @@ First non-agentic consolidation step after supersession lifecycle (see §21). **
 
 ### 27. Write dry_run + file git history (v1.1.2)
 
-ADRs: dry-run fingerprint; file git-history index. Tag-pending with unified GUI **1.1.2**.
+ADRs: dry-run fingerprint; file git-history index. Released with unified GUI **1.1.2**.
 
 - **`rms_write(dry_run)`:** plan→commit split; JSON create/update/noop preview; fingerprint strips `timestamp`/`last_modified_by`; create without `id` uses UUID v5(`project:path`) so `item_key` is stable across dry_run → write.
 - **`rms_file_history`:** Lance normalized `(file_path, commit_sha)` over registered `code_path` git (`--no-merges`; no `-M`/`--follow`); lazy `catch_up`; explicit `reindex` requires MCP `project` / CLI `--project`; commit budgets 2k catch-up / 50k reindex; hex SHA allowlist; advance `last_indexed_sha` only after upsert.
@@ -292,3 +292,10 @@ ADR: `decisions/agent-facing-knowledge-graph-mcp.md`. Capability matrix: `artifa
 - **Maintenance MCP:** `rms_doctor` / `rms_reindex` (requires `project`) / `rms_sync`.
 - **CLI** `rms-memory features` + help/doctor status banner: real GUI/AI detection; yellow tags when GUI absent, gray when installed; soft CTA only when missing. No visual GraphView/editor in CLI. MCP core never paywalled.
 - **Smoke** expects `rms_graph`, `rms_doctor`, `rms_reindex`, `rms_sync` in `tools/list`; system instructions mention GRAPH + MAINTENANCE.
+
+### 29. Graph and release stabilization (v1.2.1)
+
+- **Editable graph read:** `query_graph_edges_with_overrides` returns durable edge keys, suppressed rows and current override actions/revisions to the GUI. Ordinary graph/MCP reads still omit suppressed edges. GraphView uses the durable key and compare-and-swap revision to suppress or restore an edge after a reload.
+- **Federation errors:** asking federated search for graph neighbors or file history returns a typed hard error. It cannot be mistaken for a weak-match abstention.
+- **Linux AppImage:** release packaging repairs `AppRun.wrapped` to mode 0755 inside the final Type 2 image, then re-extracts and checks payload permissions. The repair was validated in an Ubuntu 22.04 container using the released 1.2.0 image. The tag's CI gate checks the new artifact before upload; the catalog test is a separate distribution check.
+- **Distribution:** the GUI release pipeline validates package, Tauri and Cargo versions together. Signed updater metadata can be mirrored from uploaded build artifacts when the private GUI repository has no GitHub Release for the tag.

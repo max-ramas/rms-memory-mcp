@@ -1,7 +1,7 @@
 # RMS Memory GUI
 
-**Current release candidate:** GUI `1.2.0` with MCP `1.2.0` (unified numbering).  
-MCP **1.2.0** adds `rms_graph`, CLI `graph`, post-write graph refresh, search `include_graph_neighbors`, `rms_doctor` / `rms_reindex` / `rms_sync`, and CLI `features` GUI/AI status labels.
+**Current version:** GUI `1.2.1` with MCP `1.2.1` (unified numbering).
+This update fixes graph edge suppress/restore across reloads, hardens federated search refusals, and repairs AppImage launcher permissions during Linux packaging.
 
 RMS Memory GUI is the optional commercial desktop application for
 [RMS Memory MCP](https://github.com/max-ramas/rms-memory-mcp). It is a Tauri
@@ -54,7 +54,7 @@ the asset whose platform and architecture match your machine:
 | Linux x64 | `.AppImage`, `.deb`, or `.rpm` |
 
 The public release uses the same `v<version>` tag as the GUI build (unified with MCP:
-**`v1.1.2`** when tagged). Installer assets are named `rms_memory_gui_<version>_*` (publish fails
+**`v1.2.1`** for this release). Installer assets are named `rms_memory_gui_<version>_*` (publish fails
 if the version is missing from the basename) and checksums live in
 `rms_memory_gui_SHA256SUMS.txt`. The GUI pipeline runs both for a pushed `v*` tag
 and for a manual dispatch that supplies the same version tag as
@@ -63,6 +63,12 @@ When `TAURI_SIGNING_PRIVATE_KEY` is set on the GUI repo, CI mirrors signed
 updater metadata (`latest.json`, companion `.sig`, arch-qualified macOS
 `*.app.tar.gz`) onto that public release so in-app Install can use
 `…/releases/latest/download/latest.json`.
+
+The Linux pipeline checks the finished AppImage payload and makes
+`AppRun.wrapped` executable for users other than the build owner. This fixes
+the launcher permission failure reported by the AppImage catalog for 1.2.0.
+The catalog's test of the newly published installer remains an independent
+distribution check.
 
 ### Known macOS distribution issue
 

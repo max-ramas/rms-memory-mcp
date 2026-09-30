@@ -190,6 +190,14 @@ pub struct GraphEdgeOverride {
     pub updated_at: String,
 }
 
+/// A durable edge together with its optional user override. Unlike the normal
+/// graph query this includes suppressed edges so UI clients can offer restore.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct GraphEdgeWithOverride {
+    pub edge: GraphEdgeRecord,
+    pub override_row: Option<GraphEdgeOverride>,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

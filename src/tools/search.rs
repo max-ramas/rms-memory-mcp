@@ -446,8 +446,8 @@ fn reject_federated_include_file_history(
     federated: bool,
 ) -> Result<()> {
     if include_file_history && federated {
-        return Err(anyhow!(
-            "include_file_history is not supported with projects: […] federation (would attach the sticky-bound project's git cache). Search a single project or call rms_file_history per key."
+        return Err(federated_err(
+            "include_file_history is not supported with projects: […] federation (would attach the sticky-bound project's git cache). Search a single project or call rms_file_history per key.",
         ));
     }
     Ok(())
@@ -459,8 +459,8 @@ fn reject_federated_include_graph_neighbors(
     federated: bool,
 ) -> Result<()> {
     if include_graph_neighbors && federated {
-        return Err(anyhow!(
-            "include_graph_neighbors is not supported with projects: […] federation (would attach the sticky-bound project's graph). Search a single project or call rms_graph per key."
+        return Err(federated_err(
+            "include_graph_neighbors is not supported with projects: […] federation (would attach the sticky-bound project's graph). Search a single project or call rms_graph per key.",
         ));
     }
     Ok(())
@@ -1044,14 +1044,16 @@ mod tests {
 
     #[test]
     fn include_file_history_rejected_with_federation() {
-        assert!(reject_federated_include_file_history(true, true).is_err());
+        let error = reject_federated_include_file_history(true, true).unwrap_err();
+        assert!(error.downcast_ref::<FederatedSearchError>().is_some());
         assert!(reject_federated_include_file_history(true, false).is_ok());
         assert!(reject_federated_include_file_history(false, true).is_ok());
     }
 
     #[test]
     fn include_graph_neighbors_rejected_with_federation() {
-        assert!(reject_federated_include_graph_neighbors(true, true).is_err());
+        let error = reject_federated_include_graph_neighbors(true, true).unwrap_err();
+        assert!(error.downcast_ref::<FederatedSearchError>().is_some());
         assert!(reject_federated_include_graph_neighbors(true, false).is_ok());
         assert!(reject_federated_include_graph_neighbors(false, true).is_ok());
     }

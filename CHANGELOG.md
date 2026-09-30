@@ -2,6 +2,16 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.2.1] - 2026-10-01
+
+### Fixed
+- **Graph edge overrides:** GUI graph editing now uses the durable edge key and current CAS revision. Suppressed edges remain available in a dedicated graph query with their override metadata, allowing restore after reload without exposing suppressed edges in normal graph views or MCP queries.
+- **AppImage launch failure:** Linux release packaging repairs and verifies `AppRun.wrapped` executable permissions in the final AppImage payload.
+- **Federated search refusals:** requesting graph neighbors or file history together with multi-project federation now returns a hard tool error, rather than being converted into a search abstention.
+
+### Changed
+- MCP and companion GUI release versions are aligned at **1.2.1**.
+
 ## [1.2.0] - 2026-09-15
 
 After **1.1.2**: agent-facing durable knowledge graph over MCP, post-`rms_write` vault graph refresh, and honest CLI GUI/AI status labels. ADRs: `decisions/agent-facing-knowledge-graph-mcp.md`, capability matrix `artifacts/agent-capability-matrix-2026-09-15.md`.

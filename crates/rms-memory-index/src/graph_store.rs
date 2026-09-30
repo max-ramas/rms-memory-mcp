@@ -342,6 +342,29 @@ impl Store {
         tables: &GraphTables,
         _generation: u64,
     ) -> Result<Vec<GraphEdgeRecord>> {
+        Ok(self
+            .query_graph_edges_with_overrides(tables)
+            .await?
+            .into_iter()
+            .filter_map(|row| {
+                (!matches!(
+                    row.override_row
+                        .as_ref()
+                        .map(|override_row| override_row.action),
+                    Some(EdgeOverrideAction::Suppress)
+                ))
+                .then_some(row.edge)
+            })
+            .collect())
+    }
+
+    /// Query all physical edges, including suppressed edges and their current
+    /// override revisions. UI clients need these rows to make suppression
+    /// reversible without guessing an edge key or revision.
+    pub async fn query_graph_edges_with_overrides(
+        &self,
+        tables: &GraphTables,
+    ) -> Result<Vec<crate::graph::GraphEdgeWithOverride>> {
         use lancedb::query::Select;
         let mut stream = tables
             .edges
@@ -413,15 +436,13 @@ impl Store {
             }
         }
         let overrides = self.graph_edge_overrides(tables).await?;
-        records.retain(|edge| {
-            !matches!(
-                overrides
-                    .get(&edge.edge_key)
-                    .map(|override_row| override_row.action),
-                Some(EdgeOverrideAction::Suppress)
-            )
-        });
-        Ok(records)
+        Ok(records
+            .into_iter()
+            .map(|edge| crate::graph::GraphEdgeWithOverride {
+                override_row: overrides.get(&edge.edge_key).cloned(),
+                edge,
+            })
+            .collect())
     }
 
     /// Upsert derived graph nodes/edges for a path-scoped code patch.
@@ -850,6 +871,18 @@ mod tests {
         assert_eq!(visible[0].origin, EdgeOrigin::User);
         assert_eq!(visible[0].generation, None);
         assert_eq!(visible[0].confidence, None);
+        let editable = store
+            .query_graph_edges_with_overrides(&tables)
+            .await
+            .unwrap();
+        let suppressed = editable
+            .iter()
+            .find(|row| row.edge.edge_key == first.edge_key)
+            .expect("suppressed edges remain available to clients that can restore them");
+        assert_eq!(
+            suppressed.override_row.as_ref().map(|row| row.revision),
+            Some(1)
+        );
         let nodes = store.query_graph_nodes(&tables, 0).await.unwrap();
         let manual = nodes
             .iter()
@@ -872,11 +905,65 @@ mod tests {
         assert_eq!(restored.revision, 2);
         let visible = store.query_graph_edges(&tables, 0).await.unwrap();
         assert_eq!(visible.len(), 2);
+        let editable = store
+            .query_graph_edges_with_overrides(&tables)
+            .await
+            .unwrap();
+        let restored_override = editable
+            .iter()
+            .find(|row| row.edge.edge_key == first.edge_key)
+            .and_then(|row| row.override_row.as_ref())
+            .expect("restored edge keeps its override revision for the next CAS");
+        assert_eq!(restored_override.action, EdgeOverrideAction::Restore);
+        assert_eq!(restored_override.revision, 2);
         let derived = visible
             .iter()
             .find(|edge| edge.origin == EdgeOrigin::Derived)
             .unwrap();
         assert_eq!(derived.resolution, EdgeResolution::Unresolved);
+    }
+
+    #[tokio::test]
+    async fn fabricated_gui_style_override_key_does_not_hide_durable_edge() {
+        // Regression guard for the former GUI implementation, which wrote
+        // "{source}->{target}:{relation}" instead of edge.edge_key.
+        let directory = tempfile::tempdir().unwrap();
+        let store = Store::init(&directory.path().to_string_lossy(), "memory")
+            .await
+            .unwrap();
+        let source = GraphNodeKey::code("crate::a").unwrap();
+        let target = GraphNodeKey::external("crate::b").unwrap();
+        let edge = derived_edge(source.clone(), target.clone(), 1);
+        let durable_key = edge.edge_key.clone();
+        store
+            .reconcile_derived_graph(
+                "rust-tree-sitter-v1",
+                1,
+                vec![node(source.clone(), 1), node(target.clone(), 1)],
+                vec![edge.clone()],
+            )
+            .await
+            .unwrap();
+
+        let fabricated = format!(
+            "{}->{}:{}",
+            source.as_str(),
+            target.as_str(),
+            edge.relation.as_str()
+        );
+        store
+            .set_graph_edge_override(&fabricated, EdgeOverrideAction::Suppress, 0, None)
+            .await
+            .unwrap();
+
+        let tables = store.open_or_create_graph_tables().await.unwrap();
+        let visible = store.query_graph_edges(&tables, 0).await.unwrap();
+        let still_visible = visible.iter().any(|e| e.edge_key == durable_key);
+        assert!(
+            still_visible,
+            "override under fabricated GUI key must not hide durable edge (proves GUI suppress no-op)"
+        );
+        assert_ne!(durable_key, fabricated);
     }
 
     #[test]
