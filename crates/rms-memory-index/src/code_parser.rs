@@ -1,5 +1,6 @@
 use anyhow::{Result, anyhow};
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use std::path::Path;
 use tree_sitter::{Node, Parser};
 
@@ -26,10 +27,12 @@ pub enum LanguageId {
     Php,
     Kotlin,
     Sql,
+    Html,
+    Css,
 }
 
 impl LanguageId {
-    pub const ALL: [Self; 17] = [
+    pub const ALL: [Self; 19] = [
         Self::Rust,
         Self::Go,
         Self::JavaScript,
@@ -47,6 +50,8 @@ impl LanguageId {
         Self::Php,
         Self::Kotlin,
         Self::Sql,
+        Self::Html,
+        Self::Css,
     ];
 
     pub fn as_str(self) -> &'static str {
@@ -68,6 +73,8 @@ impl LanguageId {
             Self::Php => "php",
             Self::Kotlin => "kotlin",
             Self::Sql => "sql",
+            Self::Html => "html",
+            Self::Css => "css",
         }
     }
 
@@ -90,6 +97,8 @@ impl LanguageId {
             Self::Php => "php-tree-sitter-v1",
             Self::Kotlin => "kotlin-tree-sitter-v1",
             Self::Sql => "sql-tree-sitter-v1",
+            Self::Html => "html-tree-sitter-v1",
+            Self::Css => "css-tree-sitter-v1",
         }
     }
 
@@ -112,6 +121,8 @@ impl LanguageId {
             "php" => Some(Self::Php),
             "kotlin" | "kt" => Some(Self::Kotlin),
             "sql" => Some(Self::Sql),
+            "html" | "htm" => Some(Self::Html),
+            "css" => Some(Self::Css),
             _ => None,
         }
     }
@@ -167,6 +178,8 @@ pub fn language_for_path(path: &Path) -> Option<LanguageId> {
         Some("php") => Some(LanguageId::Php),
         Some("kt" | "kts") => Some(LanguageId::Kotlin),
         Some("sql") => Some(LanguageId::Sql),
+        Some("html" | "htm") => Some(LanguageId::Html),
+        Some("css") => Some(LanguageId::Css),
         _ => None,
     }
 }
@@ -206,6 +219,8 @@ pub fn parse_code_file(file_path: &str, source: &str) -> Result<ParsedCodeFile> 
         | LanguageId::Kotlin
         | LanguageId::Sql => parse_native_file(file_path, source, language)?,
         LanguageId::Vue => parse_vue_file(file_path, source)?,
+        LanguageId::Html => parse_html_file(file_path, source)?,
+        LanguageId::Css => parse_css_file(file_path, source)?,
     };
     let relation_hints = match language {
         LanguageId::Rust => extract_rust_relation_hints(file_path, source, &items)?
@@ -230,7 +245,7 @@ pub fn parse_code_file(file_path: &str, source: &str) -> Result<ParsedCodeFile> 
         | LanguageId::Php
         | LanguageId::Kotlin
         | LanguageId::Sql => extract_native_relation_hints(file_path, source, &items, language)?,
-        LanguageId::Vue => Vec::new(),
+        LanguageId::Vue | LanguageId::Html | LanguageId::Css => Vec::new(),
     };
     Ok(ParsedCodeFile {
         language,
@@ -1046,6 +1061,236 @@ fn parse_vue_file(file_path: &str, source: &str) -> Result<Vec<ParsedCodeItem>> 
     }
     walk(tree.root_node(), file_path, source, &mut items)?;
     Ok(items)
+}
+
+/// Inline scripts parse as JavaScript; elements with an `id` become `#id` items.
+fn parse_html_file(file_path: &str, source: &str) -> Result<Vec<ParsedCodeItem>> {
+    let mut parser = Parser::new();
+    parser.set_language(&tree_sitter_html::LANGUAGE.into())?;
+    let tree = parser
+        .parse(source, None)
+        .ok_or_else(|| anyhow!("Tree-sitter returned no HTML syntax tree"))?;
+    let module = markup_module(file_path);
+    let mut items = Vec::new();
+    let mut seen = HashMap::new();
+    fn walk(
+        node: Node<'_>,
+        file: &str,
+        source: &str,
+        module: &str,
+        items: &mut Vec<ParsedCodeItem>,
+        seen: &mut HashMap<String, usize>,
+    ) -> Result<()> {
+        match node.kind() {
+            "script_element" => {
+                let header = node
+                    .named_child(0)
+                    .map(|tag| node_text(tag, source))
+                    .unwrap_or_default();
+                let mut c = node.walk();
+                let raw = node.named_children(&mut c).find(|n| n.kind() == "raw_text");
+                // Only classic and module scripts; JSON, templates and the like are data.
+                let javascript = !header.contains("type=")
+                    || header.contains("javascript")
+                    || header.contains("module");
+                if let Some(raw) = raw.filter(|_| javascript)
+                    && let Ok(parsed) =
+                        parse_web_file(file, node_text(raw, source), LanguageId::JavaScript)
+                {
+                    for mut item in parsed {
+                        item.file_path = file.to_string();
+                        item.start_line += raw.start_position().row as u32;
+                        item.end_line += raw.start_position().row as u32;
+                        item.source_start_byte += raw.start_byte();
+                        item.source_end_byte += raw.start_byte();
+                        items.push(item);
+                    }
+                }
+                return Ok(());
+            }
+            "element" => {
+                if let Some(id) = html_element_id(node, source) {
+                    items.push(build_markup_item(
+                        node,
+                        file,
+                        source,
+                        LanguageId::Html,
+                        module,
+                        &format!("#{id}"),
+                        CodeKind::Variable,
+                        seen,
+                    ));
+                }
+            }
+            _ => {}
+        }
+        let mut c = node.walk();
+        for child in node.named_children(&mut c) {
+            walk(child, file, source, module, items, seen)?;
+        }
+        Ok(())
+    }
+    walk(
+        tree.root_node(),
+        file_path,
+        source,
+        &module,
+        &mut items,
+        &mut seen,
+    )?;
+    Ok(items)
+}
+
+fn html_element_id(element: Node<'_>, source: &str) -> Option<String> {
+    let mut c = element.walk();
+    let tag = element
+        .named_children(&mut c)
+        .find(|n| matches!(n.kind(), "start_tag" | "self_closing_tag"))?;
+    let mut c = tag.walk();
+    tag.named_children(&mut c).find_map(|attribute| {
+        if attribute.kind() != "attribute" {
+            return None;
+        }
+        let mut c = attribute.walk();
+        let parts: Vec<Node<'_>> = attribute.named_children(&mut c).collect();
+        let name = parts.iter().find(|n| n.kind() == "attribute_name")?;
+        if !node_text(*name, source).eq_ignore_ascii_case("id") {
+            return None;
+        }
+        let value = parts
+            .iter()
+            .find(|n| matches!(n.kind(), "attribute_value" | "quoted_attribute_value"))?;
+        let value = node_text(*value, source).trim_matches(['"', '\'']).trim();
+        (!value.is_empty()).then(|| value.to_string())
+    })
+}
+
+/// Rule sets are named by their selectors, `@keyframes` by name; rules inside
+/// `@media`/`@supports` are indexed like top-level ones.
+fn parse_css_file(file_path: &str, source: &str) -> Result<Vec<ParsedCodeItem>> {
+    let mut parser = Parser::new();
+    parser.set_language(&tree_sitter_css::LANGUAGE.into())?;
+    let tree = parser
+        .parse(source, None)
+        .ok_or_else(|| anyhow!("Tree-sitter returned no CSS syntax tree"))?;
+    let module = markup_module(file_path);
+    let mut items = Vec::new();
+    let mut seen = HashMap::new();
+    fn walk(
+        node: Node<'_>,
+        file: &str,
+        source: &str,
+        module: &str,
+        items: &mut Vec<ParsedCodeItem>,
+        seen: &mut HashMap<String, usize>,
+    ) {
+        let named = match node.kind() {
+            "rule_set" => node
+                .named_child(0)
+                .filter(|selectors| selectors.kind() == "selectors")
+                .map(|selectors| {
+                    let text = node_text(selectors, source)
+                        .split_whitespace()
+                        .collect::<Vec<_>>();
+                    (text.join(" "), CodeKind::Class)
+                }),
+            "keyframes_statement" => {
+                let mut c = node.walk();
+                node.named_children(&mut c)
+                    .find(|n| n.kind() == "keyframes_name")
+                    .map(|name| {
+                        (
+                            format!("@keyframes {}", node_text(name, source)),
+                            CodeKind::Function,
+                        )
+                    })
+            }
+            _ => None,
+        };
+        if let Some((name, kind)) = named {
+            let name: String = name.chars().take(160).collect();
+            items.push(build_markup_item(
+                node,
+                file,
+                source,
+                LanguageId::Css,
+                module,
+                &name,
+                kind,
+                seen,
+            ));
+            return;
+        }
+        let mut c = node.walk();
+        for child in node.named_children(&mut c) {
+            walk(child, file, source, module, items, seen);
+        }
+    }
+    walk(
+        tree.root_node(),
+        file_path,
+        source,
+        &module,
+        &mut items,
+        &mut seen,
+    );
+    Ok(items)
+}
+
+fn markup_module(file_path: &str) -> String {
+    Path::new(file_path)
+        .with_extension("")
+        .to_string_lossy()
+        .replace(['/', '\\'], "::")
+}
+
+/// Repeated names (the same selector in two `@media` blocks) get `#2`, `#3`…
+/// so each occurrence keeps a stable identity across edits.
+#[allow(clippy::too_many_arguments)]
+fn build_markup_item(
+    node: Node<'_>,
+    file_path: &str,
+    source: &str,
+    language: LanguageId,
+    module: &str,
+    name: &str,
+    kind: CodeKind,
+    seen: &mut HashMap<String, usize>,
+) -> ParsedCodeItem {
+    let occurrence = seen.entry(name.to_string()).or_insert(0);
+    *occurrence += 1;
+    let identity = if *occurrence == 1 {
+        name.to_string()
+    } else {
+        format!("{name}#{occurrence}")
+    };
+    let body = node_text(node, source).to_string();
+    let qualified_symbol = qualify(module, name);
+    ParsedCodeItem {
+        item_key: blake3::hash(
+            format!(
+                "{}\0{file_path}\0{module}\0{}\0{identity}",
+                language.as_str(),
+                kind_name(kind)
+            )
+            .as_bytes(),
+        )
+        .to_string(),
+        file_path: file_path.to_string(),
+        module_path: module.to_string(),
+        symbol_name: name.to_string(),
+        qualified_symbol,
+        kind,
+        start_line: node.start_position().row as u32 + 1,
+        end_line: inclusive_end_line(node),
+        preamble: String::new(),
+        signature: body.lines().next().unwrap_or_default().to_string(),
+        item_hash: blake3::hash(body.as_bytes()).to_string(),
+        content: body.clone(),
+        body,
+        source_start_byte: node.start_byte(),
+        source_end_byte: node.end_byte(),
+    }
 }
 
 fn parse_web_file(
@@ -2469,6 +2714,54 @@ fn helper() { let _ = Thing::default(); }
         )
         .unwrap();
         assert!(symbols(&partial).contains(&(CodeKind::Struct, "a")));
+    }
+
+    #[test]
+    fn html_and_css_index_scripts_ids_selectors_and_keyframes() {
+        let html = r#"<!doctype html>
+<html>
+<body>
+  <form id="login-form"><input id='email'></form>
+  <script>
+    function submitLogin() { return true; }
+  </script>
+  <script type="application/json">{"not": "code"}</script>
+</body>
+</html>
+"#;
+        let parsed = parse_code_file("web/index.html", html).unwrap();
+        assert_eq!(parsed.language, LanguageId::Html);
+        let names: Vec<_> = parsed
+            .items
+            .iter()
+            .map(|i| i.symbol_name.as_str())
+            .collect();
+        assert!(names.contains(&"#login-form"), "{names:?}");
+        assert!(names.contains(&"#email"), "{names:?}");
+        let script = parsed
+            .items
+            .iter()
+            .find(|i| i.symbol_name == "submitLogin")
+            .expect("inline script function");
+        assert_eq!(script.start_line, 6);
+        assert_eq!(parsed.items.len(), 3, "{names:?}");
+
+        let css = ".btn, .btn-primary {\n  color: red;\n}\n@media (max-width: 600px) {\n  .btn { color: blue; }\n}\n@keyframes fade-in {\n  from { opacity: 0; }\n  to { opacity: 1; }\n}\n.btn { margin: 0; }\n";
+        let parsed = parse_code_file("web/app.css", css).unwrap();
+        assert_eq!(parsed.language, LanguageId::Css);
+        let names: Vec<_> = parsed
+            .items
+            .iter()
+            .map(|i| i.symbol_name.as_str())
+            .collect();
+        assert_eq!(
+            names,
+            vec![".btn, .btn-primary", ".btn", "@keyframes fade-in", ".btn"]
+        );
+        assert_eq!(parsed.items[1].start_line, 5);
+        let keys: std::collections::HashSet<_> =
+            parsed.items.iter().map(|i| i.item_key.as_str()).collect();
+        assert_eq!(keys.len(), 4);
     }
 
     #[test]
