@@ -305,5 +305,6 @@ ADR: `decisions/agent-facing-knowledge-graph-mcp.md`. Capability matrix: `artifa
 - **Frontmatter:** `rms_memory_core::frontmatter` is the single splitter/composer for YAML blocks. An empty block (`---\n---`) parses as empty metadata instead of panicking the stdio server.
 - **`rms_write`:** `append` keeps the existing frontmatter and appends to the body; `replace` merges incoming keys over the existing ones. Appending to a document with invalid YAML is refused.
 - **Incremental sync:** any file whose path is not yet indexed (created, renamed, moved) is reindexed and its doc_id's stale chunks deleted; unchanged files sharing that doc_id are reindexed with it. Hidden vault directories, including `.rms-memory/trash`, are no longer indexed.
+- **Frontmatter repair:** `doctor --repair-frontmatter` keeps the first real id and drops null/empty duplicates, so it no longer rotates stable ids; a second run is a no-op.
 - **Maintenance:** `rms_graph ensure` keys on vault nodes; MCP doctor treats stale `learned_at` as informational and reports discovery failures.
 - **GUI:** doctor writes only with Apply and stamps `project` via the frontmatter parser; GC keeps offline vault databases; Settings changed-file count, log auto-refresh and the offline license grace window are fixed.

@@ -119,7 +119,10 @@ impl Document {
         let closing_marker = format!("{newline}---{newline}");
         let body = &text[opening_len..];
         let mut recovered_attached_delimiter = false;
-        let (frontmatter, remainder) = if let Some(relative_end) = body.find(&closing_marker) {
+        let empty_block_rest = body.strip_prefix(&format!("---{newline}"));
+        let (frontmatter, remainder) = if let Some(rest) = empty_block_rest {
+            ("", format!("{newline}---{newline}{rest}"))
+        } else if let Some(relative_end) = body.find(&closing_marker) {
             (&body[..relative_end], body[relative_end..].to_string())
         } else {
             // Recover the observed corruption where the closing delimiter was
@@ -140,17 +143,23 @@ impl Document {
             )
         };
 
-        let mut id_count = 0usize;
-        let mut repaired_lines = Vec::new();
-        for line in frontmatter.split(newline) {
-            if line.starts_with("id:") {
-                id_count += 1;
-                if id_count > 1 {
-                    continue;
-                }
-            }
-            repaired_lines.push(line);
-        }
+        // Keep the first id with a real value; null/empty ids left by older
+        // writers must not shadow it or survive next to a fresh id.
+        let is_real_id = |line: &str| {
+            let value = line["id:".len()..].trim();
+            !matches!(value, "" | "null" | "~" | "''" | "\"\"")
+        };
+        let lines: Vec<&str> = frontmatter.split(newline).collect();
+        let id_count = lines.iter().filter(|line| line.starts_with("id:")).count();
+        let kept_id = lines
+            .iter()
+            .position(|line| line.starts_with("id:") && is_real_id(line));
+        let repaired_lines: Vec<&str> = lines
+            .iter()
+            .enumerate()
+            .filter(|(index, line)| !line.starts_with("id:") || Some(*index) == kept_id)
+            .map(|(_, line)| *line)
+            .collect();
         let mut repaired_frontmatter = repaired_lines.join(newline);
         let parsed =
             serde_yaml::from_str::<Frontmatter>(&repaired_frontmatter).with_context(|| {
@@ -316,6 +325,59 @@ mod tests {
                 .count(),
             1
         );
+    }
+
+    #[test]
+    fn repair_duplicate_ids_keeps_real_id_over_leading_null_and_is_idempotent() {
+        let dir = tempdir().unwrap();
+        let file_path = dir.path().join("null-first.md");
+        fs::write(
+            &file_path,
+            "---\nmemory_version: null\nid: null\nsource: test\nid: 0cf2f700-real\n---\n# Content",
+        )
+        .unwrap();
+
+        assert!(Document::repair_duplicate_ids(&file_path).unwrap());
+        let repaired = fs::read_to_string(&file_path).unwrap();
+        assert_eq!(repaired.matches("\nid:").count(), 1);
+        let doc = Document::parse(&file_path).unwrap();
+        assert_eq!(
+            doc.frontmatter.unwrap().id.as_deref(),
+            Some("0cf2f700-real")
+        );
+        assert!(!Document::repair_duplicate_ids(&file_path).unwrap());
+        assert_eq!(fs::read_to_string(&file_path).unwrap(), repaired);
+    }
+
+    #[test]
+    fn repair_replaces_null_id_instead_of_duplicating_it() {
+        let dir = tempdir().unwrap();
+        let file_path = dir.path().join("null-only.md");
+        fs::write(&file_path, "---\nid: null\ntype: note\n---\n# Content").unwrap();
+
+        assert!(Document::repair_duplicate_ids(&file_path).unwrap());
+        let repaired = fs::read_to_string(&file_path).unwrap();
+        assert_eq!(repaired.matches("\nid:").count(), 1);
+        assert!(
+            Document::parse(&file_path)
+                .unwrap()
+                .frontmatter
+                .unwrap()
+                .id
+                .is_some()
+        );
+    }
+
+    #[test]
+    fn repair_adds_id_to_empty_frontmatter_block() {
+        let dir = tempdir().unwrap();
+        let file_path = dir.path().join("empty.md");
+        fs::write(&file_path, "---\n---\n# Content\n\n---\n\nmore").unwrap();
+
+        assert!(Document::repair_duplicate_ids(&file_path).unwrap());
+        let doc = Document::parse(&file_path).unwrap();
+        assert!(doc.frontmatter.unwrap().id.is_some());
+        assert!(doc.content.contains("# Content\n\n---\n\nmore"));
     }
 
     #[test]
