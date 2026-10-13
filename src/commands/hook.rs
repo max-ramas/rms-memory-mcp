@@ -117,19 +117,29 @@ impl HookArgs {
     pub fn run(&self) -> Result<()> {
         let (project_key, workspace) =
             resolve_project(self.project.as_deref(), self.cwd.as_deref())?;
-        let output = self.dispatch(&project_key, &workspace.root)?;
+        let output = self.dispatch(&project_key, &workspace)?;
         println!("{}", serde_json::to_string_pretty(&output)?);
         Ok(())
     }
 
-    fn dispatch(&self, project_key: &str, vault_root: &Path) -> Result<serde_json::Value> {
+    fn dispatch(
+        &self,
+        project_key: &str,
+        workspace: &crate::workspace::Workspace,
+    ) -> Result<serde_json::Value> {
         use crate::tools::continuity;
+        let vault_root = workspace.root.as_path();
+        let git = || rms_memory_core::git_context::git_context(&workspace.code_path);
+        if self.apply && !matches!(self.event, HookEvent::SessionStart) {
+            workspace.ensure_writable()?;
+        }
         let caller = "rms-memory-hook";
         let event = self.event.as_str();
 
         match self.event {
             HookEvent::SessionStart => {
-                let overview = continuity::overview(vault_root, Some(project_key), 10)?;
+                let mut overview = continuity::overview(vault_root, Some(project_key), 10)?;
+                overview.git = git();
                 Ok(serde_json::json!({
                     "event": event,
                     "project": project_key,
@@ -149,6 +159,7 @@ impl HookArgs {
                         self.goal.as_deref(),
                         self.pending.as_deref(),
                         None,
+                        git().as_ref(),
                     )?;
                     Ok(serde_json::json!({
                         "event": event,

@@ -1132,7 +1132,7 @@ impl McpServer {
                     },
                     {
                         "name": "rms_overview",
-                        "description": "Structured orientation summary for exactly one project: document counts by folder and status, recent notes, and active checkpoints. Call this at session start. Fail-closed: requires a bound workspace or an explicit `project` key; never aggregates across projects.",
+                        "description": "Structured orientation summary for exactly one project: document counts by folder and status, recent notes, active checkpoints, index lag, and the code repository's git state (branch, HEAD, ahead/behind, changed file names; never diff contents). Call this at session start. Fail-closed: requires a bound workspace or an explicit `project` key; never aggregates across projects.",
                         "inputSchema": {
                             "type": "object",
                             "properties": {
@@ -1155,7 +1155,7 @@ impl McpServer {
                     },
                     {
                         "name": "rms_checkpoint_save",
-                        "description": "Create or update a session checkpoint (artifacts/checkpoints/<name>.md, status=active). Save before context compaction or a long pause so work can be resumed. Updating preserves id/created_at and keeps omitted fields.",
+                        "description": "Create or update a session checkpoint (artifacts/checkpoints/<name>.md, status=active). Save before context compaction or a long pause so work can be resumed. Updating preserves id/created_at and keeps omitted fields. The code repository branch and HEAD are recorded automatically.",
                         "inputSchema": {
                             "type": "object",
                             "properties": {

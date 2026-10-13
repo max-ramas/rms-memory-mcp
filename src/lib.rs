@@ -7,7 +7,7 @@
 /// package remains the crates.io umbrella with stable `rms_memory_mcp::<mod>` paths.
 // Public API
 pub use rms_memory_core::{
-    audit, config_manager, document, frontmatter, link, path_policy, workspace,
+    audit, config_manager, document, frontmatter, git_context, link, path_policy, workspace,
 };
 pub use rms_memory_index::{
     code_indexer, code_parser, file_history, graph, graph_store, index_lock, indexer, jobs,

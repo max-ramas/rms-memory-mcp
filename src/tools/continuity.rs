@@ -11,6 +11,7 @@
 
 use super::AppContext;
 use anyhow::Result;
+use rms_memory_core::git_context::GitContext;
 use serde::Serialize;
 use std::collections::BTreeMap;
 use std::path::Path;
@@ -37,6 +38,11 @@ pub struct CheckpointPayload {
     pub created_at: Option<String>,
     pub done_at: Option<String>,
     pub id: Option<String>,
+    /// Code repository branch and HEAD when the checkpoint was saved.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub git_branch: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub git_head: Option<String>,
 }
 
 #[derive(Serialize, Debug, Clone)]
@@ -95,6 +101,9 @@ pub struct OverviewPayload {
     /// Vault index lag; absent when the index is not available.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub index: Option<crate::indexer::VaultFreshness>,
+    /// Branch, HEAD and changed file names of the code repository.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub git: Option<GitContext>,
 }
 
 // ---------------------------------------------------------------------------
@@ -148,11 +157,27 @@ fn payload_from_doc(doc: &crate::document::Document, rel_path: &str) -> Checkpoi
         created_at: fm.created_at,
         done_at: fm.done_at,
         id: fm.id,
+        git_branch: fm.git_branch,
+        git_head: fm.git_head,
     }
 }
 
 fn yaml_string(value: &str) -> serde_yaml::Value {
     serde_yaml::Value::String(value.to_string())
+}
+
+fn git_frontmatter(
+    branch: Option<&str>,
+    head: Option<&str>,
+) -> Vec<(&'static str, serde_yaml::Value)> {
+    let mut fields = Vec::new();
+    if let Some(branch) = branch {
+        fields.push(("git_branch", yaml_string(branch)));
+    }
+    if let Some(head) = head {
+        fields.push(("git_head", yaml_string(head)));
+    }
+    fields
 }
 
 /// Render a checkpoint/session document deterministically.
@@ -193,6 +218,7 @@ fn render_note(
 
 /// Create or update a checkpoint. Updating preserves id/created_at and keeps
 /// omitted fields from the existing document.
+#[allow(clippy::too_many_arguments)]
 pub fn checkpoint_save(
     vault_root: &Path,
     caller_id: &str,
@@ -201,6 +227,7 @@ pub fn checkpoint_save(
     goal: Option<&str>,
     pending: Option<&str>,
     links: Option<Vec<String>>,
+    git: Option<&GitContext>,
 ) -> Result<CheckpointPayload> {
     validate_checkpoint_name(name)?;
     let rel_path = checkpoint_rel_path(name);
@@ -235,15 +262,21 @@ pub fn checkpoint_save(
     let links = links.or(existing_fm.links).unwrap_or_default();
     let links_yaml =
         serde_yaml::Value::Sequence(links.iter().map(|link| yaml_string(link)).collect());
+    let (git_branch, git_head) = match git {
+        Some(git) => (git.branch.clone(), git.head.clone()),
+        None => (existing_fm.git_branch, existing_fm.git_head),
+    };
+    let mut fields = vec![
+        ("status", yaml_string("active")),
+        ("goal", yaml_string(&goal)),
+        ("pending", yaml_string(&pending)),
+        ("links", links_yaml),
+    ];
+    fields.extend(git_frontmatter(git_branch.as_deref(), git_head.as_deref()));
 
     let text = render_note(
         "checkpoint",
-        &[
-            ("status", yaml_string("active")),
-            ("goal", yaml_string(&goal)),
-            ("pending", yaml_string(&pending)),
-            ("links", links_yaml),
-        ],
+        &fields,
         &id,
         project,
         caller_id,
@@ -293,15 +326,18 @@ pub fn checkpoint_done(
 
     // Rewrite the checkpoint itself as done. `status: done` drops it out of
     // the default recall filter without deleting history.
+    let git_fields = git_frontmatter(fm.git_branch.as_deref(), fm.git_head.as_deref());
+    let mut fields = vec![
+        ("status", yaml_string("done")),
+        ("goal", yaml_string(&goal)),
+        ("pending", yaml_string(&pending)),
+        ("links", links_yaml.clone()),
+        ("done_at", yaml_string(&now)),
+    ];
+    fields.extend(git_fields.iter().cloned());
     let closed = render_note(
         "checkpoint",
-        &[
-            ("status", yaml_string("done")),
-            ("goal", yaml_string(&goal)),
-            ("pending", yaml_string(&pending)),
-            ("links", links_yaml.clone()),
-            ("done_at", yaml_string(&now)),
-        ],
+        &fields,
         &id,
         project,
         caller_id,
@@ -320,13 +356,15 @@ pub fn checkpoint_done(
     let session_rel = format!("{SESSIONS_DIR}/{name}-{stamp}.md");
     let session_path = super::validation::resolve_vault_path(vault_root, &session_rel)?;
     let session_id = uuid::Uuid::new_v4().to_string();
+    let mut fields = vec![
+        ("status", yaml_string("active")),
+        ("checkpoint", yaml_string(name)),
+        ("links", links_yaml),
+    ];
+    fields.extend(git_fields);
     let session_text = render_note(
         "session",
-        &[
-            ("status", yaml_string("active")),
-            ("checkpoint", yaml_string(name)),
-            ("links", links_yaml),
-        ],
+        &fields,
         &session_id,
         project,
         caller_id,
@@ -501,6 +539,7 @@ pub fn overview(
         recent_notes: recent,
         active_checkpoints: checkpoint_query(vault_root, Some("active"))?,
         index: None,
+        git: None,
         coverage: OverviewCoverage {
             recent_limit,
             recent_truncated,
@@ -525,7 +564,7 @@ pub fn system_instructions(project: Option<&str>) -> String {
 ## Core loop
 1. SEARCH FIRST: call `rms_search` before substantial changes. It returns a decision envelope (inject/abstain); trust an abstain instead of forcing weak context.
 2. READ CONTEXT: call `rms_read` on relevant hits (ADRs, rules) to ingest full documents.
-3. ORIENT: call `rms_overview` at session start for counts, recent notes, and active checkpoints of the current project.
+3. ORIENT: call `rms_overview` at session start for counts, recent notes, active checkpoints, index lag, and the git branch and changed files of the current project.
 4. PERSIST: at task end, save new conventions, tricky fixes, and decisions with `rms_write`. Folders: architecture/, rules/, decisions/, artifacts/, docs/, api/. Prefer `rms_write` with `dry_run: true` first when unsure whether a note would create, update, or be a no-op.
 5. FILE HISTORY: for when a source file changed in git, call `rms_file_history` (do not shell `git log`). Optional `include_file_history` on search attaches the last 3 commits per hit.
 6. GRAPH: call `rms_graph` (neighbors / path / snapshot / ensure) to traverse durable Markdown/code links. Optional `include_graph_neighbors` on search attaches neighbor summaries. Mutations (`create_edge`, `suppress_edge`, `edge_override`) require an explicit `project` key. Do not confuse this with the GUI-only visual GraphView.
@@ -566,12 +605,13 @@ pub async fn execute_overview(
         .map(|v| v as usize)
         .unwrap_or(DEFAULT_RECENT_LIMIT);
     let mut payload = overview(root, ctx.project_key.as_deref(), recent_limit)?;
-    if let Some(store) = &ctx.store
-        && let Ok(workspace) = super::graph::workspace_from_ctx(ctx)
-    {
-        payload.index = crate::indexer::vault_freshness(&workspace, store)
-            .await
-            .ok();
+    if let Ok(workspace) = super::graph::workspace_from_ctx(ctx) {
+        if let Some(store) = &ctx.store {
+            payload.index = crate::indexer::vault_freshness(&workspace, store)
+                .await
+                .ok();
+        }
+        payload.git = rms_memory_core::git_context::git_context(&workspace.code_path);
     }
     super::response::json_structured_response(&payload)
 }
@@ -587,6 +627,9 @@ pub async fn execute_checkpoint_save(
         .get("name")
         .and_then(|v| v.as_str())
         .ok_or_else(|| anyhow::anyhow!("`name` is required"))?;
+    let git = super::graph::workspace_from_ctx(ctx)
+        .ok()
+        .and_then(|workspace| rms_memory_core::git_context::git_context(&workspace.code_path));
     let links = args.get("links").and_then(|v| v.as_array()).map(|items| {
         items
             .iter()
@@ -601,6 +644,7 @@ pub async fn execute_checkpoint_save(
         args.get("goal").and_then(|v| v.as_str()),
         args.get("pending").and_then(|v| v.as_str()),
         links,
+        git.as_ref(),
     )?;
     super::response::json_structured_response(&payload)
 }
@@ -694,8 +738,14 @@ mod tests {
             Some("Migrate store"),
             Some("Finish phase 2"),
             Some(vec!["decisions/db.md".to_string()]),
+            Some(&GitContext {
+                branch: Some("feature/x".to_string()),
+                head: Some("abc123".to_string()),
+                ..GitContext::default()
+            }),
         )
         .expect("save");
+        assert_eq!(saved.git_branch.as_deref(), Some("feature/x"));
         assert_eq!(saved.status, "active");
         assert_eq!(saved.goal.as_deref(), Some("Migrate store"));
 
@@ -708,8 +758,10 @@ mod tests {
             None,
             Some("Finish phase 3"),
             None,
+            None,
         )
         .expect("update");
+        assert_eq!(updated.git_head.as_deref(), Some("abc123"));
         assert_eq!(updated.id, saved.id);
         assert_eq!(updated.goal.as_deref(), Some("Migrate store"));
         assert_eq!(updated.pending.as_deref(), Some("Finish phase 3"));
@@ -728,6 +780,8 @@ mod tests {
         let session = std::fs::read_to_string(root.join(&done.session_path)).unwrap();
         assert!(session.contains("type: session"));
         assert!(session.contains("Shipped"));
+        assert!(session.contains("git_branch: feature/x"));
+        assert_eq!(done.checkpoint.git_branch.as_deref(), Some("feature/x"));
 
         // Done checkpoints drop out of the active query.
         assert!(checkpoint_query(root, Some("active")).unwrap().is_empty());
@@ -741,7 +795,7 @@ mod tests {
         let root = &std::fs::canonicalize(dir.path()).unwrap();
         for bad in ["", "../escape", "a/b", ".hidden", "name with spaces"] {
             assert!(
-                checkpoint_save(root, "t", None, bad, None, None, None).is_err(),
+                checkpoint_save(root, "t", None, bad, None, None, None, None).is_err(),
                 "expected rejection for {bad:?}"
             );
         }
@@ -761,7 +815,17 @@ mod tests {
             "---\nid: b\nstatus: superseded\ntimestamp: '2026-01-02T00:00:00Z'\n---\n\n# Two\n",
         )
         .unwrap();
-        checkpoint_save(root, "t", Some("p"), "cp1", Some("g"), Some("p"), None).unwrap();
+        checkpoint_save(
+            root,
+            "t",
+            Some("p"),
+            "cp1",
+            Some("g"),
+            Some("p"),
+            None,
+            None,
+        )
+        .unwrap();
 
         let payload = overview(root, Some("p"), 10).expect("overview");
         assert_eq!(payload.project.as_deref(), Some("p"));

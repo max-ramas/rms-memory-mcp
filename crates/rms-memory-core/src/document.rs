@@ -64,6 +64,20 @@ pub struct Frontmatter {
     /// When a checkpoint was closed (RFC3339), set by checkpoint_done.
     #[serde(default, deserialize_with = "lenient::string")]
     pub done_at: Option<String>,
+    /// Code repository branch when a checkpoint was saved.
+    #[serde(
+        default,
+        deserialize_with = "lenient::string",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub git_branch: Option<String>,
+    /// Code repository HEAD commit when a checkpoint was saved.
+    #[serde(
+        default,
+        deserialize_with = "lenient::string",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub git_head: Option<String>,
     /// When true, the note stays in recall past temporal/`min_confidence` gates
     /// (still respects status — superseded notes stay hidden).
     #[serde(default, deserialize_with = "lenient::boolean")]

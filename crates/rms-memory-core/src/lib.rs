@@ -2,6 +2,7 @@ pub mod audit;
 pub mod config_manager;
 pub mod document;
 pub mod frontmatter;
+pub mod git_context;
 pub mod link;
 pub mod path_policy;
 pub mod secrets;
