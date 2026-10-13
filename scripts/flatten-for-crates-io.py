@@ -121,14 +121,6 @@ def write_root_lib(root: Path, stage: Path) -> None:
     mods = "\n".join(
         f'#[path = "{module}/lib.rs"]\npub mod {module};' for _, module in INTERNAL
     )
-    reexports = """
-pub use rms_memory_core::{audit, config_manager, document, link, path_policy, workspace};
-pub use rms_memory_index::{
-    code_indexer, code_parser, file_history, graph, graph_store, index_lock, indexer, jobs, retrieval,
-    semantic_graph, store, vault_graph, wiki,
-};
-pub use rms_memory_vault::{document_service, import, project_migrate, project_service, prune};
-"""
     # Keep everything after the original pub use block.
     rest_match = re.search(
         r"pub mod tools;",
@@ -137,6 +129,18 @@ pub use rms_memory_vault::{document_service, import, project_migrate, project_se
     if not rest_match:
         raise SystemExit("src/lib.rs: expected `pub mod tools;`")
     rest = original[rest_match.start() :]
+    # Reuse the umbrella's own re-exports verbatim: the inlined modules keep the
+    # crate names, so `pub use rms_memory_core::{...}` resolves unchanged and a
+    # newly re-exported module cannot be forgotten here.
+    reexports = "\n" + "\n".join(
+        re.findall(
+            r"^pub use rms_memory_\w+::\{[^}]*\};",
+            original[: rest_match.start()],
+            flags=re.MULTILINE,
+        )
+    ) + "\n"
+    if "rms_memory_core" not in reexports:
+        raise SystemExit("src/lib.rs: expected `pub use rms_memory_core::{...};` re-exports")
     # Rewrite any remaining rms_memory_* crate paths in the umbrella sources.
     # (umbrella lib itself mostly uses re-exports; other src/ files may use crates.)
     (stage / "src" / "lib.rs").write_text(
