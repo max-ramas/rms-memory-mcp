@@ -100,6 +100,39 @@ fn mcp_stdio_initialize_and_tools_list() {
         );
     }
 
+    assert_eq!(init["result"]["capabilities"]["resources"], json!({}));
+    assert_eq!(init["result"]["capabilities"]["prompts"], json!({}));
+    for (id, method) in [
+        (3, "resources/list"),
+        (4, "resources/templates/list"),
+        (5, "prompts/list"),
+    ] {
+        writeln!(
+            stdin,
+            "{}",
+            json!({ "jsonrpc": "2.0", "id": id, "method": method, "params": {} })
+        )
+        .unwrap();
+        stdin.flush().unwrap();
+        let response = read_rpc(&mut reader);
+        assert_eq!(response["id"], id);
+        assert!(
+            response.get("error").is_none(),
+            "{method} error: {response}"
+        );
+        let result = &response["result"];
+        match method {
+            "resources/list" => assert!(result["resources"].is_array(), "{response}"),
+            "resources/templates/list" => {
+                assert_eq!(
+                    result["resourceTemplates"][0]["uriTemplate"],
+                    "rms://{project}/note/{path}"
+                )
+            }
+            _ => assert_eq!(result["prompts"][0]["name"], "session_start"),
+        }
+    }
+
     drop(stdin);
     let _ = child.wait_timeout(Duration::from_secs(5));
     let _ = child.kill();

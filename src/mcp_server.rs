@@ -948,7 +948,9 @@ impl McpServer {
                         "version": env!("CARGO_PKG_VERSION")
                     },
                     "capabilities": {
-                        "tools": {}
+                        "tools": {},
+                        "resources": {},
+                        "prompts": {}
                     }
                 });
                 if let Some(notice) = crate::update_check::cached_update_notice() {
@@ -1316,6 +1318,29 @@ impl McpServer {
                     _ => anyhow::bail!("Unknown tool"),
                 }
                 .inspect(|_| self.touch_active_bind())
+            }
+            "resources/list" => crate::tools::resources::list(&self.ctx),
+            "resources/templates/list" => Ok(crate::tools::resources::templates()),
+            "resources/read" => {
+                let uri = params
+                    .as_ref()
+                    .and_then(|params| params.get("uri"))
+                    .and_then(Value::as_str)
+                    .ok_or_else(|| anyhow::anyhow!("`uri` is required"))?
+                    .to_string();
+                let parsed = crate::tools::resources::ResourceUri::parse(&uri)?;
+                let mut args = serde_json::Map::new();
+                args.insert("project".to_string(), json!(parsed.project));
+                self.bind_project_argument(&args).await?;
+                crate::tools::resources::read(&self.ctx, &uri, &parsed).await
+            }
+            "prompts/list" => Ok(crate::tools::resources::prompts()),
+            "prompts/get" => {
+                let params = params.unwrap_or(json!({}));
+                let name = params["name"].as_str().unwrap_or("").to_string();
+                let args = params["arguments"].as_object().cloned().unwrap_or_default();
+                self.bind_project_argument(&args).await?;
+                crate::tools::resources::get_prompt(&self.ctx, &name, &args).await
             }
             _ => anyhow::bail!("Method not found"),
         }
