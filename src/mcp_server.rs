@@ -1187,7 +1187,7 @@ impl McpServer {
                         "inputSchema": {
                             "type": "object",
                             "properties": {
-                                "min_similarity": { "type": "number", "minimum": 0.5, "maximum": 1.0, "default": 0.95, "description": "Cosine similarity at which two notes count as near duplicates." },
+                                "min_similarity": { "type": "number", "minimum": 0.5, "maximum": 1.0, "default": 0.9, "description": "Cosine similarity at which two notes count as near duplicate candidates; candidates must also share half of their word 3-grams." },
                                 "project": { "type": "string", "description": "Registered project key, used when the MCP client did not provide a workspace root." }
                             }
                         }

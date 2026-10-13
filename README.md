@@ -47,17 +47,19 @@ You're developing a single project but switching between different agents — Cu
 |---|---|
 | 🗂️ **Global Centralized Vaults** | Project context lives outside your repo — zero `.mcp` file pollution. |
 | 🔍 **Hybrid Retrieval (LanceDB)** | Embedded Vector Search + Tantivy Full-Text Search for zero-fail context hits. |
-| 🌐 **Multilingual Semantic Parsing** | `fastembed-rs` + `multilingual-e5-small` — native Russian & English understanding. |
+| 🌐 **Multilingual Semantic Parsing** | `fastembed-rs` + `multilingual-e5-small` by default — native Russian & English understanding. Since 1.3.0 `rms-memory embedding use` switches to another bundled model or a local Ollama model (each keeps its own index), and `rms-memory embedding eval` measures hit@k / MRR on your own vault. |
 | 🌳 **AST Markdown Chunker** | `pulldown-cmark`-based chunking keeps code blocks and lists bound to their parent heading. |
-| 🧩 **Semantic Code Memory** | Optional Tree-sitter indexing for Rust, Go, JS/JSX, TS/TSX, Python, C/C++, Java, Ruby, Swift, and Vue `<script>` blocks; stable segment identities and repeated preambles preserve context when large implementations split. Opt-in `watch` mode reindexes **only dirty paths** (with full-walk fallback). |
+| 🧩 **Semantic Code Memory** | Optional Tree-sitter indexing for Rust, Go, JS/JSX, TS/TSX, Python, C/C++, Java, Ruby, Swift, C#, PHP, Kotlin, SQL, HTML, CSS, and Vue `<script>` blocks; stable segment identities and repeated preambles preserve context when large implementations split. Opt-in `watch` mode reindexes **only dirty paths** (with full-walk fallback). |
 | 🕸️ **Knowledge Graph (v1.2.0)** | Durable Markdown/code relationships via MCP `rms_graph` (neighbors, path, snapshot, mutations) and optional search `include_graph_neighbors`. Companion GUI still owns the visual GraphView. |
 | 🧹 **Safe Project Lifecycle** | Unregistering preserves vault/index data; permanent GUI deletion requires the exact project key, is confined to the master vault, and never touches source code. |
 | 🔀 **Federated Corpus Search** | Search `vault`, `code`, or `all`; mixed results use Reciprocal Rank Fusion rather than incompatible raw vector distances. |
 | 🎯 **Bounded Recall (v1.0.7)** | `rms_search` returns an inject/abstain envelope with `max_chars`, optional `min_score`, fail-closed errors, and `retrieval_mode` (`hybrid` or short-query `fts_prefer`). |
 | ♻️ **Knowledge Lifecycle** | Frontmatter `status` / `supersedes` / temporal `valid_*` gate Lance recall; soft supersede via `rms_write`; Doctor freshness lint (check 7 of 8); `rms-memory prune` archives aged superseded notes (dry-run default). |
+| 📓 **Obsidian vaults (v1.3.0)** | `rms-memory projects attach-obsidian <PATH>` indexes an existing Obsidian vault in place, strictly read-only (RMS Memory never creates, edits or deletes files in it); `rms-memory import --obsidian <DIR>` copies one into a project vault instead. `[[wikilinks]]`, aliases, headings and embeds resolve the way Obsidian does in the graph, index and doctor. |
+| 🌍 **Local HTTP transport (v1.3.0)** | `rms-memory serve --http` serves MCP Streamable HTTP on `127.0.0.1:7337/mcp` with a bearer token from `~/.rms-memory/http-token`, loopback Host/Origin checks and per-session state — for clients that cannot spawn a stdio process. See [SECURITY.md](SECURITY.md#local-http-transport). |
 | 🔐 **Credential refusal (v1.3.0)** | `rms_write` and checkpoint tools refuse text containing well-known token formats (AWS `AKIA…`, GitHub `ghp_…`/`github_pat_…`, OpenAI/Anthropic `sk-…`, Slack, Stripe live, Google, npm, GitLab) or a PEM private key, naming the kind and line but never the value. Doctor check 8 reports such notes already in the vault (report only). Not a guarantee — see [SECURITY.md](SECURITY.md#credential-refusal-limits). |
 | ⬆️ **Update notices (v1.3.0)** | `doctor` checks GitHub for a newer release at most once a day (`RMS_MEMORY_NO_UPDATE_CHECK=1` disables it) and warns when the running MCP server binary was replaced on disk; MCP `initialize` repeats the cached notice without network access. Upgrade with the tool that installed it (brew, cargo, package, archive). |
-| 🔄 **Session Continuity (v1.0.7)** | Vault-backed checkpoints (`rms_checkpoint_save/done/load/query`), `rms_overview` project orientation, `rms_system_instructions` self-bootstrap, editor-agnostic `rms-memory hook` CLI, installer L3 thin adapters, and `pinned` notes that bypass temporal/`min_confidence` recall gates. |
+| 🔄 **Session Continuity (v1.0.7)** | Vault-backed checkpoints (`rms_checkpoint_save/done/load/query`), `rms_overview` project orientation (since 1.3.0 with index lag and git branch / changed files), MCP resources `rms://<project>/…` and prompts (`session_start`, `save_progress`, `record_decision`), `rms_hygiene` consolidation report, `rms_system_instructions` self-bootstrap, editor-agnostic `rms-memory hook` CLI, installer L3 thin adapters, and `pinned` notes that bypass temporal/`min_confidence` recall gates. |
 | 🧭 **Multi-project MCP routing (v1.0.8+)** | Explicit `project` always rebinds the active vault; empty Cursor `roots/list` falls back to process cwd; injected rules require `project: "<key>"` on every memory tool call; `rms-memory inject-rules [--all]` refreshes keys. |
 | 🔗 **Cross-project federated search (v1.0.9)** | Pass `projects: [key, …]` to `rms_search` / `rms_code_search` for read-only RRF federation. Vault/all across multiple projects requires `cross_project_vault=true` on every listed key (hard fail otherwise). |
 | 🧊 **Concurrent bind cache (v1.0.9)** | Up to 4 warm Store+watcher pairs (LRU); multi-root IDE sessions stop thrashing open/close. |
@@ -244,16 +246,38 @@ rms-memory config --code-languages auto
 rms-memory config --code-languages go,typescript,tsx,vue
 ```
 
-Supported names are `rust`, `go`, `javascript`, `jsx`, `typescript`, `tsx`, `python`, `c`, `cpp`, `java`, `ruby`, `swift`, and `vue`. Generated paths (`node_modules`, `.next`, `.nuxt`, `target`, `vendor`, and `coverage`) are always excluded. Ambiguous `.h` files are indexed as C exactly once; use `.hpp`, `.hh`, or `.hxx` for C++ headers. Vue indexes only inline JavaScript/TypeScript `<script>` contents and maps results back to the `.vue` host file; templates, styles, `script setup` macros, and external `src` scripts remain outside v1.0.5 semantic extraction.
+Supported names are `rust`, `go`, `javascript`, `jsx`, `typescript`, `tsx`, `python`, `c`, `cpp`, `java`, `ruby`, `swift`, `vue`, `csharp`, `php`, `kotlin`, `sql`, `html`, and `css`. Generated paths (`node_modules`, `.next`, `.nuxt`, `target`, `vendor`, and `coverage`) are always excluded. Ambiguous `.h` files are indexed as C exactly once; use `.hpp`, `.hh`, or `.hxx` for C++ headers. Vue indexes only inline JavaScript/TypeScript `<script>` contents and maps results back to the `.vue` host file; templates, styles, `script setup` macros, and external `src` scripts remain outside v1.0.5 semantic extraction.
+HTML files contribute inline JavaScript `<script>` blocks (mapped back to the `.html` file) and elements with an `id`; CSS files contribute rule sets by selector and `@keyframes`. SQL files contribute `CREATE TABLE / VIEW / TYPE / FUNCTION / PROCEDURE / TRIGGER` statements.
+
+### Use an existing Obsidian vault
+
+```bash
+rms-memory projects attach-obsidian ~/Obsidian/Notes --key notes   # in place, read-only
+rms-memory import --obsidian ~/Obsidian/Notes --dry-run             # or copy into this project's vault
+```
+
+An attached vault is indexed and searchable (pass `project: "notes"`), but RMS Memory never creates, edits, moves or deletes files in it: `rms_write`, checkpoints, prune and hooks refuse, and `projects remove` only drops the registration. The index lives under `~/.rms-memory/dbs/` like any other. Obsidian links (`[[Note]]`, `[[Note|label]]`, `[[Note#Heading]]`, `![[image.png]]`, frontmatter `aliases`) resolve in the graph, the index and doctor.
+
+### Embedding model and retrieval eval
+
+The default model is `multilingual-e5-small` (384 dimensions, downloaded once). To compare it with others on your own notes and switch:
+
+```bash
+rms-memory embedding list
+rms-memory embedding eval --models multilingual-e5-small,bge-m3 --show-misses
+rms-memory embedding use bge-m3              # or: ollama:nomic-embed-text (local Ollama)
+```
+
+`eval` turns each note's first heading into a query (or reads `--queries file.jsonl` with `{"query": "...", "expect": ["path.md"]}` lines) and reports hit@1, hit@k and MRR for embeddings alone and for hybrid search. Each model keeps its own index under the project's `dbs/` folder, so switching back reuses the old one. After `use`, restart running MCP servers (IDE, GUI); the next sync builds the new index. Ollama URLs must be loopback (`http://127.0.0.1:11434` by default).
 
 ## 🛠 CLI Commands
 
 | Command | Description |
 |---|---|
-| `rms-memory serve` | Starts the JSON-RPC stdio server (auto-triggered by your IDE). |
+| `rms-memory serve [--http] [--port 7337]` | Starts the JSON-RPC stdio server (auto-triggered by your IDE). `--http` serves MCP Streamable HTTP on `127.0.0.1` instead, with a bearer token. |
 | `rms-memory init` | Registers a project into the global registry. `--dry-run` supported. `--full` forces creation of all IDE rule templates. |
 | `rms-memory inject-rules [--all]` | Re-injects managed IDE rule blocks with the concrete registry `project` key (existing files only, unless `--full`). Use after template updates. Fail-closed: a single unregistered path is refused rather than injected with a guessed key — run `init` there first, or use `--all` to refresh every registered project. |
-| `rms-memory import` | Scans for existing docs (`README.md`, `docs/`, `ADR/`) and imports them — interactively or via `--auto-import`. |
+| `rms-memory import` | Scans for existing docs (`README.md`, `docs/`, `ADR/`) and imports them — interactively or via `--auto-import`. `--obsidian <DIR> [--into obsidian] [--dry-run]` copies an Obsidian vault (notes, attachments, folders) into the project vault without touching the source or overwriting files. |
 | `rms-memory install` | Hooks the server into supported IDEs. `--dry-run` supported. |
 | `rms-memory uninstall` | Removes the server from all discovered IDE configurations. |
 | `rms-memory doctor` | Runs 8-point vault health diagnostics (the 8th reports credentials stored in notes, never changing them) and prints update / restart notices. `--repair-frontmatter` safely repairs duplicate, missing, and known attached frontmatter IDs with backups; arbitrary invalid YAML is reported but never rewritten automatically. |
@@ -272,6 +296,8 @@ Supported names are `rust`, `go`, `javascript`, `jsx`, `typescript`, `tsx`, `pyt
 | `rms-memory projects resolve-key --path <dir>` | Looks up the registry key for a code path (including post-migrate redirects). |
 | `rms-memory projects migrate --project <key> --to <new-path>` | Moves/renames a registered project after the repo folder changed. Plans key rename, vault/db moves, and `link:` repairs; supports `--dry-run`, `--no-repair-links`, `--strict-git`. Prefer this over recreating `.git` or re-running `init`. |
 | `rms-memory projects remove <key>` | Removes an erroneous project registration while preserving its vault files. |
+| `rms-memory projects attach-obsidian <PATH> [--key KEY]` | Registers an existing Obsidian vault in place, read-only: indexed and searchable, never modified. |
+| `rms-memory embedding list\|use <id>\|eval` | Lists the bundled embedding models, switches the model (`ollama:<model>` for a local Ollama), or scores retrieval quality (hit@1, hit@k, MRR) on the project's vault, for embeddings alone and hybrid search. Restart MCP servers after `use`; the next sync builds the model's index. |
 | `rms-memory hook --event <e>` | Editor-agnostic continuity hook (`session_start`, `pre_compact`, `session_stop`); JSON on stdout. `--project <key>` or unique cwd resolution (fail-closed); `--apply` creates/updates or closes a checkpoint. |
 | **All commands** | Accept `--scope <id>` to target arbitrary isolated vaults (threads, leads, etc.). |
 
@@ -333,7 +359,7 @@ Tool descriptions are written to be **action-oriented**, so agents use the vault
 </tr>
 <tr>
 <td><code>rms-memory_rms_overview</code></td>
-<td>Structured orientation for exactly one project: counts by folder/status, recent notes, active checkpoints, coverage metadata. Fail-closed scoping; never aggregates across projects. Returns <code>structuredContent</code> + JSON text.</td>
+<td>Structured orientation for exactly one project: counts by folder/status, recent notes, active checkpoints, coverage metadata, index lag (modified/new/removed files) and the code repository's git state (branch, HEAD, ahead/behind, changed file names — never diff contents). Fail-closed scoping; never aggregates across projects. Returns <code>structuredContent</code> + JSON text.</td>
 <td><code>{ project?, recent_limit? }</code></td>
 </tr>
 <tr>
@@ -356,7 +382,14 @@ Tool descriptions are written to be **action-oriented**, so agents use the vault
 <td>Archives aged <code>status: superseded</code> notes under <code>artifacts/pruned/YYYY-MM-DD/</code> with a JSONL manifest. Safe by default: <code>apply</code> is false (dry-run). Never deletes. Skips pinned, wiki, trash, and prior prune batches. Distinct from <code>gc</code> and from supersession marking.</td>
 <td><code>{ project?, older_than_days?, apply? }</code></td>
 </tr>
+<tr>
+<td><code>rms-memory_rms_hygiene</code></td>
+<td>Read-only consolidation report: near-duplicate notes (embedding similarity confirmed by shared word 3-grams), identical notes, checkpoints untouched for 14+ days, session notes older than 90 days. The agent merges with <code>rms_write</code> + <code>supersedes</code> and closes checkpoints with <code>rms_checkpoint_done</code>.</td>
+<td><code>{ project?, min_similarity? }</code></td>
+</tr>
 </table>
+
+MCP **resources** (1.3.0): `rms://<project>/overview`, `rms://<project>/instructions`, `rms://<project>/checkpoint/<name>` and `rms://<project>/note/<path>` are read-only views for clients that attach context by URI. MCP **prompts**: `session_start`, `save_progress` (`name`) and `record_decision` (`topic`).
 
 The server resolves an explicit scope or legacy `rootUri`, then negotiates MCP `roots/list`. If a client exposes neither (or opens several registered roots), pass the short registry key in `project`; injected agent rules contain the correct key for that repository. `rms_projects` lists valid keys without requiring a bound workspace. An explicit `project` on any tool call always wins and rebinds the active vault — one long-lived MCP process can serve every registered project. Without `project`, ambiguity stays fail-closed (no silent pick-first).
 

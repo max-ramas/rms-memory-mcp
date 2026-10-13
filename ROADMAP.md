@@ -2,7 +2,7 @@
 
 This document outlines the strategic direction and upcoming milestones for RMS Memory.
 
-**Current (2026-09-16):** MCP **`1.2.0`** · companion GUI **`1.2.0`** (unified numbering). Agent-facing durable graph + honest CLI GUI/AI labels + maintenance MCP tools.
+**Current (2026-10-13):** MCP **`1.3.0`** · companion GUI **`1.3.0`** (unified numbering). Read-only Obsidian vaults, continuity context (index freshness, git), six more code languages, MCP resources/prompts, memory hygiene, local HTTP transport, embedding model choice with retrieval eval, and the vault full-text index fix.
 
 ## v1.0 — Foundation & Open Source ✅ (Released)
 
@@ -179,6 +179,23 @@ MCP-first durable graph for agents; desire-driven GUI/AI labels (no MCP paywall)
 - [x] system_instructions + templates + smoke + docs aligned to **1.2.0**; GUI lockstep **1.2.0**.
 - [ ] Tag + publish `v1.2.0` (MCP + GUI).
 
+## v1.3.0 — Obsidian, continuity context, transports, retrieval quality (2026-10-13)
+
+- [x] Credential refusal in `rms_write` / checkpoints; doctor check 8; doctor update notices (no self-update).
+- [x] `projects attach-obsidian` (read-only vaults, enforced by every writer) and `import --obsidian` (copy).
+- [x] Obsidian `[[wikilinks]]`, aliases, headings and embeds in graph, index and doctor.
+- [x] Index freshness and git context (branch, HEAD, ahead/behind, changed names) in `rms_overview`, doctor and checkpoints.
+- [x] Tree-sitter adapters: C#, PHP, Kotlin, SQL, HTML, CSS.
+- [x] MCP resources `rms://<project>/…` and prompts.
+- [x] `rms_hygiene` consolidation report (report only; the agent merges via `supersedes`).
+- [x] `serve --http`: Streamable HTTP on 127.0.0.1 with bearer token and loopback Host/Origin checks.
+- [x] Embedding model choice (bundled fastembed models, local Ollama) with per-model index dirs; `embedding eval` (hit@1, hit@k, MRR).
+- [x] Vault FTS index covers all rows (was built on an empty table); narrower keyword-only routing.
+- [x] GUI: Continuity freshness/git/hygiene/superseded archive/closed checkpoints; embedding model settings; new code languages.
+- [ ] Tag + publish `v1.3.0` (MCP + GUI).
+
+**Not in 1.3.0:** self-update, code signing, remote (non-loopback) server mode, automatic summarization of active notes.
+
 ## v1.0.9 — Federated search + concurrent binds (2026-07-26)
 
 **Goal:** Cross-project read-only search without merging vaults, plus warm multi-root binds without thrashing.
@@ -222,6 +239,7 @@ The companion GUI already consumes the umbrella through Tauri commands. MCP rema
 - [x] Language-neutral registry/dispatcher with project-scoped `code_languages`, preserving Rust item IDs and extractor identity.
 - [x] Go adapter and real-project dogfood on the user's heavy Go/Next projects.
 - [x] TypeScript/TSX, JavaScript/JSX, Python, C, C++, Java, Ruby, and Swift adapters with parser regression coverage and conservative syntax-level graph hints.
+- [x] 1.3.0: C#, PHP, Kotlin, SQL, HTML (inline scripts, element ids) and CSS (selectors, keyframes).
 - [x] Vue 3 SFC shell parsing with inline nested JS/TS parsing and original-source mapping.
 - [x] Mixed-language resource gate and four-IDE idle verification; packaging remains covered by the existing release matrix.
 

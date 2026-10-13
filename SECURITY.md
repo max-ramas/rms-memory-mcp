@@ -56,6 +56,19 @@ Out of scope (unless chained into a higher impact):
 - **`rms_file_history` (1.1.2):** runs `git log` only against the registered project `code_path` and stores a derived Lance cache (not vault Markdown). MCP `reindex` requires explicit `project`. Catch-up/reindex enforce commit budgets; hex SHA allowlist on revision args. Agents should use the tool instead of arbitrary shell `git`; v1 does not follow renames across paths. Search `include_file_history` is refused with federated `projects`.
 - **`rms_graph` (1.2.0):** durable vault/code graph is MCP-readable/mutable; edge mutations require explicit `project`. Search `include_graph_neighbors` is refused with federated `projects`. Visual GraphView remains GUI-only.
 - **Update check (1.3.0):** only `doctor` (CLI, MCP `rms_doctor`) sends one unauthenticated request to the GitHub releases API, at most once per 24 hours, with no vault data; the result is cached in `~/.rms-memory/update-check.json`. Server start-up and MCP `initialize` never touch the network. `RMS_MEMORY_NO_UPDATE_CHECK=1` (or `CI`) disables the check. There is no self-update command: upgrades go through the installer that owns the binary.
+- **Read-only vaults (1.3.0):** a vault attached with `projects attach-obsidian` is never written: `rms_write`, checkpoints, prune, hooks and frontmatter ID repair refuse it, and removing the project only drops the registration. `import --obsidian` only reads the source, skips hidden folders and never overwrites files in the destination vault.
+- **Git context (1.3.0):** `rms_overview` and checkpoints run read-only `git` commands against the registered `code_path` and report branch, HEAD, ahead/behind and at most 50 changed file names. Diff contents are never read.
+- **Embedding models (1.3.0):** bundled models are downloaded once by fastembed into `~/.rms-memory/cache`. An `ollama:<model>` profile sends note text for embedding only to a loopback Ollama URL; non-loopback URLs are refused.
+
+## Local HTTP transport
+
+`rms-memory serve --http` (1.3.0) is meant for local MCP clients that cannot spawn a stdio process. It is not a remote or multi-user server:
+
+- It binds `127.0.0.1` only (default port 7337, endpoint `/mcp`).
+- Every request needs `Authorization: Bearer <token>`. The token is random, created on first use in `~/.rms-memory/http-token` with mode 0600, and compared in constant time. Anyone who can read that file as your OS user can use the server.
+- `Host` must name the loopback listener and a present `Origin` must be a loopback origin, so a web page cannot reach the server through DNS rebinding.
+- Each `Mcp-Session-Id` has its own server state; at most 8 sessions are kept and idle ones expire after an hour. Request bodies are capped at 1 MiB.
+- Tool behaviour is identical to stdio, including project routing and vault path checks. Do not expose the port through a tunnel or reverse proxy.
 
 ## Credential refusal limits
 
