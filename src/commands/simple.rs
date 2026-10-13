@@ -112,12 +112,22 @@ impl ImportArgs {
 }
 
 #[derive(Args, Debug)]
-pub struct ServeArgs;
+pub struct ServeArgs {
+    /// Serve MCP Streamable HTTP on 127.0.0.1 instead of stdio (bearer token in ~/.rms-memory/http-token)
+    #[arg(long)]
+    pub http: bool,
+    /// Port for --http
+    #[arg(long, default_value_t = crate::http_transport::DEFAULT_PORT, requires = "http")]
+    pub port: u16,
+}
 
 impl ServeArgs {
     pub async fn run(&self, scope: Option<String>) -> Result<()> {
         let registry = crate::config_manager::load_registry().unwrap_or_default();
         let max_backups = registry.global.max_backups.unwrap_or(5);
+        if self.http {
+            return crate::http_transport::serve(self.port, max_backups, scope).await;
+        }
         crate::mcp_server::McpServer::run(None, None, None, max_backups, scope).await?;
         Ok(())
     }

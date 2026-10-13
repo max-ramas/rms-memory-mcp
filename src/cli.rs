@@ -27,7 +27,7 @@ pub enum Commands {
     InjectRules(crate::commands::inject_rules::InjectRulesArgs),
     /// Import existing documentation into the Vault
     Import(crate::commands::simple::ImportArgs),
-    /// Serve the MCP server via stdio
+    /// Serve the MCP server (stdio, or Streamable HTTP on 127.0.0.1 with --http)
     Serve(crate::commands::simple::ServeArgs),
     /// Manually trigger a full reindex of the workspace
     Reindex(crate::commands::simple::ReindexArgs),

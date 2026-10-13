@@ -120,7 +120,13 @@ pub struct McpServer {
     bound: std::collections::HashMap<String, BoundWorkspace>,
     client_supports_roots: bool,
     pending_roots_request_id: Option<Value>,
+    /// HTTP sessions cannot receive server-initiated requests (`roots/list`).
+    http: bool,
 }
+
+/// Protocol revisions this server speaks; a client's supported request is
+/// echoed back, anything else gets the oldest revision.
+const PROTOCOL_VERSIONS: [&str; 3] = ["2025-06-18", "2025-03-26", "2024-11-05"];
 
 /// Runs a workspace (re)bind so it is failure-atomic.
 ///
@@ -493,6 +499,94 @@ impl McpServer {
         Ok(crate::wiki::WikiService::new(retrieval, root, scope))
     }
 
+    pub(crate) fn shared_indexer() -> Result<Arc<Mutex<Indexer>>> {
+        Ok(Arc::new(Mutex::new(
+            crate::indexer::Indexer::new()
+                .map_err(|e| anyhow::anyhow!("Failed to initialize embedding model: {e}"))?,
+        )))
+    }
+
+    pub(crate) fn new(
+        store: Option<crate::store::Store>,
+        indexer: Arc<Mutex<Indexer>>,
+        workspace_root: Option<std::path::PathBuf>,
+        max_backups: usize,
+        scope: Option<String>,
+        http: bool,
+    ) -> Self {
+        let (shutdown_tx, _shutdown_rx) = tokio::sync::watch::channel(false);
+        Self {
+            ctx: AppContext {
+                store,
+                indexer: Some(indexer),
+                workspace_root,
+                code_path: None,
+                max_backups,
+                scope,
+                caller_id: "unknown".to_string(),
+                project_key: None,
+            },
+            shutdown_tx,
+            bound: std::collections::HashMap::new(),
+            client_supports_roots: false,
+            pending_roots_request_id: None,
+            http,
+        }
+    }
+
+    /// Stop the watchers of every bound project.
+    pub(crate) fn shutdown(&self) {
+        let _ = self.shutdown_tx.send(true);
+        for entry in self.bound.values() {
+            let _ = entry.cancel_tx.send(true);
+        }
+    }
+
+    /// Handle one decoded JSON-RPC message. Returns the response to a request
+    /// or a server-initiated request to send to the client.
+    pub(crate) async fn handle_message(&mut self, message: Value) -> Result<Option<Value>> {
+        if message.get("method").is_some() {
+            let request: RpcRequest = serde_json::from_value(message)?;
+            let Some(id) = request.id else {
+                return self
+                    .handle_notification(&request.method, request.params)
+                    .await;
+            };
+            let response = match self.handle_request(&request.method, request.params).await {
+                Ok(result) => RpcResponse {
+                    jsonrpc: "2.0".to_string(),
+                    id,
+                    result: Some(result),
+                    error: None,
+                },
+                Err(e) => RpcResponse {
+                    jsonrpc: "2.0".to_string(),
+                    id,
+                    result: None,
+                    error: Some(RpcError {
+                        code: -32603,
+                        message: e.to_string(),
+                    }),
+                },
+            };
+            return Ok(Some(serde_json::to_value(response)?));
+        }
+        if message.get("id").is_some() {
+            self.handle_client_response(&message).await?;
+        } else {
+            tracing::warn!("Ignoring JSON-RPC message without method or id");
+        }
+        Ok(None)
+    }
+
+    pub(crate) fn parse_error(message: String) -> Value {
+        json!({
+            "jsonrpc": "2.0",
+            "id": Value::Null,
+            "error": { "code": -32700, "message": message }
+        })
+    }
+
     pub async fn run(
         store: Option<crate::store::Store>,
         indexer: Option<Arc<Mutex<Indexer>>>,
@@ -501,31 +595,11 @@ impl McpServer {
         scope: Option<String>,
     ) -> Result<()> {
         crate::update_check::record_startup_fingerprint();
-        let (shutdown_tx, _shutdown_rx) = tokio::sync::watch::channel(false);
-        let shutdown_tx_for_server = shutdown_tx.clone();
-        let shared_indexer = if let Some(idx) = indexer {
-            idx
-        } else {
-            Arc::new(Mutex::new(crate::indexer::Indexer::new().map_err(|e| {
-                anyhow::anyhow!("Failed to initialize embedding model: {e}")
-            })?))
+        let indexer = match indexer {
+            Some(indexer) => indexer,
+            None => Self::shared_indexer()?,
         };
-        let mut server = Self {
-            ctx: AppContext {
-                store,
-                indexer: Some(shared_indexer.clone()),
-                workspace_root,
-                code_path: None,
-                max_backups,
-                scope,
-                caller_id: "unknown".to_string(),
-                project_key: None,
-            },
-            shutdown_tx: shutdown_tx_for_server,
-            bound: std::collections::HashMap::new(),
-            client_supports_roots: false,
-            pending_roots_request_id: None,
-        };
+        let mut server = Self::new(store, indexer, workspace_root, max_backups, scope, false);
         let stdin = io::stdin();
         let mut stdout = io::stdout();
         let mut reader = stdin.lock();
@@ -539,79 +613,22 @@ impl McpServer {
             }
             if line.len() > 1_048_576 {
                 tracing::error!("Request exceeds 1MB size limit, rejecting.");
-                let err_res = RpcResponse {
-                    jsonrpc: "2.0".to_string(),
-                    id: serde_json::Value::Null,
-                    result: None,
-                    error: Some(RpcError {
-                        code: -32700,
-                        message: "Request too large (max 1MB)".to_string(),
-                    }),
-                };
-                let mut res_str = serde_json::to_string(&err_res)?;
-                res_str.push('\n');
-                stdout.write_all(res_str.as_bytes())?;
-                stdout.flush()?;
+                write_json_line(
+                    &mut stdout,
+                    &Self::parse_error("Request too large (max 1MB)".to_string()),
+                )?;
                 continue;
             }
 
-            let message: Result<Value, _> = serde_json::from_str(&line);
-            match message {
-                Ok(message) if message.get("method").is_some() => {
-                    let request: RpcRequest = serde_json::from_value(message)?;
-                    if let Some(id) = request.id {
-                        let response = server.handle_request(&request.method, request.params).await;
-                        let rpc_res = match response {
-                            Ok(res) => RpcResponse {
-                                jsonrpc: "2.0".to_string(),
-                                id,
-                                result: Some(res),
-                                error: None,
-                            },
-                            Err(e) => RpcResponse {
-                                jsonrpc: "2.0".to_string(),
-                                id,
-                                result: None,
-                                error: Some(RpcError {
-                                    code: -32603,
-                                    message: e.to_string(),
-                                }),
-                            },
-                        };
-                        let mut res_str = serde_json::to_string(&rpc_res)?;
-                        res_str.push('\n');
-                        stdout.write_all(res_str.as_bytes())?;
-                        stdout.flush()?;
-                    } else {
-                        if let Some(outbound) = server
-                            .handle_notification(&request.method, request.params)
-                            .await?
-                        {
-                            write_json_line(&mut stdout, &outbound)?;
-                        }
+            match serde_json::from_str::<Value>(&line) {
+                Ok(message) => {
+                    if let Some(outbound) = server.handle_message(message).await? {
+                        write_json_line(&mut stdout, &outbound)?;
                     }
-                }
-                Ok(message) if message.get("id").is_some() => {
-                    server.handle_client_response(&message).await?;
-                }
-                Ok(_) => {
-                    tracing::warn!("Ignoring JSON-RPC message without method or id");
                 }
                 Err(e) => {
                     tracing::error!("Failed to parse JSON-RPC: {}", e);
-                    let err_res = RpcResponse {
-                        jsonrpc: "2.0".to_string(),
-                        id: serde_json::Value::Null,
-                        result: None,
-                        error: Some(RpcError {
-                            code: -32700,
-                            message: format!("Parse error: {}", e),
-                        }),
-                    };
-                    let mut res_str = serde_json::to_string(&err_res)?;
-                    res_str.push('\n');
-                    stdout.write_all(res_str.as_bytes())?;
-                    stdout.flush()?;
+                    write_json_line(&mut stdout, &Self::parse_error(format!("Parse error: {e}")))?;
                 }
             }
         }
@@ -902,10 +919,11 @@ impl McpServer {
                     {
                         path = Some(root_path);
                     }
-                    self.client_supports_roots = params_obj
-                        .get("capabilities")
-                        .and_then(Value::as_object)
-                        .is_some_and(|capabilities| capabilities.contains_key("roots"));
+                    self.client_supports_roots = !self.http
+                        && params_obj
+                            .get("capabilities")
+                            .and_then(Value::as_object)
+                            .is_some_and(|capabilities| capabilities.contains_key("roots"));
                 }
 
                 if path.is_none() && self.ctx.scope.is_some() {
@@ -941,8 +959,16 @@ impl McpServer {
                     );
                 }
 
+                let requested_version = params
+                    .as_ref()
+                    .and_then(|params| params.get("protocolVersion"))
+                    .and_then(Value::as_str);
+                let protocol_version = PROTOCOL_VERSIONS
+                    .into_iter()
+                    .find(|version| Some(*version) == requested_version)
+                    .unwrap_or("2024-11-05");
                 let mut result = json!({
-                    "protocolVersion": "2024-11-05",
+                    "protocolVersion": protocol_version,
                     "serverInfo": {
                         "name": "rms-memory",
                         "version": env!("CARGO_PKG_VERSION")
