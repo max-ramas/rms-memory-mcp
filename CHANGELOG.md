@@ -2,6 +2,19 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.3.0] - 2026-10-13
+
+### Added
+- **Credential refusal in memory writes:** `rms_write` (`content`, `source`), `rms_checkpoint_save` (`goal`, `pending`) and `rms_checkpoint_done` (`summary`) refuse text containing a known credential format — AWS access key ids, GitHub / GitLab / Slack / npm tokens, OpenAI and Anthropic keys, Stripe live keys, Google API keys, PEM private keys. The error names the kind and line (`github_token (line 2)`), never the value; nothing is masked silently. Prefix-based only; GUI editor edits, direct disk edits, import and sync are not checked, and secrets already in a vault's git history are not removed (see SECURITY.md).
+- **Doctor check 8 — credentials in notes:** CLI `doctor`, MCP `rms_doctor` and the GUI doctor report notes that already contain such credentials (kind and line only). Report only; nothing is rewritten.
+- **Update notices:** `doctor` checks the latest GitHub release at most once a day (cached in `~/.rms-memory/update-check.json`; `RMS_MEMORY_NO_UPDATE_CHECK=1` or `CI` disables it) and prints the upgrade command for the way the binary was installed. MCP `initialize` repeats a cached notice in `instructions` without any network request. Doctor also warns when the running MCP server binary was replaced on disk and needs a restart. There is no self-update command.
+
+### Fixed
+- **`projects migrate` dropped frontmatter keys:** rewriting `project` / `link` re-serialized only the known fields, losing `tags`, `aliases` and other keys and writing `null`s. It now edits the YAML mapping in place.
+
+### Changed
+- MCP and companion GUI release versions are aligned at **1.3.0**.
+
 ## [1.2.2] - 2026-10-13
 
 ### Fixed

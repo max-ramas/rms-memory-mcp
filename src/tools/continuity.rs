@@ -525,7 +525,7 @@ pub fn system_instructions(project: Option<&str>) -> String {
 4. PERSIST: at task end, save new conventions, tricky fixes, and decisions with `rms_write`. Folders: architecture/, rules/, decisions/, artifacts/, docs/, api/. Prefer `rms_write` with `dry_run: true` first when unsure whether a note would create, update, or be a no-op.
 5. FILE HISTORY: for when a source file changed in git, call `rms_file_history` (do not shell `git log`). Optional `include_file_history` on search attaches the last 3 commits per hit.
 6. GRAPH: call `rms_graph` (neighbors / path / snapshot / ensure) to traverse durable Markdown/code links. Optional `include_graph_neighbors` on search attaches neighbor summaries. Mutations (`create_edge`, `suppress_edge`, `edge_override`) require an explicit `project` key. Do not confuse this with the GUI-only visual GraphView.
-7. MAINTENANCE: `rms_doctor` for the seven-point health report; `rms_sync` for incremental index catch-up; `rms_reindex` (requires explicit `project`) for a full rebuild.
+7. MAINTENANCE: `rms_doctor` for the eight-point health report; `rms_sync` for incremental index catch-up; `rms_reindex` (requires explicit `project`) for a full rebuild.
 
 ## Session continuity
 - Before context compaction or a long pause, save progress: `rms_checkpoint_save` with name, goal, pending work, and linked vault paths.
@@ -570,6 +570,7 @@ pub async fn execute_checkpoint_save(
     args: &serde_json::Map<String, serde_json::Value>,
 ) -> Result<serde_json::Value> {
     let root = require_root(ctx)?;
+    super::secret_guard::reject_secrets(args, &["goal", "pending"])?;
     let name = args
         .get("name")
         .and_then(|v| v.as_str())
@@ -597,6 +598,7 @@ pub async fn execute_checkpoint_done(
     args: &serde_json::Map<String, serde_json::Value>,
 ) -> Result<serde_json::Value> {
     let root = require_root(ctx)?;
+    super::secret_guard::reject_secrets(args, &["summary"])?;
     let name = args
         .get("name")
         .and_then(|v| v.as_str())

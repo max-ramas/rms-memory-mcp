@@ -54,3 +54,5 @@ pub mod installer;
 pub mod mcp_server;
 #[doc(hidden)]
 pub mod rules_injector;
+#[doc(hidden)]
+pub mod update_check;

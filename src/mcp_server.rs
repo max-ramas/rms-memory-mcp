@@ -500,6 +500,7 @@ impl McpServer {
         max_backups: usize,
         scope: Option<String>,
     ) -> Result<()> {
+        crate::update_check::record_startup_fingerprint();
         let (shutdown_tx, _shutdown_rx) = tokio::sync::watch::channel(false);
         let shutdown_tx_for_server = shutdown_tx.clone();
         let shared_indexer = if let Some(idx) = indexer {
@@ -940,7 +941,7 @@ impl McpServer {
                     );
                 }
 
-                Ok(json!({
+                let mut result = json!({
                     "protocolVersion": "2024-11-05",
                     "serverInfo": {
                         "name": "rms-memory",
@@ -949,8 +950,11 @@ impl McpServer {
                     "capabilities": {
                         "tools": {}
                     }
-
-                }))
+                });
+                if let Some(notice) = crate::update_check::cached_update_notice() {
+                    result["instructions"] = json!(notice);
+                }
+                Ok(result)
             }
             "tools/list" => Ok(json!({
                 "tools": [
@@ -1075,7 +1079,7 @@ impl McpServer {
                     },
                     {
                         "name": "rms_doctor",
-                        "description": "Run the seven-point vault health diagnostics (structure, IDs, links, LanceDB, wiki isolation, registry, freshness). Returns structured JSON. Set repair_frontmatter=true only with an explicit project (refuses sticky-bind repair).",
+                        "description": "Run the eight-point vault health diagnostics (structure, IDs, links, LanceDB, wiki isolation, registry, freshness, credentials). Also reports a newer release (checked at most daily; RMS_MEMORY_NO_UPDATE_CHECK=1 disables) or a server binary replaced since start. Returns structured JSON. Set repair_frontmatter=true only with an explicit project (refuses sticky-bind repair).",
                         "inputSchema": {
                             "type": "object",
                             "properties": {

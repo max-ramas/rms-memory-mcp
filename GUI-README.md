@@ -1,6 +1,6 @@
 # RMS Memory GUI
 
-**Current version:** GUI `1.2.2` with MCP `1.2.2` (unified numbering).
+**Current version:** GUI `1.3.0` with MCP `1.3.0` (unified numbering).
 This update fixes graph edge suppress/restore across reloads, hardens federated search refusals, and repairs AppImage launcher permissions during Linux packaging.
 
 RMS Memory GUI is the optional commercial desktop application for
@@ -54,7 +54,7 @@ the asset whose platform and architecture match your machine:
 | Linux x64 | `.AppImage`, `.deb`, or `.rpm` |
 
 The public release uses the same `v<version>` tag as the GUI build (unified with MCP:
-**`v1.2.2`** for this release). Installer assets are named `rms_memory_gui_<version>_*` (publish fails
+**`v1.3.0`** for this release). Installer assets are named `rms_memory_gui_<version>_*` (publish fails
 if the version is missing from the basename) and checksums live in
 `rms_memory_gui_SHA256SUMS.txt`. The GUI pipeline runs both for a pushed `v*` tag
 and for a manual dispatch that supplies the same version tag as

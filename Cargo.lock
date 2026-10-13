@@ -5745,7 +5745,7 @@ dependencies = [
 
 [[package]]
 name = "rms-memory-cli"
-version = "1.2.2"
+version = "1.3.0"
 dependencies = [
  "anyhow",
  "blake3",
@@ -5757,7 +5757,7 @@ dependencies = [
 
 [[package]]
 name = "rms-memory-core"
-version = "1.2.2"
+version = "1.3.0"
 dependencies = [
  "anyhow",
  "blake3",
@@ -5779,7 +5779,7 @@ dependencies = [
 
 [[package]]
 name = "rms-memory-index"
-version = "1.2.2"
+version = "1.3.0"
 dependencies = [
  "anyhow",
  "blake3",
@@ -5820,7 +5820,7 @@ dependencies = [
 
 [[package]]
 name = "rms-memory-mcp"
-version = "1.2.2"
+version = "1.3.0"
 dependencies = [
  "anyhow",
  "blake3",
@@ -5841,6 +5841,7 @@ dependencies = [
  "rms-memory-core",
  "rms-memory-index",
  "rms-memory-vault",
+ "semver",
  "serde",
  "serde_json",
  "serde_yaml",
@@ -5851,6 +5852,7 @@ dependencies = [
  "tracing",
  "tracing-appender",
  "tracing-subscriber",
+ "ureq",
  "url",
  "uuid",
  "walkdir",
@@ -5858,7 +5860,7 @@ dependencies = [
 
 [[package]]
 name = "rms-memory-vault"
-version = "1.2.2"
+version = "1.3.0"
 dependencies = [
  "anyhow",
  "blake3",

@@ -39,6 +39,7 @@ pub async fn execute(
         .get("dry_run")
         .and_then(|v| v.as_bool())
         .unwrap_or(false);
+    super::secret_guard::reject_secrets(args, &["content", "source"])?;
     let plan = plan_write(ctx, args)?;
 
     if dry_run {
@@ -523,6 +524,22 @@ mod tests {
     fn parse_dry_run(value: &serde_json::Value) -> serde_json::Value {
         let text = value["content"][0]["text"].as_str().expect("text");
         serde_json::from_str(text).expect("dry_run json")
+    }
+
+    #[tokio::test]
+    async fn credentials_are_refused_before_touching_disk() {
+        let dir = tempdir().unwrap();
+        let ctx = make_ctx(dir.path().to_path_buf());
+        let token = format!("ghp_{}", "a1B2".repeat(9));
+        let content = format!("# Deploy\n\nUse {token} for CI.");
+        for dry_run in [true, false] {
+            let mut args = write_args("notes/ci.md", "create", &content);
+            args.insert("dry_run".into(), serde_json::json!(dry_run));
+            let error = execute(&ctx, &args).await.unwrap_err().to_string();
+            assert!(error.contains("github_token (line 3)"), "{error}");
+            assert!(!error.contains(&token));
+        }
+        assert!(!dir.path().join("notes/ci.md").exists());
     }
 
     #[tokio::test]

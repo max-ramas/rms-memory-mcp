@@ -1,6 +1,6 @@
 # RMS Memory MCP Server — Walkthrough
 
-Updated: 2026-10-13 · MCP `1.2.2` / GUI `1.2.2`
+Updated: 2026-10-13 · MCP `1.3.0` / GUI `1.3.0`
 
 RMS Memory is a specialized Model Context Protocol (MCP) server that acts as localized persistent memory for LLM agents. It keeps human-authored knowledge in centralized Markdown Vaults and can optionally maintain a separate derived semantic index for source code, solving context fragmentation across multiple IDEs (Cursor, Zed, VS Code, Claude Code, Codex).
 
@@ -308,3 +308,9 @@ ADR: `decisions/agent-facing-knowledge-graph-mcp.md`. Capability matrix: `artifa
 - **Frontmatter repair:** `doctor --repair-frontmatter` keeps the first real id and drops null/empty duplicates, so it no longer rotates stable ids; a second run is a no-op.
 - **Maintenance:** `rms_graph ensure` keys on vault nodes; MCP doctor treats stale `learned_at` as informational and reports discovery failures.
 - **GUI:** doctor writes only with Apply and stamps `project` via the frontmatter parser; GC keeps offline vault databases; Settings changed-file count, log auto-refresh and the offline license grace window are fixed.
+
+### 31. Credential refusal and update notices (v1.3.0)
+
+- **Secrets:** `rms_memory_core::secrets::{scan, describe}` match prefix-based token formats and PEM private keys only (no entropy heuristics). `tools::secret_guard::reject_secrets` refuses `rms_write` (`content`, `source`) and checkpoints (`goal`, `pending`, `summary`) before anything touches disk, including `dry_run`. Doctor check 8 (`doctor::secrets_in_vault`) is report-only. GUI edits, disk edits, import and sync are not covered.
+- **Update check:** `src/update_check.rs`. `doctor_notices()` (CLI and MCP doctor) reads `~/.rms-memory/update-check.json` and refreshes it from GitHub when older than 24h; `cached_update_notice()` feeds `initialize.instructions` from the cache only. `record_startup_fingerprint()` at `serve` start lets doctor warn when the binary was replaced on disk. No self-update; the notice names the matching upgrade command (brew, cargo, package, archive).
+- **Migrate:** `projects migrate` sets `project`/`link` in the YAML mapping, so unknown frontmatter keys (`tags`, `aliases`, …) survive.

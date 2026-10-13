@@ -156,7 +156,7 @@ impl DoctorArgs {
         let mut issues = 0u32;
 
         // 1. Check vault directory structure
-        println!("\n[1/7] Vault directory structure...");
+        println!("\n[1/8] Vault directory structure...");
         let required_dirs = [
             "rules",
             "decisions",
@@ -176,7 +176,7 @@ impl DoctorArgs {
         }
 
         // 2. Check for files missing document IDs
-        println!("\n[2/7] Document IDs...");
+        println!("\n[2/8] Document IDs...");
         let files = workspace.find_markdown_files().unwrap_or_default();
         let mut missing_ids = Vec::new();
         let mut invalid_frontmatter = Vec::new();
@@ -257,7 +257,7 @@ impl DoctorArgs {
         }
 
         // 3. Check for broken Markdown links
-        println!("\n[3/7] Cross-document links...");
+        println!("\n[3/8] Cross-document links...");
         let mut broken_links = Vec::new();
         let file_set: std::collections::HashSet<_> = files
             .iter()
@@ -295,7 +295,7 @@ impl DoctorArgs {
         }
 
         // 4. Check LanceDB store
-        println!("\n[4/7] LanceDB store...");
+        println!("\n[4/8] LanceDB store...");
         match crate::store::Store::for_workspace(&workspace).await {
             Ok(store) => {
                 match crate::index_lock::inspect(&store.storage_path) {
@@ -333,7 +333,7 @@ impl DoctorArgs {
         }
 
         // 5. Verify that GUI Wiki output has not leaked into canonical memory.
-        println!("\n[5/7] Wiki index isolation...");
+        println!("\n[5/8] Wiki index isolation...");
         match crate::store::Store::for_workspace(&workspace).await {
             Ok(store) => {
                 let leaked_vault = match store.open_table().await {
@@ -390,7 +390,7 @@ impl DoctorArgs {
         }
 
         // 6. Check registry coherence
-        println!("\n[6/7] Registry coherence...");
+        println!("\n[6/8] Registry coherence...");
         if let Ok(registry) = crate::config_manager::load_registry() {
             let vault_canon =
                 std::fs::canonicalize(&workspace.root).unwrap_or_else(|_| workspace.root.clone());
@@ -446,7 +446,7 @@ impl DoctorArgs {
         }
 
         // 7. Temporal freshness (valid_until / learned_at)
-        println!("\n[7/7] Knowledge freshness...");
+        println!("\n[7/8] Knowledge freshness...");
         let now = chrono::Utc::now();
         let mut expired = Vec::new();
         let mut stale_learned = Vec::new();
@@ -547,6 +547,24 @@ impl DoctorArgs {
             }
         }
 
+        println!("\n[8/8] Credentials in notes...");
+        let secrets = crate::doctor::secrets_in_vault(&workspace, &files);
+        if secrets.is_empty() {
+            println!("  ✅ No provider tokens or private keys found in vault notes");
+        } else {
+            println!(
+                "  ⚠️  {} note(s) contain what looks like credentials (values not shown):",
+                secrets.len()
+            );
+            for (path, found) in &secrets {
+                println!("     - {path}: {found}");
+            }
+            println!(
+                "     Report only — nothing is changed. Revoke the keys, edit the notes; if the vault is in git, the old values stay in its history."
+            );
+            issues += secrets.len() as u32;
+        }
+
         // Summary
         println!("\n{}", "─".repeat(60));
         if issues == 0 {
@@ -556,6 +574,13 @@ impl DoctorArgs {
                 "⚠️  {} issue(s) found. Run `rms-memory reindex` or `rms-memory init` to repair.",
                 issues
             );
+        }
+
+        let notices = tokio::task::spawn_blocking(crate::update_check::doctor_notices)
+            .await
+            .unwrap_or_default();
+        for notice in notices {
+            println!("\nℹ️  {notice}");
         }
 
         let companion = crate::companion_status::detect();

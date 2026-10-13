@@ -4,8 +4,8 @@
 
 | Component | Version | Supported |
 |-----------|---------|-----------|
-| `rms-memory` CLI / MCP (`rms-memory-mcp`) | **1.2.2** (2026-10-13) | Yes |
-| RMS Memory GUI (`rms-memory-gui`) | **1.2.2** (2026-10-13) | Yes |
+| `rms-memory` CLI / MCP (`rms-memory-mcp`) | **1.3.0** (2026-10-13) | Yes |
+| RMS Memory GUI (`rms-memory-gui`) | **1.3.0** (2026-10-13) | Yes |
 
 Older pre-1.0 builds are unsupported.
 
@@ -55,3 +55,14 @@ Out of scope (unless chained into a higher impact):
 - CI runs `cargo deny --locked check advisories bans sources` (`deny.toml`) so known RUSTSEC advisories and yanked crates fail the build (with a documented ignore list for unfixable transitive deps).
 - **`rms_file_history` (1.1.2):** runs `git log` only against the registered project `code_path` and stores a derived Lance cache (not vault Markdown). MCP `reindex` requires explicit `project`. Catch-up/reindex enforce commit budgets; hex SHA allowlist on revision args. Agents should use the tool instead of arbitrary shell `git`; v1 does not follow renames across paths. Search `include_file_history` is refused with federated `projects`.
 - **`rms_graph` (1.2.0):** durable vault/code graph is MCP-readable/mutable; edge mutations require explicit `project`. Search `include_graph_neighbors` is refused with federated `projects`. Visual GraphView remains GUI-only.
+- **Update check (1.3.0):** only `doctor` (CLI, MCP `rms_doctor`) sends one unauthenticated request to the GitHub releases API, at most once per 24 hours, with no vault data; the result is cached in `~/.rms-memory/update-check.json`. Server start-up and MCP `initialize` never touch the network. `RMS_MEMORY_NO_UPDATE_CHECK=1` (or `CI`) disables the check. There is no self-update command: upgrades go through the installer that owns the binary.
+
+## Credential refusal limits
+
+Since 1.3.0, `rms_write` (`content`, `source`), `rms_checkpoint_save` (`goal`, `pending`) and `rms_checkpoint_done` (`summary`) refuse text that matches a known credential format: AWS access key ids, GitHub / GitLab / Slack / npm tokens, OpenAI and Anthropic keys, Stripe live keys, Google API keys and PEM private keys. The error names the kind and line so the agent can remove it; the value is never echoed and nothing is masked silently. Doctor check 8 reports matching notes already in the vault and changes nothing.
+
+This lowers the chance that an agent copies a key into memory. It does **not** make the vault secret-free:
+
+- Only prefix-based formats are detected. Passwords, generic `secret = …` assignments, bot tokens without a known prefix and high-entropy strings are not.
+- Text that does not pass through these MCP tools is not checked: edits in the GUI editor, direct edits on disk, `rms-memory import` and vault sync.
+- Secrets already committed to a vault's git history stay there. Revoke the key and rewrite history with your git tooling if needed.

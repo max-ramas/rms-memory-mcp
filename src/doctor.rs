@@ -14,6 +14,9 @@ pub struct DoctorReport {
     pub issue_count: u32,
     pub checks: Vec<DoctorCheck>,
     pub healthy: bool,
+    /// Update / restart advice; informational, not counted as issues.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub notices: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -30,9 +33,9 @@ pub struct DiagnoseOptions {
     pub repair_frontmatter: bool,
 }
 
-/// Run the seven doctor checks and return a structured report.
+/// Run the eight doctor checks and return a structured report.
 pub async fn diagnose(workspace: &Workspace, options: DiagnoseOptions) -> Result<DoctorReport> {
-    let mut checks = Vec::with_capacity(7);
+    let mut checks = Vec::with_capacity(8);
     let mut issue_count = 0u32;
     let (files, discovery_error) = match workspace.find_markdown_files() {
         Ok(files) => (files, None),
@@ -386,13 +389,55 @@ pub async fn diagnose(workspace: &Workspace, options: DiagnoseOptions) -> Result
         });
     }
 
+    // 8. Credentials stored in notes (report only, never rewritten)
+    {
+        let issues: Vec<String> = secrets_in_vault(workspace, &files)
+            .into_iter()
+            .map(|(path, found)| format!("{path}: {found}"))
+            .collect();
+        issue_count += issues.len() as u32;
+        checks.push(DoctorCheck {
+            id: 8,
+            name: "credentials".into(),
+            ok: issues.is_empty(),
+            issues,
+            notes: vec![],
+        });
+    }
+
+    let notices = tokio::task::spawn_blocking(crate::update_check::doctor_notices)
+        .await
+        .unwrap_or_default();
+
     Ok(DoctorReport {
         project_key: workspace.project_key(),
         vault_root: workspace.root.display().to_string(),
         issue_count,
         healthy: issue_count == 0,
         checks,
+        notices,
     })
+}
+
+/// `(note, "kind (line n), ...")` for notes containing credentials with a
+/// known provider prefix. Values are never included.
+pub fn secrets_in_vault(
+    workspace: &Workspace,
+    files: &[std::path::PathBuf],
+) -> Vec<(String, String)> {
+    files
+        .iter()
+        .filter_map(|f| {
+            let text = std::fs::read_to_string(f).ok()?;
+            let findings = rms_memory_core::secrets::scan(&text);
+            (!findings.is_empty()).then(|| {
+                (
+                    rel(workspace, f),
+                    rms_memory_core::secrets::describe(&findings),
+                )
+            })
+        })
+        .collect()
 }
 
 fn rel(workspace: &Workspace, path: &Path) -> String {

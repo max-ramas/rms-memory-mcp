@@ -4,4 +4,5 @@ pub mod document;
 pub mod frontmatter;
 pub mod link;
 pub mod path_policy;
+pub mod secrets;
 pub mod workspace;

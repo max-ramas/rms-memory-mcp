@@ -2,7 +2,7 @@
 
 # 🧠 RMS Memory MCP
 
-**Version:** `1.2.2` (2026-10-13) · companion GUI `1.2.2` (unified numbering)
+**Version:** `1.3.0` (2026-10-13) · companion GUI `1.3.0` (unified numbering)
 
 **Persistent, local-first memory for your AI coding agents.**
 
@@ -54,7 +54,9 @@ You're developing a single project but switching between different agents — Cu
 | 🧹 **Safe Project Lifecycle** | Unregistering preserves vault/index data; permanent GUI deletion requires the exact project key, is confined to the master vault, and never touches source code. |
 | 🔀 **Federated Corpus Search** | Search `vault`, `code`, or `all`; mixed results use Reciprocal Rank Fusion rather than incompatible raw vector distances. |
 | 🎯 **Bounded Recall (v1.0.7)** | `rms_search` returns an inject/abstain envelope with `max_chars`, optional `min_score`, fail-closed errors, and `retrieval_mode` (`hybrid` or short-query `fts_prefer`). |
-| ♻️ **Knowledge Lifecycle** | Frontmatter `status` / `supersedes` / temporal `valid_*` gate Lance recall; soft supersede via `rms_write`; Doctor freshness lint (7/7); `rms-memory prune` archives aged superseded notes (dry-run default). |
+| ♻️ **Knowledge Lifecycle** | Frontmatter `status` / `supersedes` / temporal `valid_*` gate Lance recall; soft supersede via `rms_write`; Doctor freshness lint (check 7 of 8); `rms-memory prune` archives aged superseded notes (dry-run default). |
+| 🔐 **Credential refusal (v1.3.0)** | `rms_write` and checkpoint tools refuse text containing well-known token formats (AWS `AKIA…`, GitHub `ghp_…`/`github_pat_…`, OpenAI/Anthropic `sk-…`, Slack, Stripe live, Google, npm, GitLab) or a PEM private key, naming the kind and line but never the value. Doctor check 8 reports such notes already in the vault (report only). Not a guarantee — see [SECURITY.md](SECURITY.md#credential-refusal-limits). |
+| ⬆️ **Update notices (v1.3.0)** | `doctor` checks GitHub for a newer release at most once a day (`RMS_MEMORY_NO_UPDATE_CHECK=1` disables it) and warns when the running MCP server binary was replaced on disk; MCP `initialize` repeats the cached notice without network access. Upgrade with the tool that installed it (brew, cargo, package, archive). |
 | 🔄 **Session Continuity (v1.0.7)** | Vault-backed checkpoints (`rms_checkpoint_save/done/load/query`), `rms_overview` project orientation, `rms_system_instructions` self-bootstrap, editor-agnostic `rms-memory hook` CLI, installer L3 thin adapters, and `pinned` notes that bypass temporal/`min_confidence` recall gates. |
 | 🧭 **Multi-project MCP routing (v1.0.8+)** | Explicit `project` always rebinds the active vault; empty Cursor `roots/list` falls back to process cwd; injected rules require `project: "<key>"` on every memory tool call; `rms-memory inject-rules [--all]` refreshes keys. |
 | 🔗 **Cross-project federated search (v1.0.9)** | Pass `projects: [key, …]` to `rms_search` / `rms_code_search` for read-only RRF federation. Vault/all across multiple projects requires `cross_project_vault=true` on every listed key (hard fail otherwise). |
@@ -254,7 +256,7 @@ Supported names are `rust`, `go`, `javascript`, `jsx`, `typescript`, `tsx`, `pyt
 | `rms-memory import` | Scans for existing docs (`README.md`, `docs/`, `ADR/`) and imports them — interactively or via `--auto-import`. |
 | `rms-memory install` | Hooks the server into supported IDEs. `--dry-run` supported. |
 | `rms-memory uninstall` | Removes the server from all discovered IDE configurations. |
-| `rms-memory doctor` | Runs 7-point vault health diagnostics. `--repair-frontmatter` safely repairs duplicate, missing, and known attached frontmatter IDs with backups; arbitrary invalid YAML is reported but never rewritten automatically. |
+| `rms-memory doctor` | Runs 8-point vault health diagnostics (the 8th reports credentials stored in notes, never changing them) and prints update / restart notices. `--repair-frontmatter` safely repairs duplicate, missing, and known attached frontmatter IDs with backups; arbitrary invalid YAML is reported but never rewritten automatically. |
 | `rms-memory config` | Without flags: prints global + current-project settings, then offers interactive global editing. Any flag runs non-interactively. Global: `--vault-path`, `--auto-add`, `--inject-rules`, `--auto-import skip\|link\|import_organize\|import`, `--max-backups N`. Project (cwd or `--scope <path>`): `--code-index-mode off\|manual\|watch`, `--code-languages auto\|<comma-list>`, `--include <globs>`, `--exclude <globs>`, `--cross-project-vault true\|false`. |
 | `rms-memory reindex [--vault\|--code\|--all]` | Refreshes Markdown memory (default), derived semantic code memory, or both. |
 | `rms-memory sync` | Incremental LanceDB delete-then-insert sync (also runs automatically during `serve`). |
@@ -296,7 +298,7 @@ Tool descriptions are written to be **action-oriented**, so agents use the vault
 </tr>
 <tr>
 <td><code>rms-memory_rms_write</code></td>
-<td>Persists new decisions, constraints, or rules. Agents are prompted to call this <em>proactively</em> after solving a tricky bug or learning a preference. Auto-injects audit metadata. Optional soft supersede of a prior note. Optional <code>dry_run</code> previews create/update/noop without disk or index side effects.</td>
+<td>Persists new decisions, constraints, or rules. Agents are prompted to call this <em>proactively</em> after solving a tricky bug or learning a preference. Auto-injects audit metadata. Optional soft supersede of a prior note. Optional <code>dry_run</code> previews create/update/noop without disk or index side effects. Content or <code>source</code> containing a known token format or private key is refused (kind + line, never the value).</td>
 <td><code>{ path, project?, content, mode: replace|append|create, confidence, source, status?, supersedes?, dry_run? }</code></td>
 </tr>
 <tr>
@@ -311,7 +313,7 @@ Tool descriptions are written to be **action-oriented**, so agents use the vault
 </tr>
 <tr>
 <td><code>rms-memory_rms_doctor</code></td>
-<td>Seven-point vault health report (structure, IDs, links, LanceDB, wiki isolation, registry, freshness). <code>repair_frontmatter</code> requires explicit <code>project</code>.</td>
+<td>Eight-point vault health report (structure, IDs, links, LanceDB, wiki isolation, registry, freshness, stored credentials) plus <code>notices</code> for a newer release or a replaced server binary. <code>repair_frontmatter</code> requires explicit <code>project</code>.</td>
 <td><code>{ project?, repair_frontmatter? }</code></td>
 </tr>
 <tr>
@@ -336,7 +338,7 @@ Tool descriptions are written to be **action-oriented**, so agents use the vault
 </tr>
 <tr>
 <td><code>rms-memory_rms_checkpoint_save</code> / <code>done</code> / <code>load</code> / <code>query</code></td>
-<td>Session continuity on plain Markdown (<code>artifacts/checkpoints/</code>): save goal/pending/links before context compaction, list or load active checkpoints on resume, close with a summary — closing writes a durable session note under <code>artifacts/sessions/</code> and drops the checkpoint out of default recall.</td>
+<td>Session continuity on plain Markdown (<code>artifacts/checkpoints/</code>): save goal/pending/links before context compaction, list or load active checkpoints on resume, close with a summary — closing writes a durable session note under <code>artifacts/sessions/</code> and drops the checkpoint out of default recall. <code>goal</code>/<code>pending</code>/<code>summary</code> get the same credential refusal as <code>rms_write</code>.</td>
 <td><code>{ name, project?, goal?, pending?, links?, summary?, status? }</code></td>
 </tr>
 <tr>

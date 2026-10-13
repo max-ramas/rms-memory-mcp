@@ -1,6 +1,6 @@
 use anyhow::{Context, Result, anyhow, bail};
 use rms_memory_core::config_manager::ConfigManager;
-use rms_memory_core::document::{Document, Frontmatter};
+use rms_memory_core::document::Document;
 use rms_memory_core::workspace::Registry;
 use rms_memory_index::index_lock::{self, LockInspection};
 use serde::{Deserialize, Serialize};
@@ -238,9 +238,7 @@ pub fn migrate(
         let vault_root = PathBuf::from(&plan.old_vault_path);
         for relative in &plan.project_stamp_updates {
             let path = vault_root.join(relative);
-            update_frontmatter(&path, |frontmatter| {
-                frontmatter.project = Some(plan.new_key.clone());
-            })?;
+            set_frontmatter_key(&path, "project", &plan.new_key)?;
         }
     }
 
@@ -522,9 +520,7 @@ fn validate_link_repairs(plan: &ProjectMigratePlan) -> Result<Vec<(PathBuf, Stri
 
 fn apply_link_repairs(writes: &[(PathBuf, String)]) -> Result<()> {
     for (path, new_link) in writes {
-        update_frontmatter(path, |frontmatter| {
-            frontmatter.link = Some(new_link.clone());
-        })?;
+        set_frontmatter_key(path, "link", new_link)?;
     }
     Ok(())
 }
@@ -574,12 +570,25 @@ fn plan_project_stamp_updates(
     Ok(updates)
 }
 
-fn update_frontmatter(path: &Path, update: impl FnOnce(&mut Frontmatter)) -> Result<()> {
-    let doc = Document::parse(path)?;
-    let mut frontmatter = doc.frontmatter.unwrap_or_default();
-    update(&mut frontmatter);
-    let yaml = serde_yaml::to_string(&frontmatter).context("Failed to serialize frontmatter")?;
-    let rebuilt = format!("---\n{yaml}---\n{}", doc.content);
+/// Sets one frontmatter key; every other key (including ones the typed
+/// `Frontmatter` does not know, such as Obsidian `tags`) is kept verbatim.
+fn set_frontmatter_key(path: &Path, key: &str, value: &str) -> Result<()> {
+    use rms_memory_core::frontmatter;
+    let text = std::fs::read_to_string(path)
+        .with_context(|| format!("Failed to read {}", path.display()))?;
+    let (mut mapping, body) = if text.starts_with("---\n") || text.starts_with("---\r\n") {
+        let split = frontmatter::split(&text)
+            .with_context(|| format!("Unclosed YAML frontmatter in {}", path.display()))?;
+        (
+            frontmatter::parse_mapping(split.yaml)
+                .with_context(|| format!("Invalid YAML frontmatter in {}", path.display()))?,
+            split.body,
+        )
+    } else {
+        (serde_yaml::Mapping::new(), text.as_str())
+    };
+    mapping.insert(key.into(), value.into());
+    let rebuilt = frontmatter::compose(&mapping, body)?;
     std::fs::write(path, rebuilt)
         .with_context(|| format!("Failed to update frontmatter in {}", path.display()))?;
     Ok(())
@@ -590,6 +599,26 @@ mod tests {
     use super::*;
     use rms_memory_core::workspace::{GlobalConfig, MigrationRedirect, ProjectConfig, Registry};
     use std::collections::HashMap;
+
+    #[test]
+    fn set_frontmatter_key_keeps_unknown_keys_and_body() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("note.md");
+        std::fs::write(
+            &path,
+            "---\nid: a\nproject: old\ntags:\n- finance\ncssclasses: wide\n---\n# Body\n",
+        )
+        .unwrap();
+
+        set_frontmatter_key(&path, "project", "new").unwrap();
+
+        let text = std::fs::read_to_string(&path).unwrap();
+        assert!(text.contains("project: new"));
+        assert!(text.contains("- finance"));
+        assert!(text.contains("cssclasses: wide"));
+        assert!(!text.contains("null"));
+        assert!(text.ends_with("---\n# Body\n"));
+    }
 
     #[test]
     fn keys_equivalent_is_case_insensitive() {

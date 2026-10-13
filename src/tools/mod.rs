@@ -6,6 +6,7 @@ pub mod prune;
 pub mod read;
 pub mod response;
 pub mod search;
+pub mod secret_guard;
 pub mod validation;
 pub mod write;
 
