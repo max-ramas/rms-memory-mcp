@@ -10,8 +10,8 @@ pub use rms_memory_core::{
     audit, config_manager, document, frontmatter, git_context, link, path_policy, workspace,
 };
 pub use rms_memory_index::{
-    code_indexer, code_parser, file_history, graph, graph_store, index_lock, indexer, jobs,
-    retrieval, semantic_graph, store, vault_graph, wiki,
+    code_indexer, code_parser, embedding, eval, file_history, graph, graph_store, index_lock,
+    indexer, jobs, retrieval, semantic_graph, store, vault_graph, wiki,
 };
 pub use rms_memory_vault::{
     document_service, import, obsidian_import, project_migrate, project_service, prune,

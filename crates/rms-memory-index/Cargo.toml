@@ -44,6 +44,7 @@ tree-sitter-sequel = "0.3.11"
 tree-sitter-swift = "0.7.3"
 tree-sitter-typescript = "0.23.2"
 octorus-tree-sitter-vue3 = "0.1.0"
+ureq = { version = "3.3.0", features = ["json"] }
 uuid = { version = "1.23.4", features = ["v4"] }
 walkdir = "2.5.0"
 

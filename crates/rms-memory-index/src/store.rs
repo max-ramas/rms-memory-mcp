@@ -7,6 +7,7 @@ use lancedb::connect;
 use lancedb::index::Index;
 use lancedb::table::Table;
 
+/// Vector size of the default embedding model; a store's own size is `Store::dimension`.
 pub const VECTOR_DIMENSION: usize = 384;
 
 fn escape_filter(s: &str) -> String {
@@ -53,22 +54,46 @@ pub struct Store {
     pub db: lancedb::Connection,
     pub table_name: String,
     pub storage_path: String,
+    /// Vector size of the embedding model this store was opened for.
+    pub dimension: usize,
+    /// Embedding model id recorded in `metadata.json`.
+    pub model: String,
 }
 
 impl Store {
+    /// Open a store for the process-wide embedding model.
     pub async fn init(storage_path: &str, table_name: &str) -> Result<Self> {
+        Self::init_for_profile(storage_path, table_name, crate::embedding::active()).await
+    }
+
+    pub async fn init_for_profile(
+        storage_path: &str,
+        table_name: &str,
+        profile: &crate::embedding::EmbeddingProfile,
+    ) -> Result<Self> {
         let meta_path = PathBuf::from(storage_path).join("metadata.json");
         if meta_path.exists() {
             let meta_content = std::fs::read_to_string(&meta_path)?;
-            if let Ok(meta_json) = serde_json::from_str::<serde_json::Value>(&meta_content)
-                && let Some(dim) = meta_json.get("dimension").and_then(|v| v.as_u64())
-                && dim as usize != VECTOR_DIMENSION
-            {
-                return Err(anyhow::anyhow!(
-                    "INDEX_REBUILD_REQUIRED: Database dimension {} does not match current model dimension {}. Please reindex.",
-                    dim,
-                    VECTOR_DIMENSION
-                ));
+            if let Ok(meta_json) = serde_json::from_str::<serde_json::Value>(&meta_content) {
+                if let Some(dim) = meta_json.get("dimension").and_then(|v| v.as_u64())
+                    && dim as usize != profile.dimension
+                {
+                    return Err(anyhow::anyhow!(
+                        "INDEX_REBUILD_REQUIRED: Database dimension {} does not match current model dimension {}. Please reindex.",
+                        dim,
+                        profile.dimension
+                    ));
+                }
+                // Indexes written before model choice carry no model id.
+                if let Some(model) = meta_json.get("model").and_then(|v| v.as_str())
+                    && model != profile.id
+                {
+                    return Err(anyhow::anyhow!(
+                        "INDEX_REBUILD_REQUIRED: Index was built with embedding model `{}`, current model is `{}`. Please reindex.",
+                        model,
+                        profile.id
+                    ));
+                }
             }
         }
 
@@ -81,6 +106,8 @@ impl Store {
             db,
             table_name: table_name.to_string(),
             storage_path: storage_path.to_string(),
+            dimension: profile.dimension,
+            model: profile.id.clone(),
         })
     }
 
@@ -88,13 +115,20 @@ impl Store {
     /// workspace no longer depends on this module for crate-split).
     pub async fn for_workspace(workspace: &rms_memory_core::workspace::Workspace) -> Result<Self> {
         let hash = workspace.project_hash()?;
-        let db_path = rms_memory_core::workspace::base_dir()
-            .join("dbs")
-            .join(hash);
-        Self::init(&db_path.to_string_lossy(), "memory").await
+        let profile = crate::embedding::active();
+        let db_path = profile.index_dir(
+            &rms_memory_core::workspace::base_dir()
+                .join("dbs")
+                .join(hash),
+        );
+        Self::init_for_profile(&db_path.to_string_lossy(), "memory", profile).await
     }
 
-    pub fn schema() -> Arc<ArrowSchema> {
+    pub fn schema(&self) -> Arc<ArrowSchema> {
+        Self::schema_for(self.dimension)
+    }
+
+    pub fn schema_for(dimension: usize) -> Arc<ArrowSchema> {
         Arc::new(ArrowSchema::new(vec![
             Field::new("document_id", DataType::Utf8, false),
             Field::new("path", DataType::Utf8, false),
@@ -116,12 +150,11 @@ impl Store {
             Field::new("valid_from", DataType::Utf8, true),
             Field::new("valid_until", DataType::Utf8, true),
             Field::new("pinned", DataType::Utf8, true),
-            // Use VECTOR_DIMENSION
             Field::new(
                 "vector",
                 DataType::FixedSizeList(
                     Arc::new(Field::new("item", DataType::Float32, true)),
-                    VECTOR_DIMENSION as i32,
+                    dimension as i32,
                 ),
                 false,
             ),
@@ -129,14 +162,16 @@ impl Store {
     }
 
     pub async fn create_table(&self) -> Result<Table> {
+        std::fs::create_dir_all(&self.storage_path)?;
         let meta_path = PathBuf::from(&self.storage_path).join("metadata.json");
         let meta_json = serde_json::json!({
-            "dimension": VECTOR_DIMENSION,
+            "dimension": self.dimension,
+            "model": self.model,
             "created_at": chrono::Utc::now().to_rfc3339()
         });
         std::fs::write(&meta_path, serde_json::to_string_pretty(&meta_json)?)?;
 
-        let schema = Self::schema();
+        let schema = self.schema();
         let table = self
             .db
             .create_empty_table(&self.table_name, schema)
@@ -217,6 +252,29 @@ impl Store {
         Ok(())
     }
 
+    /// Fold rows written since an index was built into it. Unindexed rows
+    /// stay searchable by brute force, but slower and, for full-text search,
+    /// without relevance order.
+    pub async fn index_new_rows(&self, table: &Table) -> Result<()> {
+        let mut pending = false;
+        for index in table.list_indices().await? {
+            if let Some(stats) = table.index_stats(&index.name).await?
+                && stats.num_unindexed_rows > 0
+            {
+                pending = true;
+                break;
+            }
+        }
+        if pending {
+            table
+                .optimize(lancedb::table::OptimizeAction::Index(
+                    lancedb::table::OptimizeOptions::default(),
+                ))
+                .await?;
+        }
+        Ok(())
+    }
+
     pub fn code_table_name(&self) -> String {
         format!("{}_code_chunks", self.table_name)
     }
@@ -275,7 +333,11 @@ impl Store {
         ]))
     }
 
-    pub fn code_schema() -> Arc<ArrowSchema> {
+    pub fn code_schema(&self) -> Arc<ArrowSchema> {
+        Self::code_schema_for(self.dimension)
+    }
+
+    pub fn code_schema_for(dimension: usize) -> Arc<ArrowSchema> {
         Arc::new(ArrowSchema::new(vec![
             Field::new("id", DataType::Utf8, false),
             Field::new("item_key", DataType::Utf8, false),
@@ -296,7 +358,7 @@ impl Store {
                 "vector",
                 DataType::FixedSizeList(
                     Arc::new(Field::new("item", DataType::Float32, true)),
-                    VECTOR_DIMENSION as i32,
+                    dimension as i32,
                 ),
                 false,
             ),
@@ -310,7 +372,7 @@ impl Store {
         }
         Ok(self
             .db
-            .create_empty_table(&name, Self::code_schema())
+            .create_empty_table(&name, self.code_schema())
             .execute()
             .await?)
     }
@@ -321,7 +383,7 @@ impl Store {
             Ok(table) => Ok((table, false)),
             Err(open_error) => match self
                 .db
-                .create_empty_table(&name, Self::code_schema())
+                .create_empty_table(&name, self.code_schema())
                 .execute()
                 .await
             {
@@ -344,7 +406,7 @@ impl Store {
         records: Vec<CodeChunkRecord>,
     ) -> Result<()> {
         table
-            .add(vec![code_record_batch(records)?])
+            .add(vec![code_record_batch(records, self.dimension)?])
             .execute()
             .await?;
         Ok(())
@@ -359,14 +421,14 @@ impl Store {
             return Ok(());
         }
         use lancedb::arrow::arrow_array::RecordBatchIterator;
-        let batch = code_record_batch(records)?;
+        let batch = code_record_batch(records, self.dimension)?;
         let mut merge = table.merge_insert(&["id"]);
         merge.when_matched_update_all(None);
         merge.when_not_matched_insert_all();
         merge
             .execute(Box::new(RecordBatchIterator::new(
                 vec![Ok(batch)],
-                Self::code_schema(),
+                self.code_schema(),
             )))
             .await?;
         Ok(())
@@ -418,13 +480,14 @@ impl Store {
                 if vectors.is_null(index) {
                     continue;
                 }
-                let start = index * VECTOR_DIMENSION;
+                let dimension = vectors.value_length() as usize;
+                let start = index * dimension;
                 segments.insert(
                     ids.value(index).to_string(),
                     StoredCodeSegment {
                         file_path: file_paths.value(index).to_string(),
                         content_hash: hashes.value(index).to_string(),
-                        vector: values.values()[start..start + VECTOR_DIMENSION].to_vec(),
+                        vector: values.values()[start..start + dimension].to_vec(),
                     },
                 );
             }
@@ -520,7 +583,7 @@ impl Store {
         let mut pinned_b = StringBuilder::new();
 
         let item_builder = Float32Builder::new();
-        let mut vector_b = FixedSizeListBuilder::new(item_builder, VECTOR_DIMENSION as i32);
+        let mut vector_b = FixedSizeListBuilder::new(item_builder, self.dimension as i32);
 
         for r in records {
             document_id_b.append_value(r.document_id);
@@ -550,7 +613,7 @@ impl Store {
         }
 
         let batch = RecordBatch::try_new(
-            Self::schema(),
+            self.schema(),
             vec![
                 Arc::new(document_id_b.finish()),
                 Arc::new(path_b.finish()),
@@ -698,8 +761,9 @@ impl Store {
                 if vectors.is_null(index) {
                     continue;
                 }
-                let start = index * VECTOR_DIMENSION;
-                let chunk = &values.values()[start..start + VECTOR_DIMENSION];
+                let dimension = vectors.value_length() as usize;
+                let start = index * dimension;
+                let chunk = &values.values()[start..start + dimension];
                 let (entry, chunks) = documents
                     .entry(paths.value(index).to_string())
                     .or_insert_with(|| {
@@ -710,7 +774,7 @@ impl Store {
                                     .then(|| statuses.value(index).to_string()),
                                 content_hash: hashes.value(index).to_string(),
                                 text: String::new(),
-                                vector: vec![0.0; VECTOR_DIMENSION],
+                                vector: vec![0.0; dimension],
                             },
                             Vec::new(),
                         )
@@ -856,6 +920,7 @@ pub struct StoredCodeSegment {
 
 fn code_record_batch(
     records: Vec<CodeChunkRecord>,
+    dimension: usize,
 ) -> Result<lancedb::arrow::arrow_array::RecordBatch> {
     use lancedb::arrow::arrow_array::RecordBatch;
     use lancedb::arrow::arrow_array::builder::{
@@ -877,13 +942,13 @@ fn code_record_batch(
     let mut content_hash = StringBuilder::new();
     let mut content = StringBuilder::new();
     let mut timestamp = StringBuilder::new();
-    let mut vector = FixedSizeListBuilder::new(Float32Builder::new(), VECTOR_DIMENSION as i32);
+    let mut vector = FixedSizeListBuilder::new(Float32Builder::new(), dimension as i32);
     for record in records {
-        if record.vector.len() != VECTOR_DIMENSION {
+        if record.vector.len() != dimension {
             return Err(anyhow::anyhow!(
                 "code vector dimension {} does not match expected {}",
                 record.vector.len(),
-                VECTOR_DIMENSION
+                dimension
             ));
         }
         id.append_value(record.id);
@@ -908,7 +973,7 @@ fn code_record_batch(
         vector.append(true);
     }
     Ok(RecordBatch::try_new(
-        Store::code_schema(),
+        Store::code_schema_for(dimension),
         vec![
             Arc::new(id.finish()),
             Arc::new(item_key.finish()),
@@ -1045,11 +1110,26 @@ pub fn prefers_fts_query(query: &str) -> bool {
     if q.contains('?') || q.contains(',') || q.contains(';') {
         return false;
     }
-    tokens.iter().all(|token| {
+    let keyword_chars = tokens.iter().all(|token| {
         token
             .chars()
             .all(|c| c.is_alphanumeric() || matches!(c, '-' | '_' | '.' | '/' | ':' | '#' | '@'))
-    })
+    });
+    // A short phrase of plain words ("north star") is a topic, which
+    // embeddings rank better than term counts; lexical-only is for lookups.
+    keyword_chars && (tokens.len() == 1 || tokens.iter().any(|token| looks_like_identifier(token)))
+}
+
+fn looks_like_identifier(token: &str) -> bool {
+    let letters: Vec<char> = token.chars().filter(|c| c.is_alphabetic()).collect();
+    token
+        .chars()
+        .any(|c| c.is_ascii_digit() || matches!(c, '-' | '_' | '.' | '/' | ':' | '#' | '@'))
+        || (letters.len() > 1 && letters.iter().all(|c| c.is_uppercase()))
+        || token
+            .chars()
+            .zip(token.chars().skip(1))
+            .any(|(a, b)| a.is_lowercase() && b.is_uppercase())
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1243,6 +1323,13 @@ impl Store {
             let batch = batch?;
             extract_results(&batch, &mut results)?;
         }
+        // Rows the full-text index does not cover yet are matched by a scan
+        // that returns hits in storage order, not by BM25.
+        results.sort_by(|a, b| {
+            a.score
+                .unwrap_or(f32::MAX)
+                .total_cmp(&b.score.unwrap_or(f32::MAX))
+        });
         Ok(results)
     }
 
@@ -1346,7 +1433,15 @@ mod tests {
     fn prefers_fts_for_short_keywords_not_sentences() {
         assert!(prefers_fts_query("bounded-recall"));
         assert!(prefers_fts_query("rules/api"));
-        assert!(prefers_fts_query("status superseded"));
+        assert!(prefers_fts_query("kanban"));
+        assert!(prefers_fts_query("ensure_writable vault"));
+        assert!(prefers_fts_query("INDEX_REBUILD_REQUIRED"));
+        assert!(prefers_fts_query("MCP transport"));
+        assert!(prefers_fts_query("checkpointSave error"));
+        assert!(prefers_fts_query("release 1.3.0"));
+        assert!(!prefers_fts_query("North Star"));
+        assert!(!prefers_fts_query("status superseded"));
+        assert!(!prefers_fts_query("Ключевые решения"));
         assert!(!prefers_fts_query(
             "how does bounded recall decide to abstain when scores are weak?"
         ));
@@ -1469,6 +1564,62 @@ mod tests {
                 .find(|r| r.path == "decisions/legacy-null.md")
                 .is_some_and(|r| r.confidence.is_none()),
             "legacy hit should retain NULL confidence for the min_score gate"
+        );
+    }
+
+    #[tokio::test]
+    async fn rows_written_after_the_fts_index_are_folded_in_and_ranked() {
+        let directory = tempfile::tempdir().unwrap();
+        let store = Store::init(&directory.path().to_string_lossy(), "memory")
+            .await
+            .unwrap();
+        let table = store.create_table().await.unwrap();
+        // How full indexing used to run: index on the empty table, rows after.
+        store.create_fts_index(&table).await.unwrap();
+        for index in 0..12 {
+            let text =
+                format!("filler text {index} mentions harlem once among many other words here");
+            store
+                .insert_batch(
+                    &table,
+                    vec![chunk(
+                        &format!("notes/passing-{index}.md"),
+                        &text,
+                        Some("active"),
+                        None,
+                    )],
+                )
+                .await
+                .unwrap();
+        }
+        store
+            .insert_batch(
+                &table,
+                vec![chunk(
+                    "notes/harlem-shake.md",
+                    "Harlem Shake. The Harlem Shake meme: Harlem Shake videos, Harlem Shake song.",
+                    Some("active"),
+                    None,
+                )],
+            )
+            .await
+            .unwrap();
+
+        store.index_new_rows(&table).await.unwrap();
+        let stats = table.index_stats("text_idx").await.unwrap().unwrap();
+        assert_eq!(stats.num_unindexed_rows, 0);
+
+        let (results, mode) = store
+            .search_with_mode(vec![0.01; VECTOR_DIMENSION], "harlem".to_string(), 5, None)
+            .await
+            .expect("search");
+        assert_eq!(mode, VaultRetrievalMode::FtsPrefer);
+        assert_eq!(results[0].path, "notes/harlem-shake.md", "{results:?}");
+        assert!(
+            results
+                .windows(2)
+                .all(|pair| pair[0].score.unwrap() <= pair[1].score.unwrap()),
+            "{results:?}"
         );
     }
 }

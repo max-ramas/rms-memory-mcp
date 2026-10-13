@@ -1,3 +1,4 @@
+use crate::embedding::{Backend, EmbeddingProfile};
 use anyhow::{Context, Result};
 use fastembed::{EmbeddingModel, InitOptions, TextEmbedding};
 use pulldown_cmark::{Event, Options, Parser, Tag};
@@ -6,7 +7,13 @@ use std::sync::Mutex;
 use std::time::Duration;
 
 pub struct Indexer {
-    pub model: TextEmbedding,
+    engine: Engine,
+    profile: EmbeddingProfile,
+}
+
+enum Engine {
+    Fastembed(Box<TextEmbedding>),
+    Ollama { url: String, model: String },
 }
 
 #[derive(Debug, Clone)]
@@ -44,7 +51,32 @@ fn system_temp_is_writable() -> bool {
 }
 
 impl Indexer {
+    /// Indexer for the process-wide model (`embedding::active`).
     pub fn new() -> Result<Self> {
+        Self::for_profile(crate::embedding::active().clone())
+    }
+
+    pub fn for_profile(profile: EmbeddingProfile) -> Result<Self> {
+        let engine = match &profile.backend {
+            Backend::Ollama { url, model } => Engine::Ollama {
+                url: url.clone(),
+                model: model.clone(),
+            },
+            Backend::Fastembed => {
+                let model = crate::embedding::fastembed_model(&profile.id).with_context(|| {
+                    format!("No bundled embedding model named `{}`", profile.id)
+                })?;
+                Engine::Fastembed(Box::new(Self::load_fastembed(model)?))
+            }
+        };
+        Ok(Self { engine, profile })
+    }
+
+    pub fn profile(&self) -> &EmbeddingProfile {
+        &self.profile
+    }
+
+    fn load_fastembed(model: EmbeddingModel) -> Result<TextEmbedding> {
         let _guard = MODEL_INIT_LOCK
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
@@ -52,8 +84,8 @@ impl Indexer {
         const ATTEMPTS: u32 = 5;
         let mut last_error = None;
         for attempt in 0..ATTEMPTS {
-            match Self::try_load_model() {
-                Ok(indexer) => return Ok(indexer),
+            match Self::try_load_model(model.clone()) {
+                Ok(loaded) => return Ok(loaded),
                 Err(error) => {
                     let message = format!("{error:#}");
                     let transient = message.contains("Lock acquisition failed")
@@ -75,7 +107,7 @@ impl Indexer {
         Err(last_error.unwrap_or_else(|| anyhow::anyhow!("embedding model init exhausted retries")))
     }
 
-    fn try_load_model() -> Result<Self> {
+    fn try_load_model(model: EmbeddingModel) -> Result<TextEmbedding> {
         let mut cache_dir = rms_memory_core::workspace::base_dir()
             .join("cache")
             .join("fastembed");
@@ -111,7 +143,7 @@ impl Indexer {
 
         eprintln!("Loading embedding model (Cache: {:?})...", cache_dir);
         let result = TextEmbedding::try_new(
-            InitOptions::new(EmbeddingModel::MultilingualE5Small)
+            InitOptions::new(model)
                 .with_cache_dir(cache_dir.clone())
                 .with_intra_threads(1)
                 .with_show_download_progress(false),
@@ -127,8 +159,7 @@ impl Indexer {
             }
         }
 
-        let model = result.context("Failed to initialize fastembed model")?;
-        Ok(Self { model })
+        result.context("Failed to initialize fastembed model")
     }
 
     fn split_large_node(heading: &str, text: &str, chunks: &mut Vec<Chunk>) {
@@ -240,9 +271,49 @@ impl Indexer {
         chunks
     }
 
+    /// Embed stored passages (note chunks, code segments).
     pub fn embed(&mut self, chunks: &[String]) -> Result<Vec<Vec<f32>>> {
-        let embeddings = self.model.embed(chunks, None)?;
-        Ok(embeddings)
+        let prefix = self.profile.passage_prefix.clone();
+        self.embed_with_prefix(&prefix, chunks)
+    }
+
+    /// Embed search queries; asymmetric models expect a different prefix.
+    pub fn embed_queries(&mut self, queries: &[String]) -> Result<Vec<Vec<f32>>> {
+        let prefix = self.profile.query_prefix.clone();
+        self.embed_with_prefix(&prefix, queries)
+    }
+
+    pub fn embed_query(&mut self, query: &str) -> Result<Vec<f32>> {
+        self.embed_queries(&[query.to_string()])?
+            .into_iter()
+            .next()
+            .context("Embedding model returned no vector")
+    }
+
+    fn embed_with_prefix(&mut self, prefix: &str, texts: &[String]) -> Result<Vec<Vec<f32>>> {
+        let prefixed;
+        let texts = if prefix.is_empty() {
+            texts
+        } else {
+            prefixed = texts
+                .iter()
+                .map(|text| format!("{prefix}{text}"))
+                .collect::<Vec<_>>();
+            &prefixed
+        };
+        let vectors = match &mut self.engine {
+            Engine::Fastembed(model) => model.embed(texts, None)?,
+            Engine::Ollama { url, model } => crate::embedding::ollama_embed(url, model, texts)?,
+        };
+        if let Some(vector) = vectors.iter().find(|v| v.len() != self.profile.dimension) {
+            anyhow::bail!(
+                "Embedding model `{}` returned {}-dimensional vectors, expected {}",
+                self.profile.id,
+                vector.len(),
+                self.profile.dimension
+            );
+        }
+        Ok(vectors)
     }
 }
 
@@ -532,6 +603,9 @@ async fn sync_vault_inner(
     // 2. Insert new vectors
     if to_index.is_empty() {
         tracing::info!("Sync: No changes detected. Vault is up to date.");
+        if let Err(error) = store.index_new_rows(&table).await {
+            tracing::warn!("Failed to add new rows to the vault search index: {error:#}");
+        }
         if graph_needs_reconcile {
             crate::vault_graph::reconcile_vault_links(workspace, store).await?;
         }
@@ -636,6 +710,9 @@ async fn sync_vault_inner(
         store.insert_batch(&table, records).await?;
         tracing::info!("Sync: Upsert complete.");
     }
+    if let Err(error) = store.index_new_rows(&table).await {
+        tracing::warn!("Failed to add new rows to the vault search index: {error:#}");
+    }
     if graph_needs_reconcile {
         crate::vault_graph::reconcile_vault_links(workspace, store).await?;
     }
@@ -661,7 +738,6 @@ async fn index_vault_full_inner(
         tracing::warn!("Failed to drop memory table: {e}");
     }
     let table = store.create_table().await?;
-    store.create_fts_index(&table).await?;
 
     let files = workspace.find_markdown_files()?;
     tracing::info!("Full Reindex: Found {} markdown files", files.len());
@@ -807,6 +883,8 @@ async fn index_vault_full_inner(
     } else {
         tracing::info!("Full Reindex: No indexable content found.");
     }
+    // Built after the rows exist so they are covered by it.
+    store.create_fts_index(&table).await?;
     crate::vault_graph::reconcile_vault_links(workspace, store).await?;
     crate::code_indexer::purge_wiki_code_records(workspace, store).await?;
     crate::vault_graph::purge_wiki_graph_records(workspace, store).await?;

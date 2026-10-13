@@ -65,6 +65,11 @@ pub enum Commands {
     Features(crate::commands::features::FeaturesArgs),
     /// Query/mutate the durable knowledge graph (MCP-first; same actions as rms_graph)
     Graph(crate::commands::graph::GraphArgs),
+    /// Choose the embedding model and measure retrieval quality on your vault
+    Embedding {
+        #[command(subcommand)]
+        command: crate::commands::embedding::EmbeddingCommands,
+    },
 }
 
 impl Cli {
@@ -93,6 +98,7 @@ impl Cli {
             Commands::Projects { command } => Ok(command.run()?),
             Commands::Features(args) => args.run(scope).await,
             Commands::Graph(args) => args.run(scope).await,
+            Commands::Embedding { command } => command.run(scope).await,
         }
     }
 }

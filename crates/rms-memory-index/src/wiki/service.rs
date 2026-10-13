@@ -65,9 +65,12 @@ impl WikiService {
             ));
             let temp_store = Arc::new(
                 crate::store::Store::init(
-                    &rms_memory_core::workspace::base_dir()
-                        .join("dbs")
-                        .join("temp")
+                    &crate::embedding::active()
+                        .index_dir(
+                            &rms_memory_core::workspace::base_dir()
+                                .join("dbs")
+                                .join("temp"),
+                        )
                         .to_string_lossy(),
                     "memory",
                 )

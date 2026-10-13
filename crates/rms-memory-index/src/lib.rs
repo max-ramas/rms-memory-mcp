@@ -1,5 +1,7 @@
 pub mod code_indexer;
 pub mod code_parser;
+pub mod embedding;
+pub mod eval;
 pub mod file_history;
 pub mod graph;
 pub mod graph_store;

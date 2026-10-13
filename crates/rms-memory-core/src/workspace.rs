@@ -60,6 +60,12 @@ pub struct GlobalConfig {
     pub inject_rules: Option<bool>,
     pub max_backups: Option<usize>,
     pub auto_import_strategy: Option<String>,
+    /// Embedding model id; unset means `multilingual-e5-small`.
+    pub embedding_model: Option<String>,
+    /// Vector size of an `ollama:<model>` embedding model.
+    pub embedding_dimension: Option<usize>,
+    /// Ollama endpoint (loopback only); unset means http://127.0.0.1:11434.
+    pub ollama_url: Option<String>,
 }
 
 #[derive(Deserialize, Serialize, Debug, Clone, PartialEq, Eq)]

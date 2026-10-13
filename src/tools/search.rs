@@ -363,11 +363,8 @@ async fn execute_inner(
     let query_vector = {
         let mut indexer = indexer.lock().await;
         indexer
-            .embed(&[query.to_string()])
+            .embed_query(query)
             .map_err(|error| anyhow!("Embed failed: {error}"))?
-            .into_iter()
-            .next()
-            .unwrap_or_default()
     };
 
     let (results, retrieval_mode) = if let Some(keys) = project_keys {

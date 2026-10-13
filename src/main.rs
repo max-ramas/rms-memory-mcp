@@ -19,6 +19,7 @@ async fn main() {
         result = cli::Cli::execute() => {
             let code = if let Err(e) = result {
                 tracing::error!("Server error: {:#}", e);
+                eprintln!("Error: {e:#}");
                 1
             } else {
                 0

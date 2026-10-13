@@ -133,7 +133,7 @@ pub async fn build_semantic_edges(
     let vectors = if queries.is_empty() {
         Vec::new()
     } else {
-        indexer.embed(&queries)?
+        indexer.embed_queries(&queries)?
     };
     if vectors.len() != selected.len() {
         anyhow::bail!(

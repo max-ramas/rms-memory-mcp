@@ -246,9 +246,18 @@ impl DoctorArgs {
         let current_dir = std::env::current_dir()?;
         let workspace = Workspace::discover_with_scope(scope.as_deref(), &current_dir, None)?;
         println!("Doctor checks for {:?}", workspace.root);
+        let embedding = crate::embedding::active();
+        println!(
+            "Embedding model: {} ({} dimensions)",
+            embedding.id, embedding.dimension
+        );
         println!("{}", "─".repeat(60));
 
         let mut issues = 0u32;
+        if let Err(error) = crate::embedding::configured() {
+            issues += 1;
+            println!("  ⚠ Configured embedding model is invalid, using the default: {error:#}");
+        }
 
         // 1. Check vault directory structure
         if self.repair_frontmatter {

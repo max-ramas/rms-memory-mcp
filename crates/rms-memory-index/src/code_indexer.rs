@@ -214,6 +214,8 @@ async fn index_code_full_inner(
     .await?;
     if table_created {
         store.create_code_fts_index(&table).await?;
+    } else if let Err(error) = store.index_new_rows(&table).await {
+        tracing::warn!("Failed to add new rows to the code search index: {error:#}");
     }
     let graph_nodes = graph_nodes.into_values().collect::<Vec<_>>();
     for (extractor, edges) in graph_edges {
@@ -343,6 +345,8 @@ async fn index_code_paths_inner(
     .await?;
     if table_created {
         store.create_code_fts_index(&table).await?;
+    } else if let Err(error) = store.index_new_rows(&table).await {
+        tracing::warn!("Failed to add new rows to the code search index: {error:#}");
     }
 
     let mut all_nodes = graph_nodes.into_values().collect::<Vec<_>>();
@@ -885,7 +889,7 @@ mod tests {
 
     #[test]
     fn code_schema_includes_stable_segment_identity_fields() {
-        let schema = crate::store::Store::code_schema();
+        let schema = crate::store::Store::code_schema_for(crate::store::VECTOR_DIMENSION);
         for field in [
             "id",
             "item_key",
