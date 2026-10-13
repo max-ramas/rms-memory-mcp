@@ -630,6 +630,10 @@ impl DoctorArgs {
             }
         }
 
+        for note in crate::doctor::stale_checkpoint_notes(&workspace) {
+            println!("  ℹ️  {note}");
+        }
+
         println!("\n[8/8] Credentials in notes...");
         let secrets = crate::doctor::secrets_in_vault(&workspace, &files);
         if secrets.is_empty() {

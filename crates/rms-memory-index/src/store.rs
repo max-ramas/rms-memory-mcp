@@ -643,6 +643,101 @@ impl Store {
         Ok(map)
     }
 
+    /// One entry per indexed vault file: its indexed text and the normalized
+    /// mean of its chunk vectors, sorted by path.
+    pub async fn document_vectors(&self, table: &Table) -> Result<Vec<DocumentVector>> {
+        use futures::stream::StreamExt;
+        use lancedb::arrow::arrow_array::{
+            Array, FixedSizeListArray, Float32Array, StringArray, UInt32Array,
+        };
+        use lancedb::query::{ExecutableQuery, QueryBase};
+
+        let mut stream = table
+            .query()
+            .select(lancedb::query::Select::Columns(vec![
+                "path".to_string(),
+                "chunk_index".to_string(),
+                "text".to_string(),
+                "status".to_string(),
+                "content_hash".to_string(),
+                "vector".to_string(),
+            ]))
+            .execute()
+            .await?;
+        type Partial = (DocumentVector, Vec<(u32, String)>);
+        let mut documents: std::collections::BTreeMap<String, Partial> =
+            std::collections::BTreeMap::new();
+        while let Some(batch) = stream.next().await {
+            let batch = batch?;
+            let column = |name: &str| {
+                batch
+                    .column_by_name(name)
+                    .and_then(|column| column.as_any().downcast_ref::<StringArray>())
+                    .with_context(|| format!("{name} column is not a StringArray"))
+            };
+            let (paths, texts, statuses, hashes) = (
+                column("path")?,
+                column("text")?,
+                column("status")?,
+                column("content_hash")?,
+            );
+            let chunk_indexes = batch
+                .column_by_name("chunk_index")
+                .and_then(|column| column.as_any().downcast_ref::<UInt32Array>())
+                .context("chunk_index column is not a UInt32Array")?;
+            let vectors = batch
+                .column_by_name("vector")
+                .and_then(|column| column.as_any().downcast_ref::<FixedSizeListArray>())
+                .context("vector column is not a FixedSizeListArray")?;
+            let values = vectors
+                .values()
+                .as_any()
+                .downcast_ref::<Float32Array>()
+                .context("vector values are not Float32Array")?;
+            for index in 0..batch.num_rows() {
+                if vectors.is_null(index) {
+                    continue;
+                }
+                let start = index * VECTOR_DIMENSION;
+                let chunk = &values.values()[start..start + VECTOR_DIMENSION];
+                let (entry, chunks) = documents
+                    .entry(paths.value(index).to_string())
+                    .or_insert_with(|| {
+                        (
+                            DocumentVector {
+                                path: paths.value(index).to_string(),
+                                status: (!statuses.is_null(index))
+                                    .then(|| statuses.value(index).to_string()),
+                                content_hash: hashes.value(index).to_string(),
+                                text: String::new(),
+                                vector: vec![0.0; VECTOR_DIMENSION],
+                            },
+                            Vec::new(),
+                        )
+                    });
+                for (sum, value) in entry.vector.iter_mut().zip(chunk) {
+                    *sum += value;
+                }
+                chunks.push((chunk_indexes.value(index), texts.value(index).to_string()));
+            }
+        }
+        let mut result = Vec::with_capacity(documents.len());
+        for (_, (mut document, mut chunks)) in documents {
+            let norm = document.vector.iter().map(|v| v * v).sum::<f32>().sqrt();
+            if norm > 0.0 {
+                document.vector.iter_mut().for_each(|v| *v /= norm);
+            }
+            chunks.sort_by_key(|(index, _)| *index);
+            document.text = chunks
+                .into_iter()
+                .map(|(_, text)| text)
+                .collect::<Vec<_>>()
+                .join("\n\n");
+            result.push(document);
+        }
+        Ok(result)
+    }
+
     /// Returns a map of relative file path → (document_id, last stored mtime).
     pub async fn get_file_timestamps(
         &self,
@@ -719,6 +814,17 @@ pub struct ChunkRecord {
     pub valid_until: Option<String>,
     /// Indexed as Utf8 `"true"` when pinned; null/absent otherwise.
     pub pinned: Option<bool>,
+}
+
+#[derive(Debug, Clone)]
+pub struct DocumentVector {
+    pub path: String,
+    pub status: Option<String>,
+    pub content_hash: String,
+    /// Indexed chunk texts in order.
+    pub text: String,
+    /// Unit-length mean of the document's chunk vectors.
+    pub vector: Vec<f32>,
 }
 
 #[derive(Clone)]

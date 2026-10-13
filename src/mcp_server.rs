@@ -1156,6 +1156,17 @@ impl McpServer {
                         }
                     },
                     {
+                        "name": "rms_hygiene",
+                        "description": "Read-only memory hygiene report for one project: near-duplicate and identical notes (embedding similarity), active checkpoints untouched for 14+ days, and session notes older than 90 days, with next steps. Never edits the vault; merge duplicates with `rms_write` + `supersedes`.",
+                        "inputSchema": {
+                            "type": "object",
+                            "properties": {
+                                "min_similarity": { "type": "number", "minimum": 0.5, "maximum": 1.0, "default": 0.95, "description": "Cosine similarity at which two notes count as near duplicates." },
+                                "project": { "type": "string", "description": "Registered project key, used when the MCP client did not provide a workspace root." }
+                            }
+                        }
+                    },
+                    {
                         "name": "rms_checkpoint_save",
                         "description": "Create or update a session checkpoint (artifacts/checkpoints/<name>.md, status=active). Save before context compaction or a long pause so work can be resumed. Updating preserves id/created_at and keeps omitted fields. The code repository branch and HEAD are recorded automatically.",
                         "inputSchema": {
@@ -1266,6 +1277,7 @@ impl McpServer {
                         crate::tools::continuity::execute_overview(&self.ctx, &args).await
                     }
                     "rms_prune" => crate::tools::prune::execute(&self.ctx, &args).await,
+                    "rms_hygiene" => crate::tools::hygiene::execute(&self.ctx, &args).await,
                     "rms_checkpoint_save" => {
                         crate::tools::continuity::execute_checkpoint_save(&self.ctx, &args).await
                     }

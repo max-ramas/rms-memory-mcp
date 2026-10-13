@@ -568,7 +568,7 @@ pub fn system_instructions(project: Option<&str>) -> String {
 4. PERSIST: at task end, save new conventions, tricky fixes, and decisions with `rms_write`. Folders: architecture/, rules/, decisions/, artifacts/, docs/, api/. Prefer `rms_write` with `dry_run: true` first when unsure whether a note would create, update, or be a no-op.
 5. FILE HISTORY: for when a source file changed in git, call `rms_file_history` (do not shell `git log`). Optional `include_file_history` on search attaches the last 3 commits per hit.
 6. GRAPH: call `rms_graph` (neighbors / path / snapshot / ensure) to traverse durable Markdown/code links. Optional `include_graph_neighbors` on search attaches neighbor summaries. Mutations (`create_edge`, `suppress_edge`, `edge_override`) require an explicit `project` key. Do not confuse this with the GUI-only visual GraphView.
-7. MAINTENANCE: `rms_doctor` for the eight-point health report; `rms_sync` for incremental index catch-up; `rms_reindex` (requires explicit `project`) for a full rebuild.
+7. MAINTENANCE: `rms_doctor` for the eight-point health report; `rms_hygiene` for duplicate notes and stale checkpoints to consolidate; `rms_sync` for incremental index catch-up; `rms_reindex` (requires explicit `project`) for a full rebuild.
 
 ## Session continuity
 - Before context compaction or a long pause, save progress: `rms_checkpoint_save` with name, goal, pending work, and linked vault paths.

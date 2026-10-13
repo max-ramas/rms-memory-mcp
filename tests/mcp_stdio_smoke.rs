@@ -91,6 +91,7 @@ fn mcp_stdio_initialize_and_tools_list() {
         "rms_projects",
         "rms_overview",
         "rms_prune",
+        "rms_hygiene",
         "rms_checkpoint_save",
         "rms_system_instructions",
     ] {

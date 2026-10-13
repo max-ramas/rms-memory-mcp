@@ -379,10 +379,11 @@ pub async fn diagnose(workspace: &Workspace, options: DiagnoseOptions) -> Result
         let mut issues = expired;
         issues.extend(broken_supersession);
         issue_count += issues.len() as u32;
-        let notes = stale_learned
+        let mut notes: Vec<String> = stale_learned
             .into_iter()
             .map(|line| format!("learned_at older than 365d without valid_until: {line}"))
             .collect();
+        notes.extend(stale_checkpoint_notes(workspace));
         checks.push(DoctorCheck {
             id: 7,
             name: "knowledge_freshness".into(),
@@ -530,6 +531,20 @@ pub fn broken_links(workspace: &Workspace, files: &[std::path::PathBuf]) -> Vec<
         }
     }
     broken
+}
+
+/// Active checkpoints nobody touched for a while; details via `rms_hygiene`.
+pub fn stale_checkpoint_notes(workspace: &Workspace) -> Vec<String> {
+    crate::tools::hygiene::stale_checkpoints(&workspace.root, Utc::now())
+        .unwrap_or_default()
+        .into_iter()
+        .map(|note| {
+            format!(
+                "active checkpoint untouched for {}d: {} (close with rms_checkpoint_done or refresh it)",
+                note.age_days, note.path
+            )
+        })
+        .collect()
 }
 
 pub fn parse_fm_datetime(raw: &str) -> Option<DateTime<Utc>> {
