@@ -122,6 +122,18 @@ fn default_include() -> Vec<String> {
     ]
 }
 
+/// Hidden directories inside the vault hold app state (`.rms-memory/trash`,
+/// AI apply runs) or other tools' trash (`.trash`), never canonical notes.
+fn is_in_hidden_dir(root: &Path, path: &Path) -> bool {
+    let Ok(relative) = path.strip_prefix(root) else {
+        return false;
+    };
+    let mut dirs = relative.components().collect::<Vec<_>>();
+    dirs.pop();
+    dirs.iter()
+        .any(|component| component.as_os_str().to_string_lossy().starts_with('.'))
+}
+
 fn default_exclude() -> Vec<String> {
     vec![
         "node_modules/**".to_string(),
@@ -371,7 +383,8 @@ impl Workspace {
                     let included = include_patterns.iter().any(|p| p.matches(&path_str));
                     let excluded = exclude_patterns.iter().any(|p| p.matches(&path_str));
                     let canonical_excluded =
-                        crate::path_policy::is_vault_wiki_path(&self.root, &path);
+                        crate::path_policy::is_vault_wiki_path(&self.root, &path)
+                            || is_in_hidden_dir(&self.root, &path);
                     if included && !excluded && !canonical_excluded {
                         files.push(path);
                     }
@@ -497,6 +510,43 @@ impl Registry {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn markdown_discovery_skips_hidden_vault_dirs() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().join(".rms-memory-vault");
+        for rel in [
+            "notes/a.md",
+            ".rms-memory/trash/b.md",
+            ".trash/c.md",
+            ".hidden.md",
+        ] {
+            let path = root.join(rel);
+            fs::create_dir_all(path.parent().unwrap()).unwrap();
+            fs::write(path, "# x").unwrap();
+        }
+        let workspace = Workspace {
+            root: root.clone(),
+            code_path: dir.path().to_path_buf(),
+            include: vec!["**/*.md".to_string()],
+            exclude: vec![],
+            code_index_mode: CodeIndexMode::Manual,
+            code_languages: vec![],
+        };
+        let mut found = workspace
+            .find_markdown_files()
+            .unwrap()
+            .into_iter()
+            .map(|p| {
+                p.strip_prefix(&root)
+                    .unwrap()
+                    .to_string_lossy()
+                    .into_owned()
+            })
+            .collect::<Vec<_>>();
+        found.sort();
+        assert_eq!(found, vec![".hidden.md", "notes/a.md"]);
+    }
 
     #[test]
     fn discover_prefix_is_component_aware_not_string_prefix() {

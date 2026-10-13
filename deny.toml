@@ -28,6 +28,10 @@ ignore = [
   # paste 1.0.15 unmaintained (proc-macro), pulled transitively by datafusion.
   # No runtime code; unmaintained is not a vulnerability.
   "RUSTSEC-2024-0436",
+  # unsafe-libyaml 0.2.11 unmaintained, via serde_yaml (frontmatter parsing).
+  # Unmaintained is not a vulnerability; replacing the YAML stack is tracked
+  # separately from patch releases.
+  "RUSTSEC-2024-0449",
 ]
 
 [bans]

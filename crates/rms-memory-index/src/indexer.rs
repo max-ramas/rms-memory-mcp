@@ -1,7 +1,7 @@
 use anyhow::{Context, Result};
 use fastembed::{EmbeddingModel, InitOptions, TextEmbedding};
 use pulldown_cmark::{Event, Options, Parser, Tag};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 use std::time::Duration;
 
@@ -246,6 +246,47 @@ impl Indexer {
     }
 }
 
+/// Modification time of a vault file; a link that escapes the vault falls back
+/// to the linker's own mtime rather than reaching outside.
+fn vault_file_mtime(workspace: &rms_memory_core::workspace::Workspace, file_path: &Path) -> String {
+    let resolved_path = rms_memory_core::link::resolve_link_in_vault_or_self(
+        file_path,
+        &workspace.root,
+        Some(&workspace.code_path),
+    );
+    std::fs::metadata(&resolved_path)
+        .and_then(|m| m.modified())
+        .map(|t| chrono::DateTime::<chrono::Utc>::from(t).to_rfc3339())
+        .unwrap_or_else(|_| chrono::Utc::now().to_rfc3339())
+}
+
+/// Parses a vault document, swapping in linked source content. Escaping links
+/// are ignored so indexed content stays inside the vault.
+fn load_vault_document(
+    workspace: &rms_memory_core::workspace::Workspace,
+    file_path: &Path,
+) -> Option<rms_memory_core::document::Document> {
+    let mut doc = match rms_memory_core::document::Document::parse(file_path) {
+        Ok(doc) => doc,
+        Err(error) => {
+            tracing::error!(
+                "Skipping invalid document {}: {:#}",
+                file_path.display(),
+                error
+            );
+            return None;
+        }
+    };
+    if let Some(linked_content) = rms_memory_core::link::get_linked_content_in_vault(
+        file_path,
+        &workspace.root,
+        Some(&workspace.code_path),
+    ) {
+        doc.content = linked_content;
+    }
+    Some(doc)
+}
+
 pub async fn sync_vault(
     workspace: &rms_memory_core::workspace::Workspace,
     store: &crate::store::Store,
@@ -333,6 +374,10 @@ async fn sync_vault_inner(
 
     let mut to_delete = Vec::new();
     let mut to_index = Vec::new();
+    // Unchanged files skipped by the mtime fast path, keyed by doc_id. Deleting
+    // a doc_id removes every chunk sharing it, so these must be reindexed too.
+    let mut unchanged_by_doc: std::collections::HashMap<String, Vec<PathBuf>> =
+        std::collections::HashMap::new();
 
     let files = workspace.find_markdown_files()?;
     let mut current_doc_ids = std::collections::HashSet::new();
@@ -343,70 +388,51 @@ async fn sync_vault_inner(
             .unwrap_or(&file_path)
             .to_string_lossy()
             .to_string();
-
-        // Read file mtime; a link that escapes the vault falls back to the
-        // linker's own mtime rather than reaching outside.
-        let resolved_path = rms_memory_core::link::resolve_link_in_vault_or_self(
-            &file_path,
-            &workspace.root,
-            Some(&workspace.code_path),
-        );
-        let mtime = std::fs::metadata(&resolved_path)
-            .and_then(|m| m.modified())
-            .map(|t| chrono::DateTime::<chrono::Utc>::from(t).to_rfc3339())
-            .unwrap_or_else(|_| chrono::Utc::now().to_rfc3339());
+        let mtime = vault_file_mtime(workspace, &file_path);
 
         // Fast path: skip if mtime unchanged, but still mark doc_id as current
         if let Some((doc_id, stored_ts)) = path_info.get(&rel_path)
             && &mtime <= stored_ts
         {
             current_doc_ids.insert(doc_id.clone());
+            unchanged_by_doc
+                .entry(doc_id.clone())
+                .or_default()
+                .push(file_path);
             continue;
         }
 
-        let mut doc = match rms_memory_core::document::Document::parse(&file_path) {
-            Ok(d) => d,
-            Err(error) => {
-                tracing::error!(
-                    "Skipping invalid document {}: {:#}",
-                    file_path.display(),
-                    error
-                );
-                continue;
-            }
+        // Past the fast path the file is either new at this path (created,
+        // renamed, moved) or modified, so it is always reindexed. Comparing
+        // against the doc_id timestamp would miss renames, which keep both
+        // the frontmatter id and the mtime.
+        let Some(doc) = load_vault_document(workspace, &file_path) else {
+            continue;
         };
         let doc_id = doc.index_id(Path::new(&rel_path));
-
-        // If it's a linked document, swap the content with the source file content.
-        // Escaping links are ignored so indexed content stays inside the vault.
-        if let Some(linked_content) = rms_memory_core::link::get_linked_content_in_vault(
-            &file_path,
-            &workspace.root,
-            Some(&workspace.code_path),
-        ) {
-            doc.content = linked_content;
-        }
-
         current_doc_ids.insert(doc_id.clone());
-
-        let needs_update = if let Some(stored_time) = existing_docs.get(&doc_id) {
-            &mtime > stored_time
-        } else {
-            true // New file
-        };
-
-        if needs_update {
-            if existing_docs.contains_key(&doc_id) {
-                to_delete.push(doc_id.clone());
-            }
-            to_index.push((file_path, doc, mtime, doc_id));
+        if existing_docs.contains_key(&doc_id) {
+            to_delete.push(doc_id.clone());
         }
+        to_index.push((file_path, doc, mtime, doc_id));
     }
 
     // Check for deleted files
     for doc_id in existing_docs.keys() {
         if !current_doc_ids.contains(doc_id) {
             to_delete.push(doc_id.clone());
+        }
+    }
+    to_delete.sort();
+    to_delete.dedup();
+
+    for doc_id in &to_delete {
+        for file_path in unchanged_by_doc.remove(doc_id).unwrap_or_default() {
+            let Some(doc) = load_vault_document(workspace, &file_path) else {
+                continue;
+            };
+            let mtime = vault_file_mtime(workspace, &file_path);
+            to_index.push((file_path, doc, mtime, doc_id.clone()));
         }
     }
 
@@ -732,5 +758,83 @@ pub fn normalize_link(workspace_root: &Path, current_file: &Path, link: &str) ->
         rel.to_string_lossy().to_string()
     } else {
         current_dir.to_string_lossy().to_string()
+    }
+}
+
+#[cfg(test)]
+mod sync_tests {
+    async fn indexed_paths(store: &crate::store::Store) -> Vec<String> {
+        let table = store.open_table().await.unwrap();
+        let mut paths: Vec<String> = store
+            .get_file_timestamps(&table)
+            .await
+            .unwrap()
+            .into_keys()
+            .collect();
+        paths.sort();
+        paths
+    }
+
+    #[tokio::test]
+    async fn sync_follows_renames_and_keeps_shared_id_copies() {
+        let directory = tempfile::tempdir().unwrap();
+        let vault = directory.path().join("vault");
+        std::fs::create_dir_all(vault.join("notes")).unwrap();
+        std::fs::create_dir_all(vault.join(".rms-memory/trash")).unwrap();
+        std::fs::write(
+            vault.join("notes/old-name.md"),
+            "---\nid: fixed-id-1\n---\n# Old\n\nrename body\n",
+        )
+        .unwrap();
+        std::fs::write(
+            vault.join(".rms-memory/trash/deleted.md"),
+            "---\nid: trashed-1\n---\n# Trashed\n\nnot indexed\n",
+        )
+        .unwrap();
+        let workspace = rms_memory_core::workspace::Workspace {
+            root: vault.clone(),
+            code_path: directory.path().join("code"),
+            include: vec!["**/*.md".to_string()],
+            exclude: vec![],
+            code_index_mode: rms_memory_core::workspace::CodeIndexMode::Manual,
+            code_languages: vec![],
+        };
+        let store =
+            crate::store::Store::init(&directory.path().join("db").to_string_lossy(), "memory")
+                .await
+                .unwrap();
+        let mut indexer = crate::indexer::Indexer::new().unwrap();
+        super::sync_vault(&workspace, &store, &mut indexer)
+            .await
+            .unwrap();
+        assert_eq!(indexed_paths(&store).await, vec!["notes/old-name.md"]);
+
+        std::fs::rename(
+            vault.join("notes/old-name.md"),
+            vault.join("notes/new-name.md"),
+        )
+        .unwrap();
+        super::sync_vault(&workspace, &store, &mut indexer)
+            .await
+            .unwrap();
+        assert_eq!(indexed_paths(&store).await, vec!["notes/new-name.md"]);
+        assert!(
+            store
+                .read_document("notes/new-name.md")
+                .await
+                .unwrap()
+                .contains("rename body")
+        );
+
+        // A copy shares the frontmatter id; reindexing it must not drop the
+        // unchanged original.
+        std::fs::copy(vault.join("notes/new-name.md"), vault.join("notes/copy.md")).unwrap();
+        super::sync_vault(&workspace, &store, &mut indexer)
+            .await
+            .unwrap();
+        assert_eq!(
+            indexed_paths(&store).await,
+            vec!["notes/copy.md", "notes/new-name.md"]
+        );
     }
 }

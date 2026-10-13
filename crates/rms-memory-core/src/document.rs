@@ -59,24 +59,16 @@ impl Document {
         let mut content = text.clone();
 
         if text.starts_with("---\n") || text.starts_with("---\r\n") {
-            let end_idx = text
-                .find("\n---\n")
-                .or_else(|| text.find("\r\n---\r\n"))
+            let split = crate::frontmatter::split(&text)
                 .with_context(|| format!("Unclosed YAML frontmatter in {}", path.display()))?;
-            let fm_text = &text[4..end_idx];
-            let fm = serde_yaml::from_str::<Frontmatter>(fm_text)
-                .with_context(|| format!("Invalid YAML frontmatter in {}", path.display()))?;
+            let fm = if split.yaml.trim().is_empty() {
+                Frontmatter::default()
+            } else {
+                serde_yaml::from_str::<Frontmatter>(split.yaml)
+                    .with_context(|| format!("Invalid YAML frontmatter in {}", path.display()))?
+            };
             frontmatter = Some(fm);
-
-            let content_start = end_idx
-                + if text[end_idx..].starts_with("\r\n") {
-                    7
-                } else {
-                    5
-                };
-            if content_start <= text.len() {
-                content = text[content_start..].to_string();
-            }
+            content = split.body.to_string();
         }
 
         Ok(Document {

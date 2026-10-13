@@ -1,6 +1,6 @@
 # RMS Memory MCP Server — Walkthrough
 
-Updated: 2026-10-01 · MCP `1.2.1` / GUI `1.2.1`
+Updated: 2026-10-13 · MCP `1.2.2` / GUI `1.2.2`
 
 RMS Memory is a specialized Model Context Protocol (MCP) server that acts as localized persistent memory for LLM agents. It keeps human-authored knowledge in centralized Markdown Vaults and can optionally maintain a separate derived semantic index for source code, solving context fragmentation across multiple IDEs (Cursor, Zed, VS Code, Claude Code, Codex).
 
@@ -299,3 +299,11 @@ ADR: `decisions/agent-facing-knowledge-graph-mcp.md`. Capability matrix: `artifa
 - **Federation errors:** asking federated search for graph neighbors or file history returns a typed hard error. It cannot be mistaken for a weak-match abstention.
 - **Linux AppImage:** release packaging repairs `AppRun.wrapped` to mode 0755 inside the final Type 2 image, then re-extracts and checks payload permissions. The repair was validated in an Ubuntu 22.04 container using the released 1.2.0 image. The tag's CI gate checks the new artifact before upload; the catalog test is a separate distribution check.
 - **Distribution:** the GUI release pipeline validates package, Tauri and Cargo versions together. Signed updater metadata can be mirrored from uploaded build artifacts when the private GUI repository has no GitHub Release for the tag.
+
+### 30. Vault data integrity (v1.2.2)
+
+- **Frontmatter:** `rms_memory_core::frontmatter` is the single splitter/composer for YAML blocks. An empty block (`---\n---`) parses as empty metadata instead of panicking the stdio server.
+- **`rms_write`:** `append` keeps the existing frontmatter and appends to the body; `replace` merges incoming keys over the existing ones. Appending to a document with invalid YAML is refused.
+- **Incremental sync:** any file whose path is not yet indexed (created, renamed, moved) is reindexed and its doc_id's stale chunks deleted; unchanged files sharing that doc_id are reindexed with it. Hidden vault directories, including `.rms-memory/trash`, are no longer indexed.
+- **Maintenance:** `rms_graph ensure` keys on vault nodes; MCP doctor treats stale `learned_at` as informational and reports discovery failures.
+- **GUI:** doctor writes only with Apply and stamps `project` via the frontmatter parser; GC keeps offline vault databases; Settings changed-file count, log auto-refresh and the offline license grace window are fixed.

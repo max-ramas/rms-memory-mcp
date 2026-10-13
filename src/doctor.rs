@@ -34,6 +34,10 @@ pub struct DiagnoseOptions {
 pub async fn diagnose(workspace: &Workspace, options: DiagnoseOptions) -> Result<DoctorReport> {
     let mut checks = Vec::with_capacity(7);
     let mut issue_count = 0u32;
+    let (files, discovery_error) = match workspace.find_markdown_files() {
+        Ok(files) => (files, None),
+        Err(error) => (Vec::new(), Some(error)),
+    };
 
     // 1. Vault directory structure
     {
@@ -51,6 +55,11 @@ pub async fn diagnose(workspace: &Workspace, options: DiagnoseOptions) -> Result
                 issues.push(format!("{dir}/ missing"));
             }
         }
+        if let Some(error) = &discovery_error {
+            issues.push(format!(
+                "markdown discovery failed, document checks skipped: {error:#}"
+            ));
+        }
         issue_count += issues.len() as u32;
         checks.push(DoctorCheck {
             id: 1,
@@ -60,8 +69,6 @@ pub async fn diagnose(workspace: &Workspace, options: DiagnoseOptions) -> Result
             notes: vec![],
         });
     }
-
-    let files = workspace.find_markdown_files().unwrap_or_default();
 
     // 2. Document IDs
     {
@@ -364,15 +371,18 @@ pub async fn diagnose(workspace: &Workspace, options: DiagnoseOptions) -> Result
             }
         }
         let mut issues = expired;
-        issues.extend(stale_learned);
         issues.extend(broken_supersession);
         issue_count += issues.len() as u32;
+        let notes = stale_learned
+            .into_iter()
+            .map(|line| format!("learned_at older than 365d without valid_until: {line}"))
+            .collect();
         checks.push(DoctorCheck {
             id: 7,
             name: "knowledge_freshness".into(),
             ok: issues.is_empty(),
             issues,
-            notes: vec![],
+            notes,
         });
     }
 

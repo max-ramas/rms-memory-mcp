@@ -177,8 +177,13 @@ async fn action_ensure(
 ) -> Result<serde_json::Value> {
     let tables = store.open_or_create_graph_tables().await?;
     let generation = store.next_graph_generation().await?;
-    let before = store.query_graph_nodes(&tables, generation).await?.len();
-    let refreshed = force || before == 0;
+    let vault_nodes = store
+        .query_graph_nodes(&tables, generation)
+        .await?
+        .iter()
+        .filter(|node| node.corpus == "vault")
+        .count();
+    let refreshed = force || vault_nodes == 0;
     if refreshed {
         vault_graph::reconcile_vault_links(workspace, store).await?;
     }

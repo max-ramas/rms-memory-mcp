@@ -6,7 +6,9 @@
 /// Workspace crates (core / index / vault / cli) live under `crates/`; this
 /// package remains the crates.io umbrella with stable `rms_memory_mcp::<mod>` paths.
 // Public API
-pub use rms_memory_core::{audit, config_manager, document, link, path_policy, workspace};
+pub use rms_memory_core::{
+    audit, config_manager, document, frontmatter, link, path_policy, workspace,
+};
 pub use rms_memory_index::{
     code_indexer, code_parser, file_history, graph, graph_store, index_lock, indexer, jobs,
     retrieval, semantic_graph, store, vault_graph, wiki,

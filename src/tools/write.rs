@@ -23,11 +23,7 @@ impl WriteAction {
 struct WritePlan {
     path_str: String,
     file_path: PathBuf,
-    mode: String,
-    /// Full document text that would be committed for create/replace,
-    /// or the injected chunk for append.
-    planned_payload: String,
-    /// Full on-disk+planned document used for fingerprint / diff.after.
+    /// Full document text committed to disk; also the fingerprint / diff.after.
     after_document: String,
     before_document: Option<String>,
     action: WriteAction,
@@ -164,26 +160,24 @@ fn plan_write(
         None
     };
 
-    let planned_payload = inject_audit_metadata(
-        content,
-        &ctx.caller_id,
-        ctx.project_key.as_deref(),
-        &write_args,
-    )?;
-
     let before_document = if file_path.exists() {
         Some(std::fs::read_to_string(&file_path)?)
     } else {
         None
     };
 
-    let after_document = match mode.as_str() {
-        "append" => match &before_document {
-            Some(before) => format!("{before}{planned_payload}"),
-            None => planned_payload.clone(),
-        },
-        _ => planned_payload.clone(),
+    let source = match (mode.as_str(), &before_document) {
+        ("append" | "replace", Some(before)) => {
+            merge_into_existing(&mode, before, content, path_str)?
+        }
+        _ => content.to_string(),
     };
+    let after_document = inject_audit_metadata(
+        &source,
+        &ctx.caller_id,
+        ctx.project_key.as_deref(),
+        &write_args,
+    )?;
 
     let action = match &before_document {
         None => WriteAction::Create,
@@ -201,8 +195,6 @@ fn plan_write(
     Ok(WritePlan {
         path_str: path_str.to_string(),
         file_path,
-        mode,
-        planned_payload,
         after_document,
         before_document,
         action,
@@ -244,20 +236,7 @@ fn commit_write(ctx: &AppContext, plan: &WritePlan) -> Result<()> {
         std::fs::create_dir_all(parent)?;
     }
 
-    match plan.mode.as_str() {
-        "append" => {
-            use std::io::Write;
-            let mut f = std::fs::OpenOptions::new()
-                .append(true)
-                .create(true)
-                .open(&plan.file_path)?;
-            f.write_all(plan.planned_payload.as_bytes())?;
-        }
-        "create" | "replace" => {
-            std::fs::write(&plan.file_path, &plan.planned_payload)?;
-        }
-        _ => unreachable!("mode validated in plan_write"),
-    }
+    std::fs::write(&plan.file_path, &plan.after_document)?;
 
     if let Some((old_path, _old_id)) = &plan.predecessor {
         let workspace_root = ctx
@@ -318,20 +297,64 @@ fn write_guard_backup(file_path: &Path, max_backups: usize) -> Result<()> {
     Ok(())
 }
 
+/// Rebuilds the document so append/replace keep the existing frontmatter
+/// (id, status, pinned, supersession links) instead of minting a new block.
+fn merge_into_existing(mode: &str, before: &str, content: &str, path_str: &str) -> Result<String> {
+    use crate::frontmatter;
+
+    let (mut mapping, existing_body) = match frontmatter::split(before) {
+        Some(split) => match frontmatter::parse_mapping(split.yaml) {
+            Ok(mapping) => (mapping, split.body),
+            Err(_) if mode == "replace" => (serde_yaml::Mapping::new(), ""),
+            Err(error) => {
+                return Err(error.context(format!(
+                    "Cannot append to {path_str}: its frontmatter is invalid YAML; repair it first"
+                )));
+            }
+        },
+        None => (serde_yaml::Mapping::new(), before),
+    };
+    // inject_audit_metadata re-stamps the current workspace project.
+    mapping.remove("project");
+
+    let incoming_body = match frontmatter::split(content) {
+        Some(split) => match frontmatter::parse_mapping(split.yaml) {
+            Ok(incoming) => {
+                mapping.extend(incoming);
+                split.body
+            }
+            Err(_) => content,
+        },
+        None => content,
+    };
+    let body = if mode == "append" {
+        append_body(existing_body, incoming_body)
+    } else {
+        incoming_body.to_string()
+    };
+    if mapping.is_empty() {
+        return Ok(body);
+    }
+    frontmatter::compose(&mapping, &body)
+}
+
+fn append_body(existing: &str, addition: &str) -> String {
+    let addition = addition.trim_start_matches(['\r', '\n']);
+    if existing.trim().is_empty() {
+        return format!("\n{addition}");
+    }
+    format!("{}\n\n{addition}", existing.trim_end_matches(['\r', '\n']))
+}
+
 fn mark_document_superseded(path: &Path, superseded_by: &str) -> Result<()> {
     let text = std::fs::read_to_string(path)?;
-    if !(text.starts_with("---\n") || text.starts_with("---\r\n")) {
-        return Err(anyhow::anyhow!(
-            "Cannot mark superseded: {} has no frontmatter",
+    let split = crate::frontmatter::split(&text).ok_or_else(|| {
+        anyhow::anyhow!(
+            "Cannot mark superseded: {} has no closed frontmatter",
             path.display()
-        ));
-    }
-    let end_idx = text
-        .find("\n---\n")
-        .or_else(|| text.find("\r\n---\r\n"))
-        .ok_or_else(|| anyhow::anyhow!("Unclosed frontmatter in {}", path.display()))?;
-    let fm_text = &text[4..end_idx];
-    let mut mapping: serde_yaml::Mapping = serde_yaml::from_str(fm_text)?;
+        )
+    })?;
+    let mut mapping = crate::frontmatter::parse_mapping(split.yaml)?;
     mapping.insert(
         serde_yaml::Value::String("status".into()),
         serde_yaml::Value::String("superseded".into()),
@@ -340,24 +363,13 @@ fn mark_document_superseded(path: &Path, superseded_by: &str) -> Result<()> {
         serde_yaml::Value::String("superseded_by".into()),
         serde_yaml::Value::String(superseded_by.to_string()),
     );
-    let updated_fm = serde_yaml::to_string(&mapping)
-        .unwrap_or_default()
-        .trim_end()
-        .to_string();
-    let remainder = &text[end_idx..];
-    std::fs::write(path, format!("---\n{}\n{}", updated_fm, remainder))?;
+    std::fs::write(path, crate::frontmatter::compose(&mapping, split.body)?)?;
     Ok(())
 }
 
 fn extract_frontmatter_id(markdown: &str) -> Option<String> {
-    if !(markdown.starts_with("---\n") || markdown.starts_with("---\r\n")) {
-        return None;
-    }
-    let end_idx = markdown
-        .find("\n---\n")
-        .or_else(|| markdown.find("\r\n---\r\n"))?;
-    let fm_text = &markdown[4..end_idx];
-    let mapping: serde_yaml::Mapping = serde_yaml::from_str(fm_text).ok()?;
+    let split = crate::frontmatter::split(markdown)?;
+    let mapping = crate::frontmatter::parse_mapping(split.yaml).ok()?;
     mapping
         .get(serde_yaml::Value::String("id".into()))
         .and_then(|v| v.as_str())
@@ -398,6 +410,114 @@ mod tests {
             caller_id: "test".to_string(),
             project_key: None,
         }
+    }
+
+    fn write_args(
+        path: &str,
+        mode: &str,
+        content: &str,
+    ) -> serde_json::Map<String, serde_json::Value> {
+        let mut args = serde_json::Map::new();
+        args.insert("path".into(), serde_json::json!(path));
+        args.insert("mode".into(), serde_json::json!(mode));
+        args.insert("content".into(), serde_json::json!(content));
+        args
+    }
+
+    fn frontmatter_of(text: &str) -> serde_yaml::Mapping {
+        let split = crate::frontmatter::split(text).expect("frontmatter");
+        crate::frontmatter::parse_mapping(split.yaml).expect("yaml")
+    }
+
+    #[test]
+    fn empty_frontmatter_parses_without_panicking() {
+        let dir = tempdir().unwrap();
+        for (label, text) in [
+            ("lf", "---\n---\n# body\n"),
+            ("crlf", "---\r\n---\r\n# body\r\n"),
+        ] {
+            let path = dir.path().join(format!("empty-{label}.md"));
+            std::fs::write(&path, text).unwrap();
+            let doc = crate::document::Document::parse(&path).expect("empty block is valid");
+            assert!(doc.frontmatter.unwrap().id.is_none());
+            assert!(doc.content.starts_with("# body"));
+        }
+    }
+
+    #[tokio::test]
+    async fn append_and_replace_keep_existing_frontmatter() {
+        let dir = tempdir().unwrap();
+        let ctx = make_ctx(dir.path().to_path_buf());
+        let mut create = write_args("notes/a.md", "create", "# Title\n\nfirst paragraph");
+        create.insert("pinned".into(), serde_json::json!(true));
+        create.insert("status".into(), serde_json::json!("superseded"));
+        execute(&ctx, &create).await.unwrap();
+        let file = ctx.workspace_root.as_ref().unwrap().join("notes/a.md");
+        let original = frontmatter_of(&std::fs::read_to_string(&file).unwrap());
+
+        execute(
+            &ctx,
+            &write_args("notes/a.md", "append", "second paragraph"),
+        )
+        .await
+        .unwrap();
+        let appended = std::fs::read_to_string(&file).unwrap();
+        assert_eq!(appended.matches("\n---\n").count(), 1, "{appended}");
+        assert_eq!(appended.lines().filter(|l| l.starts_with("id:")).count(), 1);
+        assert!(
+            appended.ends_with("first paragraph\n\nsecond paragraph"),
+            "{appended}"
+        );
+        assert_eq!(frontmatter_of(&appended).get("id"), original.get("id"));
+
+        execute(
+            &ctx,
+            &write_args("notes/a.md", "replace", "# Title\n\nrewritten body"),
+        )
+        .await
+        .unwrap();
+        let replaced = std::fs::read_to_string(&file).unwrap();
+        let fm = frontmatter_of(&replaced);
+        assert_eq!(fm.get("id"), original.get("id"));
+        assert_eq!(fm.get("created_at"), original.get("created_at"));
+        assert_eq!(fm.get("pinned"), Some(&serde_yaml::Value::Bool(true)));
+        assert_eq!(
+            fm.get("status").and_then(|v| v.as_str()),
+            Some("superseded")
+        );
+        assert!(replaced.ends_with("# Title\n\nrewritten body"));
+        assert!(!replaced.contains("first paragraph"));
+    }
+
+    #[tokio::test]
+    async fn replace_frontmatter_overrides_existing_keys() {
+        let dir = tempdir().unwrap();
+        let ctx = make_ctx(dir.path().to_path_buf());
+        let mut create = write_args("a.md", "create", "body");
+        create.insert("pinned".into(), serde_json::json!(true));
+        execute(&ctx, &create).await.unwrap();
+        execute(
+            &ctx,
+            &write_args("a.md", "replace", "---\npinned: false\n---\n\nnew body"),
+        )
+        .await
+        .unwrap();
+        let text = std::fs::read_to_string(dir.path().join("a.md")).unwrap();
+        assert_eq!(
+            frontmatter_of(&text).get("pinned"),
+            Some(&serde_yaml::Value::Bool(false))
+        );
+    }
+
+    #[tokio::test]
+    async fn append_refuses_invalid_existing_frontmatter() {
+        let dir = tempdir().unwrap();
+        let ctx = make_ctx(dir.path().to_path_buf());
+        std::fs::write(dir.path().join("bad.md"), "---\nid: [\n---\nbody\n").unwrap();
+        let error = execute(&ctx, &write_args("bad.md", "append", "more"))
+            .await
+            .unwrap_err();
+        assert!(format!("{error:#}").contains("frontmatter"), "{error:#}");
     }
 
     fn parse_dry_run(value: &serde_json::Value) -> serde_json::Value {

@@ -2,6 +2,20 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.2.2] - 2026-10-13
+
+### Fixed
+- **Empty frontmatter crash:** a document starting with `---\n---` (empty YAML block) no longer panics the server during parse, `rms_write`, fingerprinting or audit stamping. Frontmatter splitting is shared in `rms_memory_core::frontmatter` and never slices past the closing delimiter.
+- **`rms_write` append/replace dropped frontmatter:** `append` now keeps the existing YAML (id, tags, `valid_until`, supersession links) and appends only to the body; `replace` keeps existing keys unless the new content overrides them. Append to a document with invalid YAML is refused instead of silently discarding it.
+- **Renamed or moved notes stayed indexed under the old path:** incremental sync now reindexes every file whose path is new to the index, deletes the stale chunks, and reindexes unchanged copies that share the same frontmatter id so duplicates are not dropped.
+- **Trash was searchable:** Markdown discovery skips hidden directories inside the vault (`.rms-memory/trash`, etc.), matching the document list.
+- **`rms_graph ensure`** rebuilds the vault link graph when no vault nodes exist, even if code nodes are present.
+- **MCP `rms_doctor`:** stale `learned_at` entries are reported as notes (informational, as in the CLI) instead of inflating the issue count; a Markdown discovery failure is reported as an issue instead of an empty, healthy report.
+
+### Changed
+- MCP and companion GUI release versions are aligned at **1.2.2**.
+- Supply-chain gate: `unsafe-libyaml` (via `serde_yaml`) is listed as an accepted unmaintained advisory (RUSTSEC-2024-0449) in `deny.toml`; it is not a vulnerability.
+
 ## [1.2.1] - 2026-10-01
 
 ### Fixed
