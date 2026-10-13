@@ -37,6 +37,10 @@ pub struct ConfigArgs {
     /// (`projects` with more than one key and `corpus=vault|all`). Default false.
     #[arg(long, value_name = "BOOL")]
     pub cross_project_vault: Option<bool>,
+    /// Never create, edit or delete files in this project's vault (memory
+    /// writes are refused; search and indexing keep working). Default false.
+    #[arg(long, value_name = "BOOL")]
+    pub read_only: Option<bool>,
 }
 
 impl ConfigArgs {
@@ -55,7 +59,8 @@ impl ConfigArgs {
             || self.code_languages.is_some()
             || self.include.is_some()
             || self.exclude.is_some()
-            || self.cross_project_vault.is_some();
+            || self.cross_project_vault.is_some()
+            || self.read_only.is_some();
 
         // Any explicit flag means scripted use: apply exactly what was passed,
         // never prompt for unrelated settings.
@@ -191,6 +196,13 @@ impl ConfigArgs {
             println!("Set cross_project_vault to: {allow}");
             updated = true;
         }
+        if let Some(read_only) = self.read_only
+            && project.read_only != read_only
+        {
+            project.read_only = read_only;
+            println!("Set read_only to: {read_only}");
+            updated = true;
+        }
         Ok(updated)
     }
 }
@@ -272,9 +284,10 @@ fn print_current(registry: &crate::workspace::Registry, scope: Option<&str>) {
                 "| Cross-Project Vault| {:<63} |",
                 project.cross_project_vault
             );
+            println!("| Read-only vault   | {:<64} |", project.read_only);
             println!("{sep}");
             println!(
-                "\nProject flags: --code-index-mode, --code-languages, --include, --exclude, --cross-project-vault (with --scope <path> when outside the repo).\n"
+                "\nProject flags: --code-index-mode, --code-languages, --include, --exclude, --cross-project-vault, --read-only (with --scope <path> when outside the repo).\n"
             );
         }
         None => {
@@ -437,6 +450,7 @@ mod tests {
             code_index_mode: crate::workspace::CodeIndexMode::Off,
             code_languages: vec!["auto".to_string()],
             cross_project_vault: false,
+            read_only: false,
         }
     }
 
@@ -452,6 +466,7 @@ mod tests {
             include: None,
             exclude: None,
             cross_project_vault: None,
+            read_only: None,
         }
     }
 

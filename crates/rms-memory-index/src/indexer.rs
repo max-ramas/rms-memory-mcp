@@ -266,11 +266,19 @@ fn load_vault_document(
     workspace: &rms_memory_core::workspace::Workspace,
     file_path: &Path,
 ) -> Option<rms_memory_core::document::Document> {
-    let mut doc = match rms_memory_core::document::Document::parse(file_path) {
-        Ok(doc) => doc,
+    let mut doc = match rms_memory_core::document::Document::parse_for_index(file_path) {
+        Ok((doc, frontmatter_error)) => {
+            if let Some(error) = frontmatter_error {
+                tracing::warn!(
+                    "Indexing {} without frontmatter: {error:#}",
+                    file_path.display()
+                );
+            }
+            doc
+        }
         Err(error) => {
             tracing::error!(
-                "Skipping invalid document {}: {:#}",
+                "Skipping unreadable document {}: {:#}",
                 file_path.display(),
                 error
             );
@@ -285,6 +293,78 @@ fn load_vault_document(
         doc.content = linked_content;
     }
     Some(doc)
+}
+
+/// How far the vault index lags behind the Markdown files on disk.
+#[derive(Debug, Clone, Default, PartialEq, Eq, serde::Serialize)]
+pub struct VaultFreshness {
+    pub indexed_files: usize,
+    /// Indexed, but changed on disk since.
+    pub modified: usize,
+    /// On disk, not in the index yet.
+    pub added: usize,
+    /// In the index, no longer on disk.
+    pub removed: usize,
+}
+
+impl VaultFreshness {
+    pub fn pending(&self) -> usize {
+        self.modified + self.added + self.removed
+    }
+
+    pub fn describe(&self) -> String {
+        if self.pending() == 0 {
+            return format!("index up to date ({} files)", self.indexed_files);
+        }
+        format!(
+            "index behind the vault by {} file(s): {} modified, {} new, {} removed; the MCP server syncs while running, or run `rms-memory sync`",
+            self.pending(),
+            self.modified,
+            self.added,
+            self.removed
+        )
+    }
+}
+
+/// Compares the vault on disk with the index without changing either.
+pub async fn vault_freshness(
+    workspace: &rms_memory_core::workspace::Workspace,
+    store: &crate::store::Store,
+) -> Result<VaultFreshness> {
+    let table = store.open_table().await?;
+    let indexed = store.get_file_timestamps(&table).await?;
+    let mut freshness = VaultFreshness {
+        indexed_files: indexed.len(),
+        ..Default::default()
+    };
+    let mut on_disk = std::collections::HashSet::new();
+    for file_path in workspace.find_markdown_files()? {
+        let rel_path = file_path
+            .strip_prefix(&workspace.root)
+            .unwrap_or(&file_path)
+            .to_string_lossy()
+            .to_string();
+        match indexed.get(&rel_path) {
+            Some((_, stored)) if vault_file_mtime(workspace, &file_path) > *stored => {
+                freshness.modified += 1
+            }
+            Some(_) => {}
+            // Notes without indexable text (only frontmatter or an embed)
+            // never get index rows.
+            None if load_vault_document(workspace, &file_path)
+                .is_none_or(|doc| Indexer::chunk_text(&doc.content).is_empty()) => {}
+            None => freshness.added += 1,
+        }
+        on_disk.insert(rel_path);
+    }
+    freshness.removed = indexed
+        .keys()
+        .filter(|path| {
+            !on_disk.contains(*path)
+                && !rms_memory_core::path_policy::is_vault_wiki_relative_path(path)
+        })
+        .count();
+    Ok(freshness)
 }
 
 pub async fn sync_vault(
@@ -380,6 +460,8 @@ async fn sync_vault_inner(
         std::collections::HashMap::new();
 
     let files = workspace.find_markdown_files()?;
+    let link_resolver =
+        rms_memory_core::vault_links::VaultLinkIndex::from_files(&workspace.root, &files);
     let mut current_doc_ids = std::collections::HashSet::new();
 
     for file_path in files {
@@ -497,18 +579,8 @@ async fn sync_vault_inner(
             .and_then(|fm| fm.valid_until.clone());
         let pinned = doc.frontmatter.as_ref().and_then(|fm| fm.pinned);
 
-        let raw_links = doc.extract_links();
-        let mut normalized_links = Vec::new();
-        for link in &raw_links {
-            normalized_links.push(crate::indexer::normalize_link(
-                &workspace.root,
-                &file_path,
-                link,
-            ));
-        }
-
-        let links_raw_str = serde_json::to_string(&raw_links)?;
-        let links_resolved_str = serde_json::to_string(&normalized_links)?;
+        let (links_raw_str, links_resolved_str) =
+            link_columns(&link_resolver, &workspace.root, &file_path, &doc)?;
 
         let chunks = Indexer::chunk_text(&doc.content);
         if chunks.is_empty() {
@@ -593,6 +665,8 @@ async fn index_vault_full_inner(
 
     let files = workspace.find_markdown_files()?;
     tracing::info!("Full Reindex: Found {} markdown files", files.len());
+    let link_resolver =
+        rms_memory_core::vault_links::VaultLinkIndex::from_files(&workspace.root, &files);
 
     let mut records = Vec::new();
     for file_path in files {
@@ -601,11 +675,19 @@ async fn index_vault_full_inner(
             .map(|t| chrono::DateTime::<chrono::Utc>::from(t).to_rfc3339())
             .unwrap_or_else(|_| chrono::Utc::now().to_rfc3339());
 
-        let mut doc = match rms_memory_core::document::Document::parse(&file_path) {
-            Ok(d) => d,
+        let mut doc = match rms_memory_core::document::Document::parse_for_index(&file_path) {
+            Ok((doc, frontmatter_error)) => {
+                if let Some(error) = frontmatter_error {
+                    tracing::warn!(
+                        "Indexing {} without frontmatter: {error:#}",
+                        file_path.display()
+                    );
+                }
+                doc
+            }
             Err(error) => {
                 tracing::error!(
-                    "Skipping invalid document {}: {:#}",
+                    "Skipping unreadable document {}: {:#}",
                     file_path.display(),
                     error
                 );
@@ -666,18 +748,8 @@ async fn index_vault_full_inner(
             .and_then(|fm| fm.valid_until.clone());
         let pinned = doc.frontmatter.as_ref().and_then(|fm| fm.pinned);
 
-        let raw_links = doc.extract_links();
-        let mut normalized_links = Vec::new();
-        for link in &raw_links {
-            normalized_links.push(crate::indexer::normalize_link(
-                &workspace.root,
-                &file_path,
-                link,
-            ));
-        }
-
-        let links_raw_str = serde_json::to_string(&raw_links)?;
-        let links_resolved_str = serde_json::to_string(&normalized_links)?;
+        let (links_raw_str, links_resolved_str) =
+            link_columns(&link_resolver, &workspace.root, &file_path, &doc)?;
 
         let chunks = Indexer::chunk_text(&doc.content);
         if chunks.is_empty() {
@@ -742,23 +814,33 @@ async fn index_vault_full_inner(
     Ok(())
 }
 
-pub fn normalize_link(workspace_root: &Path, current_file: &Path, link: &str) -> String {
-    let mut current_dir = current_file.parent().unwrap_or(Path::new("")).to_path_buf();
-    for part in link.split('/') {
-        if part == "." {
-            continue;
-        } else if part == ".." {
-            current_dir.pop();
-        } else {
-            current_dir.push(part);
-        }
-    }
-
-    if let Ok(rel) = current_dir.strip_prefix(workspace_root) {
-        rel.to_string_lossy().to_string()
-    } else {
-        current_dir.to_string_lossy().to_string()
-    }
+/// JSON columns with link targets as written and their vault resolution.
+fn link_columns(
+    resolver: &rms_memory_core::vault_links::VaultLinkIndex,
+    root: &Path,
+    file_path: &Path,
+    doc: &rms_memory_core::document::Document,
+) -> Result<(String, String)> {
+    use rms_memory_core::vault_links::LinkResolution;
+    let source = file_path
+        .strip_prefix(root)
+        .unwrap_or(file_path)
+        .to_string_lossy()
+        .replace('\\', "/");
+    let links = doc.vault_links();
+    let raw: Vec<&str> = links.iter().map(|link| link.target.as_str()).collect();
+    let resolved: Vec<String> = links
+        .iter()
+        .map(|link| match resolver.resolve(&source, link) {
+            LinkResolution::Note(path)
+            | LinkResolution::Attachment(path)
+            | LinkResolution::Missing(path) => path,
+        })
+        .collect();
+    Ok((
+        serde_json::to_string(&raw)?,
+        serde_json::to_string(&resolved)?,
+    ))
 }
 
 #[cfg(test)]
@@ -836,5 +918,17 @@ mod sync_tests {
             indexed_paths(&store).await,
             vec!["notes/copy.md", "notes/new-name.md"]
         );
+
+        std::fs::write(vault.join("notes/embed-only.md"), "![[board.base]]\n").unwrap();
+        super::sync_vault(&workspace, &store, &mut indexer)
+            .await
+            .unwrap();
+        let fresh = super::vault_freshness(&workspace, &store).await.unwrap();
+        assert_eq!(fresh.pending(), 0, "{fresh:?}");
+
+        std::fs::write(vault.join("notes/added.md"), "# Added\n\nnew body\n").unwrap();
+        std::fs::remove_file(vault.join("notes/copy.md")).unwrap();
+        let stale = super::vault_freshness(&workspace, &store).await.unwrap();
+        assert_eq!((stale.added, stale.removed, stale.modified), (1, 1, 0));
     }
 }

@@ -17,7 +17,15 @@ impl Packager {
         self.wiki_root.join(".generation")
     }
 
+    fn ensure_vault_writable(&self) -> Result<()> {
+        match self.wiki_root.parent() {
+            Some(vault) => rms_memory_core::workspace::ensure_vault_writable(vault),
+            None => Ok(()),
+        }
+    }
+
     pub fn ensure_dirs(&self) -> Result<()> {
+        self.ensure_vault_writable()?;
         std::fs::create_dir_all(&self.wiki_root).ok();
         std::fs::create_dir_all(self.generation_dir()).ok();
         std::fs::write(self.wiki_root.join(SENTINEL_FILE), "rms-wiki sentinel\n")?;
@@ -123,6 +131,7 @@ impl Packager {
     }
 
     fn atomic_write(&self, path: &Path, content: &str) -> Result<()> {
+        self.ensure_vault_writable()?;
         let temp_path = path.with_extension("tmp");
         std::fs::write(&temp_path, content)?;
         std::fs::rename(&temp_path, path).context(format!("Failed to write {}", path.display()))?;

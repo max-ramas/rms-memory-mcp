@@ -37,6 +37,10 @@ pub struct DiagnoseOptions {
 pub async fn diagnose(workspace: &Workspace, options: DiagnoseOptions) -> Result<DoctorReport> {
     let mut checks = Vec::with_capacity(8);
     let mut issue_count = 0u32;
+    let read_only = workspace.ensure_writable().is_err();
+    if options.repair_frontmatter {
+        workspace.ensure_writable()?;
+    }
     let (files, discovery_error) = match workspace.find_markdown_files() {
         Ok(files) => (files, None),
         Err(error) => (Vec::new(), Some(error)),
@@ -53,9 +57,14 @@ pub async fn diagnose(workspace: &Workspace, options: DiagnoseOptions) -> Result
             "api",
         ];
         let mut issues = Vec::new();
+        let mut notes = Vec::new();
         for dir in required {
             if !workspace.root.join(dir).exists() {
-                issues.push(format!("{dir}/ missing"));
+                if read_only {
+                    notes.push(format!("{dir}/ absent (read-only vault, not created)"));
+                } else {
+                    issues.push(format!("{dir}/ missing"));
+                }
             }
         }
         if let Some(error) = &discovery_error {
@@ -69,7 +78,7 @@ pub async fn diagnose(workspace: &Workspace, options: DiagnoseOptions) -> Result
             name: "vault_directory_structure".into(),
             ok: issues.is_empty(),
             issues,
-            notes: vec![],
+            notes,
         });
     }
 
@@ -122,49 +131,38 @@ pub async fn diagnose(workspace: &Workspace, options: DiagnoseOptions) -> Result
                 }
             }
         }
-        let mut issues = missing_ids;
-        issues.extend(invalid_frontmatter);
+        let issues = invalid_frontmatter;
         issue_count += issues.len() as u32;
+        let mut notes: Vec<String> = repaired
+            .into_iter()
+            .map(|p| format!("repaired frontmatter ids: {p}"))
+            .collect();
+        notes.extend(missing_id_notes(&missing_ids));
         checks.push(DoctorCheck {
             id: 2,
             name: "document_ids".into(),
             ok: issues.is_empty(),
             issues,
-            notes: repaired
-                .into_iter()
-                .map(|p| format!("repaired frontmatter ids: {p}"))
-                .collect(),
+            notes,
         });
     }
 
     // 3. Cross-document links
     {
-        let file_set: std::collections::HashSet<_> = files
+        let (wiki, markdown): (Vec<_>, Vec<_>) = broken_links(workspace, &files)
+            .into_iter()
+            .partition(|link| link.wiki);
+        let broken: Vec<String> = markdown
             .iter()
-            .filter_map(|f| {
-                f.strip_prefix(&workspace.root)
-                    .ok()
-                    .map(|r| r.to_string_lossy().replace('\\', "/"))
-            })
+            .map(|link| format!("{} → {}", link.source, link.target))
             .collect();
-        let mut broken = Vec::new();
-        for f in &files {
-            if let Ok(doc) = rms_memory_core::document::Document::parse(f) {
-                for link in doc.extract_links() {
-                    let target = workspace.root.join(&link);
-                    if !target.exists() && !file_set.contains(&link.replace('\\', "/")) {
-                        broken.push(format!("{} → {link}", rel(workspace, f)));
-                    }
-                }
-            }
-        }
         issue_count += broken.len() as u32;
         checks.push(DoctorCheck {
             id: 3,
             name: "cross_document_links".into(),
             ok: broken.is_empty(),
             issues: broken,
-            notes: vec![],
+            notes: unresolved_wikilink_notes(&wiki),
         });
     }
 
@@ -199,6 +197,11 @@ pub async fn diagnose(workspace: &Workspace, options: DiagnoseOptions) -> Result
                 }
                 if let Err(e) = store.open_table().await {
                     issues.push(format!("LanceDB table not accessible: {e}"));
+                } else {
+                    match rms_memory_index::indexer::vault_freshness(workspace, &store).await {
+                        Ok(freshness) => notes.push(freshness.describe()),
+                        Err(e) => notes.push(format!("index freshness unavailable: {e:#}")),
+                    }
                 }
             }
             Err(e) => issues.push(format!("cannot connect to LanceDB: {e}")),
@@ -445,6 +448,88 @@ fn rel(workspace: &Workspace, path: &Path) -> String {
         .unwrap_or(path)
         .to_string_lossy()
         .replace('\\', "/")
+}
+
+fn capped_notes(header: String, items: impl ExactSizeIterator<Item = String>) -> Vec<String> {
+    const SHOWN: usize = 20;
+    let total = items.len();
+    if total == 0 {
+        return Vec::new();
+    }
+    let mut notes = vec![header];
+    notes.extend(items.take(SHOWN));
+    if total > SHOWN {
+        notes.push(format!("… and {} more", total - SHOWN));
+    }
+    notes
+}
+
+/// Notes without an `id` are valid (indexed by path), so they are reported
+/// as information rather than issues.
+pub fn missing_id_notes(missing: &[String]) -> Vec<String> {
+    capped_notes(
+        format!(
+            "{} note(s) have no frontmatter `id` and are indexed by path; an `id` only keeps links stable across renames",
+            missing.len()
+        ),
+        missing.iter().map(|p| format!("no id: {p}")),
+    )
+}
+
+/// Unresolved `[[wikilinks]]` are placeholders for notes not written yet in
+/// Obsidian, so they are information rather than issues.
+pub fn unresolved_wikilink_notes(links: &[BrokenLink]) -> Vec<String> {
+    capped_notes(
+        format!(
+            "{} [[wikilink(s)]] point to notes that do not exist yet",
+            links.len()
+        ),
+        links
+            .iter()
+            .map(|link| format!("{} → [[{}]]", link.source, link.target)),
+    )
+}
+
+/// A link that resolves to neither a vault note nor an existing file.
+#[derive(Debug, Clone)]
+pub struct BrokenLink {
+    pub source: String,
+    /// Target as written.
+    pub target: String,
+    /// `[[wikilink]]` / `![[embed]]`. Obsidian treats an unresolved wikilink as
+    /// a note that does not exist yet, so these are informational.
+    pub wiki: bool,
+}
+
+pub fn broken_links(workspace: &Workspace, files: &[std::path::PathBuf]) -> Vec<BrokenLink> {
+    use rms_memory_core::vault_links::{LinkResolution, LinkSyntax, VaultLinkIndex};
+    let documents: Vec<_> = files
+        .iter()
+        .filter_map(|f| {
+            rms_memory_core::document::Document::parse(f)
+                .ok()
+                .map(|doc| (rel(workspace, f), doc))
+        })
+        .collect();
+    let mut resolver = VaultLinkIndex::from_files(&workspace.root, files);
+    for (path, doc) in &documents {
+        if let Some(frontmatter) = &doc.frontmatter {
+            resolver.add_aliases(path, &frontmatter.all_aliases());
+        }
+    }
+    let mut broken = Vec::new();
+    for (path, doc) in &documents {
+        for link in doc.vault_links() {
+            if let LinkResolution::Missing(_) = resolver.resolve(path, &link) {
+                broken.push(BrokenLink {
+                    source: path.clone(),
+                    wiki: link.syntax == LinkSyntax::Wiki,
+                    target: link.target,
+                });
+            }
+        }
+    }
+    broken
 }
 
 pub fn parse_fm_datetime(raw: &str) -> Option<DateTime<Utc>> {

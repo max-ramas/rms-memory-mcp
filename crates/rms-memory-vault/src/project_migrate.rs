@@ -204,6 +204,16 @@ pub fn migrate(
     options: ProjectMigrateOptions,
 ) -> Result<ProjectMigrateOutcome> {
     let snapshot = manager.snapshot();
+    if snapshot
+        .registry
+        .projects
+        .get(old_key)
+        .is_some_and(|project| project.read_only)
+    {
+        bail!(
+            "Project '{old_key}' has a read-only vault; migrate would move or edit it. Use `rms-memory projects remove` and register the new location instead."
+        );
+    }
     let plan = build_plan(&snapshot.registry, old_key, new_code_dir, &options)?;
 
     if options.dry_run {
@@ -672,6 +682,7 @@ mod tests {
                     code_index_mode: Default::default(),
                     code_languages: vec![],
                     cross_project_vault: false,
+                    read_only: false,
                 },
             )]),
             migrations: HashMap::from([(
@@ -710,6 +721,7 @@ mod tests {
                     code_index_mode: Default::default(),
                     code_languages: vec![],
                     cross_project_vault: false,
+                    read_only: false,
                 },
             )]),
             ..Registry::default()

@@ -76,6 +76,9 @@ pub fn prune_vault(root: &Path, options: PruneOptions) -> Result<PruneReport> {
     if !root.is_dir() {
         bail!("Vault root is not a directory: {}", root.display());
     }
+    if options.apply {
+        rms_memory_core::workspace::ensure_vault_writable(&root)?;
+    }
     if options.older_than_days == 0 {
         bail!("--older-than-days must be >= 1");
     }

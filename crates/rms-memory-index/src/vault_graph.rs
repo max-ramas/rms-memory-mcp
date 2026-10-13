@@ -8,7 +8,8 @@ struct VaultDocument {
     path: String,
     title: String,
     doc_type: String,
-    links: Vec<String>,
+    aliases: Vec<String>,
+    links: Vec<rms_memory_core::vault_links::VaultLink>,
 }
 
 /// Purge graph identities that were persisted before the Wiki namespace was
@@ -76,7 +77,12 @@ pub async fn reconcile_vault_links(
                 .as_ref()
                 .and_then(|frontmatter| frontmatter.doc_type.clone())
                 .unwrap_or_else(|| "note".to_string()),
-            links: document.extract_links(),
+            aliases: document
+                .frontmatter
+                .as_ref()
+                .map(|frontmatter| frontmatter.all_aliases())
+                .unwrap_or_default(),
+            links: document.vault_links(),
             path: relative,
         });
     }
@@ -85,6 +91,13 @@ pub async fn reconcile_vault_links(
         .iter()
         .map(|document| (document.path.clone(), document.id.clone()))
         .collect::<HashMap<_, _>>();
+    let mut resolver = rms_memory_core::vault_links::VaultLinkIndex::new(
+        &workspace.root,
+        documents.iter().map(|document| document.path.clone()),
+    );
+    for document in &documents {
+        resolver.add_aliases(&document.path, &document.aliases);
+    }
     let mut nodes = HashMap::new();
     let mut edges = HashMap::new();
     for document in &documents {
@@ -104,22 +117,27 @@ pub async fn reconcile_vault_links(
             },
         );
         for link in &document.links {
-            let normalized = crate::indexer::normalize_link(
-                &workspace.root,
-                &workspace.root.join(&document.path),
-                link,
-            )
-            .replace('\\', "/");
-            let (target_key, resolution) = match paths.get(&normalized) {
-                Some(id) => (
-                    crate::graph::GraphNodeKey::vault(id)?,
-                    crate::graph::EdgeResolution::Resolved,
-                ),
-                None => (
-                    crate::graph::GraphNodeKey::external(&format!("vault-link:{normalized}"))?,
+            use rms_memory_core::vault_links::LinkResolution;
+            let (target_key, resolution, normalized) = match resolver.resolve(&document.path, link)
+            {
+                LinkResolution::Note(path) => match paths.get(&path) {
+                    Some(id) => (
+                        crate::graph::GraphNodeKey::vault(id)?,
+                        crate::graph::EdgeResolution::Resolved,
+                        path,
+                    ),
+                    None => continue,
+                },
+                LinkResolution::Attachment(_) => continue,
+                LinkResolution::Missing(target) => (
+                    crate::graph::GraphNodeKey::external(&format!("vault-link:{target}"))?,
                     crate::graph::EdgeResolution::Unresolved,
+                    target,
                 ),
             };
+            if target_key == source_key {
+                continue;
+            }
             if !nodes.contains_key(target_key.as_str()) {
                 insert_node(
                     &mut nodes,
@@ -231,6 +249,57 @@ mod tests {
                 .await
                 .unwrap(),
             1
+        );
+    }
+
+    #[tokio::test]
+    async fn obsidian_wikilinks_and_aliases_resolve_to_vault_nodes() {
+        let directory = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(directory.path().join("notes")).unwrap();
+        std::fs::write(
+            directory.path().join("notes/a.md"),
+            "---\nid: doc-a\n---\n[[Payments Flow#Retries|retries]], [[Billing]] and ![[pic.png]]\n",
+        )
+        .unwrap();
+        std::fs::write(
+            directory.path().join("Payments Flow.md"),
+            "---\nid: doc-b\naliases: [Billing]\n---\n# B\n",
+        )
+        .unwrap();
+        let workspace = rms_memory_core::workspace::Workspace {
+            root: directory.path().to_path_buf(),
+            code_path: directory.path().to_path_buf(),
+            include: vec!["**/*.md".to_string()],
+            exclude: vec![],
+            code_index_mode: rms_memory_core::workspace::CodeIndexMode::Off,
+            code_languages: vec!["auto".to_string()],
+        };
+        let store =
+            crate::store::Store::init(&directory.path().join("db").to_string_lossy(), "memory")
+                .await
+                .unwrap();
+        reconcile_vault_links(&workspace, &store).await.unwrap();
+        let tables = store.open_or_create_graph_tables().await.unwrap();
+        let edges = store.query_graph_edges(&tables, 0).await.unwrap();
+        let source = crate::graph::GraphNodeKey::vault("doc-a").unwrap();
+        let mut resolved: Vec<_> = edges
+            .iter()
+            .filter(|edge| edge.source_key == source)
+            .map(|edge| (edge.target_key.as_str().to_string(), edge.resolution))
+            .collect();
+        resolved.sort_by(|a, b| a.0.cmp(&b.0));
+        assert_eq!(
+            resolved,
+            vec![
+                (
+                    "external:vault-link:pic.png".to_string(),
+                    crate::graph::EdgeResolution::Unresolved
+                ),
+                (
+                    "vault:doc-b".to_string(),
+                    crate::graph::EdgeResolution::Resolved
+                ),
+            ]
         );
     }
 

@@ -15,6 +15,18 @@ pub enum ProjectsCommands {
     Migrate(MigrateArgs),
     /// Resolve a project key through migration redirects
     ResolveKey(ResolveKeyArgs),
+    /// Use an existing Obsidian vault in place, read-only: it is indexed and
+    /// searchable, but RMS Memory never creates, edits or deletes files in it
+    AttachObsidian(AttachObsidianArgs),
+}
+
+#[derive(Args, Debug)]
+pub struct AttachObsidianArgs {
+    /// Obsidian vault folder
+    pub path: std::path::PathBuf,
+    /// Project key (defaults to the folder name)
+    #[arg(long)]
+    pub key: Option<String>,
 }
 
 #[derive(Args, Debug)]
@@ -67,8 +79,32 @@ impl ProjectsCommands {
             ProjectsCommands::Remove(args) => remove(args),
             ProjectsCommands::Migrate(args) => migrate(args),
             ProjectsCommands::ResolveKey(args) => resolve_key(args),
+            ProjectsCommands::AttachObsidian(args) => attach_obsidian(args),
         }
     }
+}
+
+fn attach_obsidian(args: &AttachObsidianArgs) -> Result<()> {
+    let key = match &args.key {
+        Some(key) => key.clone(),
+        None => std::fs::canonicalize(&args.path)?
+            .file_name()
+            .map(|name| name.to_string_lossy().to_string())
+            .ok_or_else(|| anyhow::anyhow!("Pass --key for this folder"))?,
+    };
+    let config =
+        crate::project_service::ProjectService::open()?.attach_read_only_vault(&key, &args.path)?;
+    println!(
+        "Attached '{key}' as a read-only vault: {}",
+        config.vault_path
+    );
+    println!("  Nothing in that folder is created, edited or deleted by RMS Memory.");
+    println!(
+        "  Index it: rms-memory --scope {} reindex",
+        config.vault_path
+    );
+    println!("  Agents search it with project: \"{key}\"; writes to it are refused.");
+    Ok(())
 }
 
 fn remove(args: &RemoveArgs) -> Result<()> {

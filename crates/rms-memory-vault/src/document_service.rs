@@ -188,6 +188,7 @@ impl DocumentService {
         request: DocumentWriteRequest,
         inject_audit: bool,
     ) -> Result<DocumentWriteResult> {
+        rms_memory_core::workspace::ensure_vault_writable(&self.root)?;
         let target = self.resolve_new(&request.path)?;
         if target.exists() {
             bail!("Document already exists: {}", request.path);
@@ -214,6 +215,7 @@ impl DocumentService {
         request: DocumentWriteRequest,
         inject_audit: bool,
     ) -> Result<DocumentWriteResult> {
+        rms_memory_core::workspace::ensure_vault_writable(&self.root)?;
         let requested = self.resolve_existing(&request.path)?;
         let (target, linked_target) = self.resolve_edit_target(&requested)?;
         self.replace_at(target, request, false, linked_target, inject_audit)
@@ -222,6 +224,7 @@ impl DocumentService {
     /// Renames a document without silently replacing an existing destination.
     /// A linked document is moved as the link document; its source is untouched.
     pub fn rename(&self, from: &str, to: &str) -> Result<DocumentEntry> {
+        rms_memory_core::workspace::ensure_vault_writable(&self.root)?;
         reject_wiki(from)?;
         reject_wiki(to)?;
         let source = self.resolve_existing(from)?;
@@ -258,6 +261,7 @@ impl DocumentService {
     }
 
     fn delete_internal(&self, path: &str) -> Result<DocumentDeleteResult> {
+        rms_memory_core::workspace::ensure_vault_writable(&self.root)?;
         let source = self.resolve_existing(path)?;
         let relative = source
             .strip_prefix(&self.root)

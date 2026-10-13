@@ -59,6 +59,12 @@ impl ProjectService {
             .cloned()
             .ok_or_else(|| anyhow!("Project '{project}' is not registered"))?;
 
+        if mode == ProjectRemovalMode::DeleteData && config.read_only {
+            bail!(
+                "Project '{project}' uses a read-only vault ({}); only the registration can be removed, its files are never deleted",
+                config.vault_path
+            );
+        }
         let deletion = if mode == ProjectRemovalMode::DeleteData {
             Some(self.validate_deletion(&snapshot.registry, &config)?)
         } else {
@@ -87,6 +93,61 @@ impl ProjectService {
         outcome.vault_deleted = remove_directory(&paths.vault, "vault", &mut outcome.warnings);
         outcome.index_deleted = remove_directory(&paths.index, "index", &mut outcome.warnings);
         Ok(outcome)
+    }
+
+    /// Registers an existing folder (e.g. an Obsidian vault) as a read-only
+    /// project vault. Nothing is created or changed in the folder; the index
+    /// lives under the RMS data directory.
+    pub fn attach_read_only_vault(&self, key: &str, folder: &Path) -> Result<ProjectConfig> {
+        let key = key.trim();
+        if key.is_empty() {
+            bail!("Project key must be non-empty");
+        }
+        let folder = std::fs::canonicalize(folder)
+            .map_err(|e| anyhow!("Folder not found: {}: {e}", folder.display()))?;
+        if !folder.is_dir() {
+            bail!("Not a directory: {}", folder.display());
+        }
+        if folder.parent().is_none() {
+            bail!("Refusing to attach the filesystem root");
+        }
+        let snapshot = self.manager.snapshot();
+        if snapshot.registry.projects.contains_key(key) {
+            bail!("Project key '{key}' is already registered");
+        }
+        let canonical = |p: &str| std::fs::canonicalize(p).unwrap_or_else(|_| PathBuf::from(p));
+        for (other, project) in &snapshot.registry.projects {
+            let vault = canonical(&project.vault_path);
+            let code = canonical(&project.code_path);
+            if vault.starts_with(&folder) || folder.starts_with(&vault) {
+                bail!(
+                    "{} overlaps the vault of project '{other}' ({})",
+                    folder.display(),
+                    vault.display()
+                );
+            }
+            if code == folder {
+                bail!(
+                    "{} is already the code path of project '{other}'",
+                    folder.display()
+                );
+            }
+        }
+        let path = folder.to_string_lossy().to_string();
+        let config = ProjectConfig {
+            code_path: path.clone(),
+            vault_path: path,
+            include: vec!["**/*.md".to_string()],
+            exclude: rms_memory_core::workspace::default_exclude(),
+            code_index_mode: Default::default(),
+            code_languages: vec!["auto".to_string()],
+            cross_project_vault: false,
+            read_only: true,
+        };
+        let mut registry = snapshot.registry;
+        registry.projects.insert(key.to_string(), config.clone());
+        self.manager.replace(snapshot.revision, registry)?;
+        Ok(config)
     }
 
     pub fn migrate(
@@ -198,6 +259,7 @@ mod tests {
             code_index_mode: CodeIndexMode::Off,
             code_languages: vec!["auto".to_string()],
             cross_project_vault: false,
+            read_only: false,
         }
     }
 
@@ -222,6 +284,36 @@ mod tests {
         manager.replace(0, registry).unwrap();
         let service = ProjectService::new(manager, directory.path().join("data"));
         (directory, service, vault, code)
+    }
+
+    #[test]
+    fn attached_obsidian_vault_is_read_only_and_never_deleted() {
+        let (directory, service, _vault, _code) = service_fixture();
+        let obsidian = directory.path().join("Obsidian");
+        std::fs::create_dir_all(obsidian.join(".obsidian")).unwrap();
+        std::fs::write(obsidian.join("Note.md"), "# Note\n").unwrap();
+        let before: Vec<_> = std::fs::read_dir(&obsidian).unwrap().collect();
+
+        let config = service.attach_read_only_vault("notes", &obsidian).unwrap();
+        assert!(config.read_only);
+        assert_eq!(std::fs::read_dir(&obsidian).unwrap().count(), before.len());
+
+        let registry = service.manager.snapshot().registry;
+        let error = rms_memory_core::workspace::ensure_vault_writable_in(&registry, &obsidian)
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("read-only"), "{error}");
+        assert!(service.attach_read_only_vault("notes", &obsidian).is_err());
+        assert!(
+            service
+                .attach_read_only_vault("other", &obsidian.join(".obsidian"))
+                .is_err()
+        );
+
+        assert!(service.delete_data("notes", "notes").is_err());
+        assert!(obsidian.join("Note.md").exists());
+        service.unregister("notes").unwrap();
+        assert!(obsidian.join("Note.md").exists());
     }
 
     #[test]

@@ -101,6 +101,7 @@ impl ImportService {
     }
 
     pub fn execute(&self, action: ImportAction, docs: Vec<PathBuf>) -> Result<()> {
+        rms_memory_core::workspace::ensure_vault_writable(&self.vault_path)?;
         match action {
             ImportAction::Import => self.execute_import(docs, false),
             ImportAction::ImportAndOrganize => self.execute_import(docs, true),

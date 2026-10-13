@@ -7,12 +7,32 @@ use std::path::Path;
 use tokio::io::{AsyncReadExt, AsyncSeekExt};
 
 #[derive(Args, Debug)]
-pub struct ImportArgs;
+pub struct ImportArgs {
+    /// Copy an existing Obsidian vault (notes, attachments, folder structure)
+    /// into this project's vault. The source is only read; hidden folders such
+    /// as .obsidian/ and .trash/ are skipped and existing files are never
+    /// overwritten. To use an Obsidian vault in place without copying, see
+    /// `rms-memory projects attach-obsidian`.
+    #[arg(long, value_name = "DIR")]
+    pub obsidian: Option<std::path::PathBuf>,
+    /// Vault folder that receives the Obsidian notes
+    #[arg(long, default_value = "obsidian", requires = "obsidian")]
+    pub into: String,
+    /// Show what would be imported without writing anything
+    #[arg(long, requires = "obsidian")]
+    pub dry_run: bool,
+    /// Print the import report as JSON
+    #[arg(long, requires = "obsidian")]
+    pub json: bool,
+}
 
 impl ImportArgs {
     pub async fn run(&self, scope: Option<String>) -> Result<()> {
         let current_dir = std::env::current_dir()?;
         let workspace = Workspace::discover_with_scope(scope.as_deref(), &current_dir, None)?;
+        if let Some(source) = &self.obsidian {
+            return self.run_obsidian(source, &workspace);
+        }
         let import_service =
             crate::import::ImportService::new(workspace.code_path.clone(), workspace.root.clone());
         let docs = import_service.detect_existing_docs();
@@ -21,6 +41,71 @@ impl ImportArgs {
         } else {
             let action = import_service.prompt_action(&docs)?;
             import_service.execute(action, docs)?;
+        }
+        Ok(())
+    }
+
+    fn run_obsidian(&self, source: &Path, workspace: &Workspace) -> Result<()> {
+        let report = crate::obsidian_import::import_obsidian_vault(
+            source,
+            &workspace.root,
+            &self.into,
+            self.dry_run,
+        )?;
+        if self.json {
+            println!("{}", serde_json::to_string_pretty(&report)?);
+            return Ok(());
+        }
+        let verb = if report.dry_run {
+            "Would import"
+        } else {
+            "Imported"
+        };
+        println!("{} {} → {}", verb, report.source, report.destination);
+        println!(
+            "  {} notes, {} attachments",
+            report.notes.len(),
+            report.attachments.len()
+        );
+        if !report.unchanged.is_empty() {
+            println!("  {} already present, unchanged", report.unchanged.len());
+        }
+        if report.skipped_hidden + report.skipped_symlinks > 0 {
+            println!(
+                "  skipped {} hidden entries (.obsidian/, .trash/, …) and {} symlinks",
+                report.skipped_hidden, report.skipped_symlinks
+            );
+        }
+        if !report.conflicts.is_empty() {
+            println!(
+                "  ⚠️  {} files already exist with different content (kept as is):",
+                report.conflicts.len()
+            );
+            for path in &report.conflicts {
+                println!("     - {path}");
+            }
+        }
+        if !report.skipped_secrets.is_empty() {
+            println!(
+                "  🔒 {} files not imported because they contain what looks like a credential (values not shown):",
+                report.skipped_secrets.len()
+            );
+            for line in &report.skipped_secrets {
+                println!("     - {line}");
+            }
+        }
+        if !report.invalid_frontmatter.is_empty() {
+            println!(
+                "  ⚠️  {} notes have frontmatter that is not valid YAML (copied as is):",
+                report.invalid_frontmatter.len()
+            );
+            for path in &report.invalid_frontmatter {
+                println!("     - {path}");
+            }
+        }
+        let imported = !(report.notes.is_empty() && report.attachments.is_empty());
+        if !report.dry_run && imported {
+            println!("  Run `rms-memory reindex` (or let the MCP server sync) to search them.");
         }
         Ok(())
     }
@@ -156,6 +241,10 @@ impl DoctorArgs {
         let mut issues = 0u32;
 
         // 1. Check vault directory structure
+        if self.repair_frontmatter {
+            workspace.ensure_writable()?;
+        }
+        let read_only = workspace.ensure_writable().is_err();
         println!("\n[1/8] Vault directory structure...");
         let required_dirs = [
             "rules",
@@ -169,6 +258,8 @@ impl DoctorArgs {
             let p = workspace.root.join(dir);
             if p.exists() {
                 println!("  ✅ {}/ exists", dir);
+            } else if read_only {
+                println!("  ℹ️  {}/ absent (read-only vault, not created)", dir);
             } else {
                 println!("  ⚠️  {}/ missing", dir);
                 issues += 1;
@@ -206,7 +297,12 @@ impl DoctorArgs {
                                 }
                             }
                         }
-                        missing_ids.push(f.to_string_lossy().to_string());
+                        missing_ids.push(
+                            f.strip_prefix(&workspace.root)
+                                .unwrap_or(f)
+                                .to_string_lossy()
+                                .replace('\\', "/"),
+                        );
                     }
                 }
                 Err(error) => {
@@ -235,14 +331,9 @@ impl DoctorArgs {
         if missing_ids.is_empty() {
             println!("  ✅ All {} documents have IDs", files.len());
         } else {
-            println!(
-                "  ⚠️  {} files missing 'id' in frontmatter:",
-                missing_ids.len()
-            );
-            for path in &missing_ids {
-                println!("     - {}", path);
+            for note in crate::doctor::missing_id_notes(&missing_ids) {
+                println!("  ℹ️  {note}");
             }
-            issues += missing_ids.len() as u32;
         }
         if !invalid_frontmatter.is_empty() {
             println!(
@@ -252,46 +343,32 @@ impl DoctorArgs {
             for error in &invalid_frontmatter {
                 println!("     - {}", error);
             }
-            println!("     Run `rms-memory doctor --repair-frontmatter` for duplicate id keys.");
+            println!("     These notes are indexed as plain text without their frontmatter.");
+            if !read_only {
+                println!(
+                    "     Run `rms-memory doctor --repair-frontmatter` for duplicate id keys."
+                );
+            }
             issues += invalid_frontmatter.len() as u32;
         }
 
         // 3. Check for broken Markdown links
         println!("\n[3/8] Cross-document links...");
-        let mut broken_links = Vec::new();
-        let file_set: std::collections::HashSet<_> = files
-            .iter()
-            .filter_map(|f| {
-                f.strip_prefix(&workspace.root)
-                    .ok()
-                    .map(|r| r.to_string_lossy().to_string())
-            })
-            .collect();
-        for f in &files {
-            if let Ok(doc) = crate::document::Document::parse(f) {
-                let links = doc.extract_links();
-                for link in links {
-                    let target = workspace.root.join(&link);
-                    if !target.exists() && !file_set.contains(&link) {
-                        broken_links.push((
-                            f.strip_prefix(&workspace.root)
-                                .unwrap_or(f)
-                                .to_string_lossy()
-                                .to_string(),
-                            link,
-                        ));
-                    }
-                }
-            }
-        }
+        let (wiki_links, broken_links): (Vec<_>, Vec<_>) =
+            crate::doctor::broken_links(&workspace, &files)
+                .into_iter()
+                .partition(|link| link.wiki);
         if broken_links.is_empty() {
             println!("  ✅ No broken cross-document links found");
         } else {
             println!("  ⚠️  {} broken links:", broken_links.len());
-            for (source, target) in &broken_links {
-                println!("     - {} → {} (not found)", source, target);
+            for link in &broken_links {
+                println!("     - {} → {} (not found)", link.source, link.target);
             }
             issues += broken_links.len() as u32;
+        }
+        for note in crate::doctor::unresolved_wikilink_notes(&wiki_links) {
+            println!("  ℹ️  {note}");
         }
 
         // 4. Check LanceDB store
@@ -319,7 +396,13 @@ impl DoctorArgs {
                     }
                 }
                 match store.open_table().await {
-                    Ok(_table) => println!("  ✅ LanceDB table accessible"),
+                    Ok(_table) => {
+                        println!("  ✅ LanceDB table accessible");
+                        match crate::indexer::vault_freshness(&workspace, &store).await {
+                            Ok(freshness) => println!("  ℹ️  {}", freshness.describe()),
+                            Err(e) => println!("  ℹ️  index freshness unavailable: {e:#}"),
+                        }
+                    }
                     Err(e) => {
                         println!("  ⚠️  LanceDB table not accessible: {}", e);
                         issues += 1;

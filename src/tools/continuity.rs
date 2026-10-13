@@ -92,6 +92,9 @@ pub struct OverviewPayload {
     pub recent_notes: Vec<RecentNote>,
     pub active_checkpoints: Vec<CheckpointPayload>,
     pub coverage: OverviewCoverage,
+    /// Vault index lag; absent when the index is not available.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub index: Option<crate::indexer::VaultFreshness>,
 }
 
 // ---------------------------------------------------------------------------
@@ -497,6 +500,7 @@ pub fn overview(
         },
         recent_notes: recent,
         active_checkpoints: checkpoint_query(vault_root, Some("active"))?,
+        index: None,
         coverage: OverviewCoverage {
             recent_limit,
             recent_truncated,
@@ -561,7 +565,14 @@ pub async fn execute_overview(
         .and_then(|v| v.as_u64())
         .map(|v| v as usize)
         .unwrap_or(DEFAULT_RECENT_LIMIT);
-    let payload = overview(root, ctx.project_key.as_deref(), recent_limit)?;
+    let mut payload = overview(root, ctx.project_key.as_deref(), recent_limit)?;
+    if let Some(store) = &ctx.store
+        && let Ok(workspace) = super::graph::workspace_from_ctx(ctx)
+    {
+        payload.index = crate::indexer::vault_freshness(&workspace, store)
+            .await
+            .ok();
+    }
     super::response::json_structured_response(&payload)
 }
 
@@ -570,6 +581,7 @@ pub async fn execute_checkpoint_save(
     args: &serde_json::Map<String, serde_json::Value>,
 ) -> Result<serde_json::Value> {
     let root = require_root(ctx)?;
+    rms_memory_core::workspace::ensure_vault_writable(root)?;
     super::secret_guard::reject_secrets(args, &["goal", "pending"])?;
     let name = args
         .get("name")
@@ -598,6 +610,7 @@ pub async fn execute_checkpoint_done(
     args: &serde_json::Map<String, serde_json::Value>,
 ) -> Result<serde_json::Value> {
     let root = require_root(ctx)?;
+    rms_memory_core::workspace::ensure_vault_writable(root)?;
     super::secret_guard::reject_secrets(args, &["summary"])?;
     let name = args
         .get("name")

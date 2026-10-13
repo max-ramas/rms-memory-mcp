@@ -1,5 +1,4 @@
 use anyhow::{Context, Result};
-use regex::Regex;
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -13,43 +12,148 @@ pub struct Document {
     pub original_text: String,
 }
 
+/// Typed view of the keys RMS Memory understands. Values are read leniently so
+/// notes written by other tools (Obsidian, static-site generators) still parse:
+/// scalars of the wrong type are coerced or ignored instead of failing the note.
+/// Unknown keys are ignored here and preserved by writers, which edit the raw
+/// YAML mapping rather than re-serializing this struct.
 #[derive(Deserialize, Serialize, Debug, Clone, Default)]
 pub struct Frontmatter {
+    #[serde(default, deserialize_with = "lenient::int")]
     pub memory_version: Option<i32>,
+    #[serde(default, deserialize_with = "lenient::string")]
     pub id: Option<String>,
+    #[serde(default, deserialize_with = "lenient::string")]
     pub alias: Option<String>,
-    #[serde(rename = "type")]
+    /// Obsidian alternative note names; `[[Alias]]` links resolve to this note.
+    #[serde(
+        default,
+        deserialize_with = "lenient::string_list",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub aliases: Option<Vec<String>>,
+    #[serde(rename = "type", default, deserialize_with = "lenient::string")]
     pub doc_type: Option<String>,
     /// Knowledge lifecycle: `active` (default), `draft`, `superseded`.
+    #[serde(default, deserialize_with = "lenient::string")]
     pub status: Option<String>,
     /// Document id this note supersedes (soft replace chain).
+    #[serde(default, deserialize_with = "lenient::string")]
     pub supersedes: Option<String>,
     /// Document id that replaced this note when status=superseded.
+    #[serde(default, deserialize_with = "lenient::string")]
     pub superseded_by: Option<String>,
     /// Inclusive start of factual validity (RFC3339), optional.
+    #[serde(default, deserialize_with = "lenient::string")]
     pub valid_from: Option<String>,
     /// Exclusive/inclusive end of factual validity (RFC3339), optional.
+    #[serde(default, deserialize_with = "lenient::string")]
     pub valid_until: Option<String>,
     /// When the fact was learned (RFC3339), optional; used by doctor freshness lint.
+    #[serde(default, deserialize_with = "lenient::string")]
     pub learned_at: Option<String>,
     /// Checkpoint goal (docs with `type: checkpoint`).
+    #[serde(default, deserialize_with = "lenient::string")]
     pub goal: Option<String>,
     /// Checkpoint pending work description (docs with `type: checkpoint`).
+    #[serde(default, deserialize_with = "lenient::string")]
     pub pending: Option<String>,
     /// Vault-relative paths this checkpoint/session references.
+    #[serde(default, deserialize_with = "lenient::string_list")]
     pub links: Option<Vec<String>>,
     /// When a checkpoint was closed (RFC3339), set by checkpoint_done.
+    #[serde(default, deserialize_with = "lenient::string")]
     pub done_at: Option<String>,
     /// When true, the note stays in recall past temporal/`min_confidence` gates
     /// (still respects status — superseded notes stay hidden).
+    #[serde(default, deserialize_with = "lenient::boolean")]
     pub pinned: Option<bool>,
+    #[serde(default, deserialize_with = "lenient::string")]
     pub link: Option<String>,
+    #[serde(default, deserialize_with = "lenient::string")]
     pub last_modified_by: Option<String>,
+    #[serde(default, deserialize_with = "lenient::string")]
     pub timestamp: Option<String>,
+    #[serde(default, deserialize_with = "lenient::string")]
     pub created_at: Option<String>,
+    #[serde(default, deserialize_with = "lenient::float")]
     pub confidence: Option<f64>,
+    #[serde(default, deserialize_with = "lenient::string")]
     pub source: Option<String>,
+    #[serde(default, deserialize_with = "lenient::string")]
     pub project: Option<String>,
+}
+
+impl Frontmatter {
+    /// Alternative names from both the RMS `alias` key and Obsidian `aliases`.
+    pub fn all_aliases(&self) -> Vec<String> {
+        self.alias
+            .iter()
+            .chain(self.aliases.iter().flatten())
+            .filter(|alias| !alias.trim().is_empty())
+            .cloned()
+            .collect()
+    }
+}
+
+mod lenient {
+    use serde::{Deserialize, Deserializer};
+    use serde_yaml::Value;
+
+    fn scalar(value: &Value) -> Option<String> {
+        match value {
+            Value::String(s) => Some(s.clone()),
+            Value::Number(n) => Some(n.to_string()),
+            Value::Bool(b) => Some(b.to_string()),
+            Value::Tagged(tagged) => scalar(&tagged.value),
+            _ => None,
+        }
+    }
+
+    pub fn string<'de, D: Deserializer<'de>>(d: D) -> Result<Option<String>, D::Error> {
+        Ok(match Option::<Value>::deserialize(d)? {
+            Some(Value::Sequence(items)) => items.iter().find_map(scalar),
+            Some(value) => scalar(&value),
+            None => None,
+        })
+    }
+
+    pub fn string_list<'de, D: Deserializer<'de>>(d: D) -> Result<Option<Vec<String>>, D::Error> {
+        Ok(match Option::<Value>::deserialize(d)? {
+            Some(Value::Sequence(items)) => Some(items.iter().filter_map(scalar).collect()),
+            Some(value) => scalar(&value).map(|s| vec![s]),
+            None => None,
+        })
+    }
+
+    pub fn float<'de, D: Deserializer<'de>>(d: D) -> Result<Option<f64>, D::Error> {
+        Ok(match Option::<Value>::deserialize(d)? {
+            Some(Value::Number(n)) => n.as_f64(),
+            Some(Value::String(s)) => s.trim().parse().ok(),
+            _ => None,
+        })
+    }
+
+    pub fn int<'de, D: Deserializer<'de>>(d: D) -> Result<Option<i32>, D::Error> {
+        Ok(match Option::<Value>::deserialize(d)? {
+            Some(Value::Number(n)) => n.as_i64().and_then(|n| i32::try_from(n).ok()),
+            Some(Value::String(s)) => s.trim().parse().ok(),
+            _ => None,
+        })
+    }
+
+    pub fn boolean<'de, D: Deserializer<'de>>(d: D) -> Result<Option<bool>, D::Error> {
+        Ok(match Option::<Value>::deserialize(d)? {
+            Some(Value::Bool(b)) => Some(b),
+            Some(Value::String(s)) => match s.trim().to_ascii_lowercase().as_str() {
+                "true" | "yes" | "on" | "1" => Some(true),
+                "false" | "no" | "off" | "0" => Some(false),
+                _ => None,
+            },
+            Some(Value::Number(n)) => n.as_i64().map(|n| n != 0),
+            _ => None,
+        })
+    }
 }
 
 impl Document {
@@ -77,6 +181,30 @@ impl Document {
             content,
             original_text: text,
         })
+    }
+
+    /// Like [`Document::parse`], but a note whose frontmatter is not valid YAML
+    /// is still returned (without frontmatter) so its text stays searchable.
+    /// The second value is the frontmatter error, if any. Only I/O fails.
+    pub fn parse_for_index(path: &Path) -> Result<(Self, Option<anyhow::Error>)> {
+        match Self::parse(path) {
+            Ok(doc) => Ok((doc, None)),
+            Err(error) => {
+                let text = fs::read_to_string(path)?;
+                let content = crate::frontmatter::split(&text)
+                    .map(|split| split.body.to_string())
+                    .unwrap_or_else(|| text.clone());
+                Ok((
+                    Document {
+                        path: path.to_path_buf(),
+                        frontmatter: None,
+                        content,
+                        original_text: text,
+                    },
+                    Some(error),
+                ))
+            }
+        }
     }
 
     /// Returns the persisted ID when present, otherwise a deterministic path-derived ID.
@@ -188,50 +316,9 @@ impl Document {
         Ok(true)
     }
 
-    pub fn ensure_id(&mut self) -> Result<String> {
-        if let Some(fm) = &self.frontmatter
-            && let Some(id) = &fm.id
-        {
-            return Ok(id.clone());
-        }
-
-        let new_id = Uuid::new_v4().to_string();
-
-        let new_text = if self.original_text.starts_with("---\n")
-            || self.original_text.starts_with("---\r\n")
-        {
-            let id_line = format!("id: {}\n", new_id);
-            self.original_text
-                .replacen("---\n", &format!("---\n{}", id_line), 1)
-                .replacen("---\r\n", &format!("---\r\n{}", id_line), 1)
-        } else {
-            format!("---\nid: {}\n---\n\n{}", new_id, self.original_text)
-        };
-
-        fs::write(&self.path, &new_text)?;
-        self.original_text = new_text;
-
-        // Re-parse to update frontmatter
-        let updated = Self::parse(&self.path)?;
-        self.frontmatter = updated.frontmatter;
-        self.content = updated.content;
-
-        Ok(new_id)
-    }
-
-    pub fn extract_links(&self) -> Vec<String> {
-        let re = Regex::new(r"\[([^\]]+)\]\(([^)]+)\)").unwrap();
-        let mut links = Vec::new();
-        for cap in re.captures_iter(&self.content) {
-            let link = cap[2].to_string();
-            if !link.starts_with("http") && !link.starts_with("mailto:") && !link.starts_with('#') {
-                let cleaned = link.split('#').next().unwrap_or("").to_string();
-                if !cleaned.is_empty() {
-                    links.push(cleaned);
-                }
-            }
-        }
-        links
+    /// Internal Markdown and Obsidian (`[[...]]`) links in the note body.
+    pub fn vault_links(&self) -> Vec<crate::vault_links::VaultLink> {
+        crate::vault_links::extract(&self.content)
     }
 }
 
@@ -252,16 +339,44 @@ mod tests {
     }
 
     #[test]
-    fn test_extract_links() {
+    fn vault_links_cover_markdown_and_wikilinks() {
         let doc = Document {
             path: PathBuf::new(),
             frontmatter: None,
-            content: "Check this [link](docs/test.md) and [another](http://google.com)".to_string(),
+            content:
+                "Check this [link](docs/test.md), [[Other note]] and [another](http://google.com)"
+                    .to_string(),
             original_text: "".to_string(),
         };
-        let links = doc.extract_links();
-        assert_eq!(links.len(), 1);
-        assert_eq!(links[0], "docs/test.md");
+        let targets: Vec<_> = doc.vault_links().into_iter().map(|l| l.target).collect();
+        assert_eq!(targets, vec!["docs/test.md", "Other note"]);
+    }
+
+    #[test]
+    fn obsidian_style_frontmatter_values_parse_leniently() {
+        let dir = tempdir().unwrap();
+        let file_path = dir.path().join("obsidian.md");
+        fs::write(
+            &file_path,
+            "---\nid: 20240101\naliases: [Payments, Billing flow]\ntags:\n  - finance\n\
+             confidence: high\npinned: \"yes\"\nmemory_version: \"2\"\ncreated_at: 2024-01-01\n\
+             links: notes/a.md\nstatus: [active]\nsource: {nested: map}\n---\n# Body",
+        )
+        .unwrap();
+
+        let fm = Document::parse(&file_path).unwrap().frontmatter.unwrap();
+        assert_eq!(fm.id.as_deref(), Some("20240101"));
+        assert_eq!(
+            fm.aliases,
+            Some(vec!["Payments".to_string(), "Billing flow".to_string()])
+        );
+        assert_eq!(fm.confidence, None);
+        assert_eq!(fm.pinned, Some(true));
+        assert_eq!(fm.memory_version, Some(2));
+        assert_eq!(fm.created_at.as_deref(), Some("2024-01-01"));
+        assert_eq!(fm.links, Some(vec!["notes/a.md".to_string()]));
+        assert_eq!(fm.status.as_deref(), Some("active"));
+        assert_eq!(fm.source, None);
     }
 
     #[test]

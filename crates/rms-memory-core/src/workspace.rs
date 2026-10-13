@@ -82,6 +82,11 @@ pub struct ProjectConfig {
     /// this gate. See ADR `decisions/cross-project-federated-search.md`.
     #[serde(default)]
     pub cross_project_vault: bool,
+    /// When true, RMS Memory never creates, edits, moves or deletes files in
+    /// `vault_path` (for example an Obsidian vault used as a read-only source).
+    /// Indexing still works; the index lives outside the vault.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub read_only: bool,
 }
 
 fn default_code_languages() -> Vec<String> {
@@ -134,7 +139,7 @@ fn is_in_hidden_dir(root: &Path, path: &Path) -> bool {
         .any(|component| component.as_os_str().to_string_lossy().starts_with('.'))
 }
 
-fn default_exclude() -> Vec<String> {
+pub fn default_exclude() -> Vec<String> {
     vec![
         "node_modules/**".to_string(),
         "vendor/**".to_string(),
@@ -204,9 +209,44 @@ const VAULT_DIRS: &[&str] = &[
     "api",
 ];
 
+/// True for an existing, non-empty folder that has none of the RMS vault
+/// folders, i.e. somebody else's notes that `init` must not restructure.
+pub fn is_foreign_folder(path: &Path) -> bool {
+    let Ok(mut entries) = fs::read_dir(path) else {
+        return false;
+    };
+    let has_visible_entry =
+        entries.any(|entry| entry.is_ok_and(|e| !e.file_name().to_string_lossy().starts_with('.')));
+    has_visible_entry && !VAULT_DIRS.iter().any(|dir| path.join(dir).is_dir())
+}
+
 pub fn create_vault_dirs(vault_path: &Path) -> Result<()> {
     for dir in VAULT_DIRS {
         fs::create_dir_all(vault_path.join(dir))?;
+    }
+    Ok(())
+}
+
+/// Errors when a registered project marks `vault_root` as read-only.
+pub fn ensure_vault_writable(vault_root: &Path) -> Result<()> {
+    let registry = crate::config_manager::ConfigManager::open()?
+        .snapshot()
+        .registry;
+    ensure_vault_writable_in(&registry, vault_root)
+}
+
+pub fn ensure_vault_writable_in(registry: &Registry, vault_root: &Path) -> Result<()> {
+    let canonical = |path: &Path| fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
+    let root = canonical(vault_root);
+    if let Some((key, _)) = registry
+        .projects
+        .iter()
+        .find(|(_, project)| project.read_only && canonical(Path::new(&project.vault_path)) == root)
+    {
+        return Err(anyhow!(
+            "Vault of project `{key}` is read-only ({}): RMS Memory does not change files there. Disable with `rms-memory config --read-only false` in that project.",
+            vault_root.display()
+        ));
     }
     Ok(())
 }
@@ -310,6 +350,11 @@ impl Workspace {
             "Project not found in registry. Use `rms-memory init` to register '{}' as a project.",
             start_canon.display()
         ))
+    }
+
+    /// See [`ensure_vault_writable`].
+    pub fn ensure_writable(&self) -> Result<()> {
+        ensure_vault_writable(&self.root)
     }
 
     pub fn canonical_path(&self) -> Result<String> {
@@ -510,6 +555,22 @@ impl Registry {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn foreign_folders_are_detected() {
+        let dir = tempfile::tempdir().unwrap();
+        let missing = dir.path().join("missing");
+        assert!(!is_foreign_folder(&missing));
+        let empty = dir.path().join("empty");
+        fs::create_dir_all(empty.join(".obsidian")).unwrap();
+        assert!(!is_foreign_folder(&empty));
+        let notes = dir.path().join("notes");
+        fs::create_dir_all(&notes).unwrap();
+        fs::write(notes.join("Daily.md"), "x").unwrap();
+        assert!(is_foreign_folder(&notes));
+        fs::create_dir_all(notes.join("decisions")).unwrap();
+        assert!(!is_foreign_folder(&notes));
+    }
 
     #[test]
     fn markdown_discovery_skips_hidden_vault_dirs() {

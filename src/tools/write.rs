@@ -40,6 +40,9 @@ pub async fn execute(
         .and_then(|v| v.as_bool())
         .unwrap_or(false);
     super::secret_guard::reject_secrets(args, &["content", "source"])?;
+    if let Some(root) = &ctx.workspace_root {
+        rms_memory_core::workspace::ensure_vault_writable(root)?;
+    }
     let plan = plan_write(ctx, args)?;
 
     if dry_run {

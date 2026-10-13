@@ -35,7 +35,15 @@ impl InitArgs {
                 .join(&folder_name)
                 .to_string_lossy()
                 .to_string();
-            crate::workspace::create_vault_dirs(std::path::Path::new(&vault_path))?;
+            let vault_dir = std::path::Path::new(&vault_path);
+            if crate::workspace::is_foreign_folder(vault_dir) {
+                println!(
+                    "Vault folder {} already has content that is not an RMS vault; leaving it as is (no rules/, decisions/, … folders created).",
+                    vault_dir.display()
+                );
+            } else {
+                crate::workspace::create_vault_dirs(vault_dir)?;
+            }
 
             registry.projects.insert(
                 folder_name.clone(),
@@ -57,6 +65,7 @@ impl InitArgs {
                     code_index_mode: crate::workspace::CodeIndexMode::Off,
                     code_languages: vec!["auto".to_string()],
                     cross_project_vault: false,
+                    read_only: false,
                 },
             );
             if !self.dry_run {
