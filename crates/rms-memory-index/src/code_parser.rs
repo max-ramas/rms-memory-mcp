@@ -22,10 +22,14 @@ pub enum LanguageId {
     Ruby,
     Swift,
     Vue,
+    CSharp,
+    Php,
+    Kotlin,
+    Sql,
 }
 
 impl LanguageId {
-    pub const ALL: [Self; 13] = [
+    pub const ALL: [Self; 17] = [
         Self::Rust,
         Self::Go,
         Self::JavaScript,
@@ -39,6 +43,10 @@ impl LanguageId {
         Self::Ruby,
         Self::Swift,
         Self::Vue,
+        Self::CSharp,
+        Self::Php,
+        Self::Kotlin,
+        Self::Sql,
     ];
 
     pub fn as_str(self) -> &'static str {
@@ -56,6 +64,10 @@ impl LanguageId {
             Self::Ruby => "ruby",
             Self::Swift => "swift",
             Self::Vue => "vue",
+            Self::CSharp => "csharp",
+            Self::Php => "php",
+            Self::Kotlin => "kotlin",
+            Self::Sql => "sql",
         }
     }
 
@@ -74,6 +86,10 @@ impl LanguageId {
             Self::Ruby => "ruby-tree-sitter-v1",
             Self::Swift => "swift-tree-sitter-v1",
             Self::Vue => "vue-sfc-tree-sitter-v1",
+            Self::CSharp => "csharp-tree-sitter-v1",
+            Self::Php => "php-tree-sitter-v1",
+            Self::Kotlin => "kotlin-tree-sitter-v1",
+            Self::Sql => "sql-tree-sitter-v1",
         }
     }
 
@@ -92,6 +108,10 @@ impl LanguageId {
             "ruby" | "rb" => Some(Self::Ruby),
             "swift" => Some(Self::Swift),
             "vue" => Some(Self::Vue),
+            "csharp" | "c#" | "cs" => Some(Self::CSharp),
+            "php" => Some(Self::Php),
+            "kotlin" | "kt" => Some(Self::Kotlin),
+            "sql" => Some(Self::Sql),
             _ => None,
         }
     }
@@ -143,6 +163,10 @@ pub fn language_for_path(path: &Path) -> Option<LanguageId> {
         Some("rb") => Some(LanguageId::Ruby),
         Some("swift") => Some(LanguageId::Swift),
         Some("vue") => Some(LanguageId::Vue),
+        Some("cs") => Some(LanguageId::CSharp),
+        Some("php") => Some(LanguageId::Php),
+        Some("kt" | "kts") => Some(LanguageId::Kotlin),
+        Some("sql") => Some(LanguageId::Sql),
         _ => None,
     }
 }
@@ -176,7 +200,11 @@ pub fn parse_code_file(file_path: &str, source: &str) -> Result<ParsedCodeFile> 
         LanguageId::Python => parse_python_file(file_path, source)?,
         LanguageId::C | LanguageId::Cpp => parse_native_file(file_path, source, language)?,
         LanguageId::Java | LanguageId::Ruby => parse_native_file(file_path, source, language)?,
-        LanguageId::Swift => parse_native_file(file_path, source, language)?,
+        LanguageId::Swift
+        | LanguageId::CSharp
+        | LanguageId::Php
+        | LanguageId::Kotlin
+        | LanguageId::Sql => parse_native_file(file_path, source, language)?,
         LanguageId::Vue => parse_vue_file(file_path, source)?,
     };
     let relation_hints = match language {
@@ -197,7 +225,11 @@ pub fn parse_code_file(file_path: &str, source: &str) -> Result<ParsedCodeFile> 
         | LanguageId::Cpp
         | LanguageId::Java
         | LanguageId::Ruby
-        | LanguageId::Swift => extract_native_relation_hints(file_path, source, &items, language)?,
+        | LanguageId::Swift
+        | LanguageId::CSharp
+        | LanguageId::Php
+        | LanguageId::Kotlin
+        | LanguageId::Sql => extract_native_relation_hints(file_path, source, &items, language)?,
         LanguageId::Vue => Vec::new(),
     };
     Ok(ParsedCodeFile {
@@ -1056,25 +1088,69 @@ fn parse_web_file(
     Ok(items)
 }
 
-fn parse_native_file(
-    file_path: &str,
-    source: &str,
-    language: LanguageId,
-) -> Result<Vec<ParsedCodeItem>> {
-    let mut parser = Parser::new();
+fn parse_native_tree(source: &str, language: LanguageId) -> Result<tree_sitter::Tree> {
     let grammar = match language {
         LanguageId::C => tree_sitter_c::LANGUAGE.into(),
         LanguageId::Cpp => tree_sitter_cpp::LANGUAGE.into(),
         LanguageId::Java => tree_sitter_java::LANGUAGE.into(),
         LanguageId::Ruby => tree_sitter_ruby::LANGUAGE.into(),
         LanguageId::Swift => tree_sitter_swift::LANGUAGE.into(),
-        _ => unreachable!(),
+        LanguageId::CSharp => tree_sitter_c_sharp::LANGUAGE.into(),
+        LanguageId::Php => tree_sitter_php::LANGUAGE_PHP.into(),
+        LanguageId::Kotlin => tree_sitter_kotlin_ng::LANGUAGE.into(),
+        LanguageId::Sql => tree_sitter_sequel::LANGUAGE.into(),
+        _ => unreachable!("native parser called for non-native language"),
     };
+    let mut parser = Parser::new();
     parser.set_language(&grammar)?;
-    let tree = parser
+    parser
         .parse(source, None)
-        .ok_or_else(|| anyhow!("Tree-sitter returned no native syntax tree"))?;
-    if tree.root_node().has_error() {
+        .ok_or_else(|| anyhow!("Tree-sitter returned no {} syntax tree", language.as_str()))
+}
+
+/// SQL dialects and newer Kotlin syntax outrun their grammars; the
+/// declarations that did parse are still worth indexing.
+fn tolerates_syntax_errors(language: LanguageId) -> bool {
+    matches!(language, LanguageId::Kotlin | LanguageId::Sql)
+}
+
+fn native_item_kind(language: LanguageId, node_kind: &str) -> Option<CodeKind> {
+    match (language, node_kind) {
+        (LanguageId::CSharp, "constructor_declaration") => Some(CodeKind::Function),
+        (LanguageId::CSharp, "struct_declaration") => Some(CodeKind::Struct),
+        (LanguageId::CSharp | LanguageId::Php, "enum_declaration") => Some(CodeKind::Enum),
+        (LanguageId::CSharp, "record_declaration") => Some(CodeKind::Class),
+        (LanguageId::Php, "trait_declaration") => Some(CodeKind::Trait),
+        (LanguageId::Kotlin, "object_declaration") => Some(CodeKind::Class),
+        (LanguageId::Sql, "create_table") => Some(CodeKind::Struct),
+        (LanguageId::Sql, "create_view" | "create_materialized_view" | "create_type") => {
+            Some(CodeKind::TypeAlias)
+        }
+        (LanguageId::Sql, "create_function" | "create_procedure" | "create_trigger") => {
+            Some(CodeKind::Function)
+        }
+        (LanguageId::Sql, _) => None,
+        (_, "function_definition")
+        | (_, "function_declaration")
+        | (_, "method_declaration")
+        | (_, "method")
+        | (_, "singleton_method") => Some(CodeKind::Function),
+        (_, "struct_specifier") => Some(CodeKind::Struct),
+        (_, "enum_specifier") => Some(CodeKind::Enum),
+        (_, "class_specifier" | "class_declaration" | "class" | "module") => Some(CodeKind::Class),
+        (_, "interface_declaration") => Some(CodeKind::Interface),
+        (_, "type_definition") => Some(CodeKind::TypeAlias),
+        _ => None,
+    }
+}
+
+fn parse_native_file(
+    file_path: &str,
+    source: &str,
+    language: LanguageId,
+) -> Result<Vec<ParsedCodeItem>> {
+    let tree = parse_native_tree(source, language)?;
+    if tree.root_node().has_error() && !tolerates_syntax_errors(language) {
         return Err(anyhow!(
             "{} source contains syntax errors: {file_path}",
             language.as_str()
@@ -1093,20 +1169,7 @@ fn parse_native_file(
         module: &str,
         items: &mut Vec<ParsedCodeItem>,
     ) {
-        let kind = match node.kind() {
-            "function_definition"
-            | "function_declaration"
-            | "method_declaration"
-            | "method"
-            | "singleton_method" => Some(CodeKind::Function),
-            "struct_specifier" => Some(CodeKind::Struct),
-            "enum_specifier" => Some(CodeKind::Enum),
-            "class_specifier" | "class_declaration" | "class" | "module" => Some(CodeKind::Class),
-            "interface_declaration" => Some(CodeKind::Interface),
-            "type_definition" => Some(CodeKind::TypeAlias),
-            _ => None,
-        };
-        if let Some(kind) = kind {
+        if let Some(kind) = native_item_kind(language, node.kind()) {
             items.push(build_web_item(
                 node,
                 file,
@@ -1320,6 +1383,12 @@ fn web_symbol_name(node: Node<'_>, source: &str) -> Option<String> {
     node.child_by_field_name("name")
         .map(|value| node_text(value, source).to_string())
         .or_else(|| first_web_identifier(node, source))
+        .or_else(|| {
+            let mut cursor = node.walk();
+            node.named_children(&mut cursor)
+                .find(|child| child.kind() == "object_reference")
+                .map(|child| node_text(child, source).to_string())
+        })
 }
 
 fn web_preamble(node: Node<'_>, source: &str) -> String {
@@ -1447,19 +1516,7 @@ fn extract_native_relation_hints(
     items: &[ParsedCodeItem],
     language: LanguageId,
 ) -> Result<Vec<CodeRelationHint>> {
-    let mut parser = Parser::new();
-    let grammar = match language {
-        LanguageId::C => tree_sitter_c::LANGUAGE.into(),
-        LanguageId::Cpp => tree_sitter_cpp::LANGUAGE.into(),
-        LanguageId::Java => tree_sitter_java::LANGUAGE.into(),
-        LanguageId::Ruby => tree_sitter_ruby::LANGUAGE.into(),
-        LanguageId::Swift => tree_sitter_swift::LANGUAGE.into(),
-        _ => unreachable!("native relation extractor called for non-native language"),
-    };
-    parser.set_language(&grammar)?;
-    let tree = parser
-        .parse(source, None)
-        .ok_or_else(|| anyhow!("Tree-sitter returned no native syntax tree"))?;
+    let tree = parse_native_tree(source, language)?;
     let mut hints = Vec::new();
     fn walk(
         node: Node<'_>,
@@ -1483,7 +1540,15 @@ fn extract_native_relation_hints(
                         .to_string()
                 })
         };
-        if matches!(node.kind(), "preproc_include" | "import_declaration") {
+        let import = matches!(
+            (language, node.kind()),
+            (_, "preproc_include" | "import_declaration")
+                | (LanguageId::CSharp, "using_directive")
+                | (LanguageId::Php, "namespace_use_declaration")
+                | (LanguageId::Kotlin, "import")
+                | (LanguageId::Sql, "relation")
+        );
+        if import {
             hints.push(CodeRelationHint {
                 source_item_key: owner(),
                 relation: "uses".to_string(),
@@ -1496,7 +1561,14 @@ fn extract_native_relation_hints(
         }
         if matches!(
             node.kind(),
-            "call_expression" | "method_invocation" | "call" | "method_call"
+            "call_expression"
+                | "method_invocation"
+                | "call"
+                | "method_call"
+                | "invocation_expression"
+                | "function_call_expression"
+                | "member_call_expression"
+                | "scoped_call_expression"
         ) {
             let target = node
                 .child_by_field_name("function")
@@ -2297,6 +2369,106 @@ fn helper() { let _ = Thing::default(); }
                 .iter()
                 .any(|hint| hint.relation == "uses")
         );
+    }
+
+    fn symbols(parsed: &ParsedCodeFile) -> Vec<(CodeKind, &str)> {
+        parsed
+            .items
+            .iter()
+            .map(|item| (item.kind, item.symbol_name.as_str()))
+            .collect()
+    }
+
+    fn has_hint(parsed: &ParsedCodeFile, target: &str) -> bool {
+        parsed
+            .relation_hints
+            .iter()
+            .any(|hint| hint.target_identifier == target)
+    }
+
+    #[test]
+    fn native_adapters_dispatch_csharp_php_kotlin_and_sql() {
+        let csharp = parse_code_file(
+            "src/Billing/Service.cs",
+            "using System.Text;\nnamespace App.Billing {\npublic class Service {\n  public Service() {}\n  public int Run(int x) { return Helper(x); }\n}\ninterface IGateway { void Charge(); }\nrecord Point(int X);\nstruct Size {}\nenum State { A }\n}\n",
+        )
+        .unwrap();
+        assert_eq!(csharp.language, LanguageId::CSharp);
+        let found = symbols(&csharp);
+        for expected in [
+            (CodeKind::Class, "Service"),
+            (CodeKind::Function, "Run"),
+            (CodeKind::Interface, "IGateway"),
+            (CodeKind::Class, "Point"),
+            (CodeKind::Struct, "Size"),
+            (CodeKind::Enum, "State"),
+        ] {
+            assert!(found.contains(&expected), "{expected:?} in {found:?}");
+        }
+        assert!(has_hint(&csharp, "csharp-symbol:Helper"));
+        assert!(has_hint(&csharp, "csharp-import:using System.Text;"));
+
+        let php = parse_code_file(
+            "src/Service.php",
+            "<?php\nnamespace App;\nuse App\\Client;\nfunction run($x) { return helper($x); }\nclass Service {\n  public function go() { $this->client->send(); }\n}\ntrait Loggable {}\nenum Suit { case Hearts; }\n",
+        )
+        .unwrap();
+        assert_eq!(php.language, LanguageId::Php);
+        let found = symbols(&php);
+        for expected in [
+            (CodeKind::Function, "run"),
+            (CodeKind::Class, "Service"),
+            (CodeKind::Function, "go"),
+            (CodeKind::Trait, "Loggable"),
+            (CodeKind::Enum, "Suit"),
+        ] {
+            assert!(found.contains(&expected), "{expected:?} in {found:?}");
+        }
+        assert!(has_hint(&php, "php-symbol:helper"));
+        assert!(has_hint(&php, "php-symbol:send"));
+
+        let kotlin = parse_code_file(
+            "app/src/Service.kt",
+            "package app.billing\n\nimport app.client.Client\n\nclass Service(val client: Client) {\n    fun run(x: Int): Int {\n        return helper(x)\n    }\n}\n\nobject Registry {}\n\nfun helper(x: Int) = x\n",
+        )
+        .unwrap();
+        assert_eq!(kotlin.language, LanguageId::Kotlin);
+        let found = symbols(&kotlin);
+        for expected in [
+            (CodeKind::Class, "Service"),
+            (CodeKind::Function, "run"),
+            (CodeKind::Class, "Registry"),
+            (CodeKind::Function, "helper"),
+        ] {
+            assert!(found.contains(&expected), "{expected:?} in {found:?}");
+        }
+        assert!(has_hint(&kotlin, "kotlin-symbol:helper"));
+        assert!(has_hint(&kotlin, "kotlin-import:import app.client.Client"));
+
+        let sql = parse_code_file(
+            "db/schema.sql",
+            "CREATE TABLE users (id INT PRIMARY KEY, name TEXT);\nCREATE VIEW active_users AS SELECT * FROM users;\nCREATE FUNCTION one() RETURNS int AS $$ SELECT 1 $$ LANGUAGE sql;\nSELECT 1;\n",
+        )
+        .unwrap();
+        assert_eq!(sql.language, LanguageId::Sql);
+        let found = symbols(&sql);
+        assert_eq!(
+            found,
+            vec![
+                (CodeKind::Struct, "users"),
+                (CodeKind::TypeAlias, "active_users"),
+                (CodeKind::Function, "one"),
+            ]
+        );
+        assert!(has_hint(&sql, "sql-import:users"));
+
+        // Dialect syntax the grammar does not know must not drop the file.
+        let partial = parse_code_file(
+            "db/legacy.sql",
+            "CREATE TABLE a (id INT);\nGO ~~~ dialect only;\nCREATE TABLE b (id INT);\n",
+        )
+        .unwrap();
+        assert!(symbols(&partial).contains(&(CodeKind::Struct, "a")));
     }
 
     #[test]
