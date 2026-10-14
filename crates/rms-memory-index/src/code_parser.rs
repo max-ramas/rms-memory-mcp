@@ -1064,9 +1064,11 @@ fn parse_vue_file(file_path: &str, source: &str) -> Result<Vec<ParsedCodeItem>> 
 }
 
 /// Inline scripts parse as JavaScript; elements with an `id` become `#id` items.
+/// The Vue grammar parses HTML too. `tree-sitter-html` cannot be linked next to
+/// `tree-sitter-vue3`, which exports the same external scanner symbols.
 fn parse_html_file(file_path: &str, source: &str) -> Result<Vec<ParsedCodeItem>> {
     let mut parser = Parser::new();
-    parser.set_language(&tree_sitter_html::LANGUAGE.into())?;
+    parser.set_language(&tree_sitter_vue3::LANGUAGE.into())?;
     let tree = parser
         .parse(source, None)
         .ok_or_else(|| anyhow!("Tree-sitter returned no HTML syntax tree"))?;
@@ -2712,6 +2714,38 @@ fn helper() { let _ = Thing::default(); }
         )
         .unwrap();
         assert!(symbols(&partial).contains(&(CodeKind::Struct, "a")));
+    }
+
+    #[test]
+    fn html_survives_void_unclosed_and_head_elements() {
+        let html = r#"<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <link rel="stylesheet" href="app.css">
+  <title>Shop & more</title>
+  <style>#cart { color: red; }</style>
+</head>
+<body>
+  <!-- header -->
+  Plain text before markup
+  <p>First paragraph
+  <p>Second<br>line <img src="a.png" alt="x"/>
+  <ul><li id="item-1">One<li>Two</ul>
+  <div id="cart" class="box"><span>Total: {{ not vue }}</span></div>
+  <script type="module">export function checkout() { return 1; }</script>
+</body>
+</html>
+"#;
+        let parsed = parse_code_file("web/shop.html", html).unwrap();
+        let names: Vec<_> = parsed
+            .items
+            .iter()
+            .map(|i| i.symbol_name.as_str())
+            .collect();
+        for expected in ["#item-1", "#cart", "checkout"] {
+            assert!(names.contains(&expected), "{expected} missing: {names:?}");
+        }
     }
 
     #[test]
