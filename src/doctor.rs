@@ -452,7 +452,7 @@ pub fn secrets_in_vault(
 
 /// `rms_write` stores the predecessor's id; hand-written notes often name
 /// its vault-relative path instead (optionally as `path:<path>`).
-fn supersession_target_exists(
+pub(crate) fn supersession_target_exists(
     target: &str,
     id_exists: impl Fn(&str) -> bool,
     path_exists: impl Fn(&str) -> bool,

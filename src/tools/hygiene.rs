@@ -32,8 +32,10 @@ pub struct SimilarPair {
     pub a: String,
     pub b: String,
     /// Cosine similarity of the note embeddings.
+    #[serde(serialize_with = "three_decimals")]
     pub similarity: f32,
     /// Jaccard overlap of word 3-grams.
+    #[serde(serialize_with = "three_decimals")]
     pub overlap: f32,
 }
 
@@ -49,6 +51,7 @@ pub struct HygieneReport {
     pub compared_documents: usize,
     /// More documents are indexed than were compared for near duplicates.
     pub truncated: bool,
+    #[serde(serialize_with = "three_decimals")]
     pub min_similarity: f32,
     pub near_duplicates: Vec<SimilarPair>,
     /// Groups of notes with identical bodies.
@@ -161,6 +164,11 @@ fn jaccard(a: &HashSet<u64>, b: &HashSet<u64>) -> f32 {
 
 fn rounded(value: f32) -> f32 {
     (value * 1000.0).round() / 1000.0
+}
+
+/// `serde_json::Value` widens f32 to f64, turning 0.9 into 0.8999999761581421.
+fn three_decimals<S: serde::Serializer>(value: &f32, serializer: S) -> Result<S::Ok, S::Error> {
+    serializer.serialize_f64((f64::from(*value) * 1000.0).round() / 1000.0)
 }
 
 /// Exact duplicate groups and the most similar remaining pairs.
@@ -294,6 +302,16 @@ mod tests {
             text: text.to_string(),
             vector: vector.iter().map(|v| v / norm).collect(),
         }
+    }
+
+    #[test]
+    fn scores_serialize_with_three_decimals() {
+        let report = HygieneReport {
+            min_similarity: 0.9,
+            ..Default::default()
+        };
+        let value = serde_json::to_value(&report).unwrap();
+        assert_eq!(value["min_similarity"].to_string(), "0.9");
     }
 
     #[test]

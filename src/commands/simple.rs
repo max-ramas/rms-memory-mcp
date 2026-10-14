@@ -595,6 +595,15 @@ impl DoctorArgs {
                 }
             }
         }
+        let vault_paths: std::collections::HashSet<String> = files
+            .iter()
+            .map(|f| {
+                f.strip_prefix(&workspace.root)
+                    .unwrap_or(f)
+                    .to_string_lossy()
+                    .replace('\\', "/")
+            })
+            .collect();
         for f in &files {
             if let Ok(doc) = crate::document::Document::parse(f) {
                 let Some(fm) = &doc.frontmatter else {
@@ -603,13 +612,17 @@ impl DoctorArgs {
                 let Some(target) = fm.supersedes.as_deref() else {
                     continue;
                 };
-                if !id_to_path.contains_key(target) && !target.starts_with("path:") {
+                if !crate::doctor::supersession_target_exists(
+                    target,
+                    |id| id_to_path.contains_key(id),
+                    |path| vault_paths.contains(path),
+                ) {
                     let rel = f
                         .strip_prefix(&workspace.root)
                         .unwrap_or(f)
                         .to_string_lossy();
                     broken_supersession.push(format!(
-                        "{rel} (supersedes={target} not found among vault ids)"
+                        "{rel} (supersedes={target} matches no vault note id or path)"
                     ));
                 }
             }
