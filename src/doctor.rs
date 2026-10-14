@@ -360,6 +360,8 @@ pub async fn diagnose(workspace: &Workspace, options: DiagnoseOptions) -> Result
                 }
             }
         }
+        let vault_paths: std::collections::HashSet<String> =
+            files.iter().map(|f| rel(workspace, f)).collect();
         for f in &files {
             if let Ok(doc) = rms_memory_core::document::Document::parse(f) {
                 let Some(fm) = &doc.frontmatter else {
@@ -368,9 +370,13 @@ pub async fn diagnose(workspace: &Workspace, options: DiagnoseOptions) -> Result
                 let Some(target) = fm.supersedes.as_deref() else {
                     continue;
                 };
-                if !id_to_path.contains_key(target) && !target.starts_with("path:") {
+                if !supersession_target_exists(
+                    target,
+                    |id| id_to_path.contains_key(id),
+                    |path| vault_paths.contains(path),
+                ) {
                     broken_supersession.push(format!(
-                        "{} (supersedes={target} not found among vault ids)",
+                        "{} (supersedes={target} matches no vault note id or path)",
                         rel(workspace, f)
                     ));
                 }
@@ -442,6 +448,17 @@ pub fn secrets_in_vault(
             })
         })
         .collect()
+}
+
+/// `rms_write` stores the predecessor's id; hand-written notes often name
+/// its vault-relative path instead (optionally as `path:<path>`).
+fn supersession_target_exists(
+    target: &str,
+    id_exists: impl Fn(&str) -> bool,
+    path_exists: impl Fn(&str) -> bool,
+) -> bool {
+    let path = target.strip_prefix("path:").unwrap_or(target);
+    id_exists(target) || path_exists(path.trim_start_matches("./"))
 }
 
 fn rel(workspace: &Workspace, path: &Path) -> String {
@@ -561,7 +578,22 @@ pub fn parse_fm_datetime(raw: &str) -> Option<DateTime<Utc>> {
 
 #[cfg(test)]
 mod tests {
-    use super::parse_fm_datetime;
+    use super::{parse_fm_datetime, supersession_target_exists};
+
+    #[test]
+    fn supersedes_accepts_an_id_or_an_existing_vault_path() {
+        let ids = ["old-note-1"];
+        let paths = ["decisions/old.md"];
+        let check = |target: &str| {
+            supersession_target_exists(target, |id| ids.contains(&id), |p| paths.contains(&p))
+        };
+        assert!(check("old-note-1"));
+        assert!(check("decisions/old.md"));
+        assert!(check("path:decisions/old.md"));
+        assert!(check("./decisions/old.md"));
+        assert!(!check("decisions/missing.md"));
+        assert!(!check("missing-id"));
+    }
 
     #[test]
     fn parses_rfc3339_and_date_only() {

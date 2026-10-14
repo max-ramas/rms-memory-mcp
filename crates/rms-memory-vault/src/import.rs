@@ -41,7 +41,7 @@ impl ImportService {
 
         for t in targets {
             let path = self.workspace_root.join(t);
-            if path.exists() {
+            if path.exists() && !is_injected_rules_only(&path) {
                 found.push(path);
             }
         }
@@ -55,6 +55,7 @@ impl ImportService {
                     let path = entry.path();
                     if path.extension().and_then(|s| s.to_str()) == Some("md")
                         && !found.contains(&path)
+                        && !is_injected_rules_only(&path)
                     {
                         found.push(path);
                     }
@@ -140,6 +141,9 @@ impl ImportService {
     }
 
     fn import_single_file(&self, src: &Path, organize: bool) -> Result<()> {
+        if is_injected_rules_only(src) {
+            return Ok(());
+        }
         let dest_dir = if organize {
             self.map_category(src)
         } else {
@@ -197,6 +201,9 @@ impl ImportService {
     }
 
     fn create_link_file(&self, src: &Path) -> Result<()> {
+        if is_injected_rules_only(src) {
+            return Ok(());
+        }
         let category = self.map_category(src);
         fs::create_dir_all(&category)?;
 
@@ -268,5 +275,53 @@ impl ImportService {
         };
 
         self.vault_path.join(category)
+    }
+}
+
+/// IDE rule files that hold nothing but the block RMS Memory injected: the
+/// memory protocol is not project knowledge, so they are not imported.
+fn is_injected_rules_only(path: &Path) -> bool {
+    path.is_file()
+        && fs::read_to_string(path)
+            .is_ok_and(|text| rms_memory_core::managed_rules::is_only_managed(&text))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use rms_memory_core::managed_rules::{END_MARKER, START_MARKER};
+
+    #[test]
+    fn rule_files_with_only_the_injected_block_are_not_imported() {
+        let repo = tempfile::tempdir().unwrap();
+        let vault = tempfile::tempdir().unwrap();
+        let block = format!("{START_MARKER}\nprotocol\n{END_MARKER}\n");
+        fs::write(repo.path().join(".cursorrules"), &block).unwrap();
+        fs::write(repo.path().join("AGENTS.md"), &block).unwrap();
+        fs::write(
+            repo.path().join("CLAUDE.md"),
+            format!("# Team rules\n\n{block}"),
+        )
+        .unwrap();
+
+        let service = ImportService::new(repo.path().to_path_buf(), vault.path().to_path_buf());
+        let found = service.detect_existing_docs();
+        let names: Vec<_> = found
+            .iter()
+            .map(|p| p.file_name().unwrap().to_string_lossy().to_string())
+            .collect();
+        assert_eq!(names, vec!["CLAUDE.md"]);
+
+        let all = vec![
+            repo.path().join(".cursorrules"),
+            repo.path().join("AGENTS.md"),
+            repo.path().join("CLAUDE.md"),
+        ];
+        service.execute(ImportAction::LinkOnly, all).unwrap();
+        let rules: Vec<_> = fs::read_dir(vault.path().join("rules"))
+            .unwrap()
+            .map(|e| e.unwrap().file_name().to_string_lossy().to_string())
+            .collect();
+        assert_eq!(rules, vec!["CLAUDE.md"]);
     }
 }

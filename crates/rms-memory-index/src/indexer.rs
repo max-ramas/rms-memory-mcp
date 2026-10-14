@@ -41,6 +41,17 @@ pub enum SyncStatus {
     Busy,
 }
 
+/// How long an unused embedding model stays loaded in a long-lived process.
+/// `RMS_MEMORY_MODEL_IDLE_SECS` overrides the default of five minutes.
+pub fn model_idle_timeout() -> Duration {
+    std::env::var("RMS_MEMORY_MODEL_IDLE_SECS")
+        .ok()
+        .and_then(|value| value.parse::<u64>().ok())
+        .filter(|secs| *secs > 0)
+        .map(Duration::from_secs)
+        .unwrap_or(Duration::from_secs(300))
+}
+
 /// Serializes process-local model init: concurrent `Indexer::new` races with
 /// hf-hub blob locks, and TMPDIR overrides must not interleave.
 static MODEL_INIT_LOCK: Mutex<()> = Mutex::new(());
@@ -73,6 +84,34 @@ impl Indexer {
     /// call. Long-lived servers use this so idle processes stay small.
     pub fn new_lazy() -> Result<Self> {
         Self::unloaded(crate::embedding::active().clone())
+    }
+
+    /// A lazy indexer shared by a long-lived process. A background task drops
+    /// the model after [`model_idle_timeout`] without embedding calls, so
+    /// idle IDE servers and the GUI do not each hold ~1.4 GB. Must be called
+    /// inside a Tokio runtime.
+    pub fn shared_lazy() -> Result<std::sync::Arc<tokio::sync::Mutex<Self>>> {
+        let indexer = std::sync::Arc::new(tokio::sync::Mutex::new(Self::new_lazy()?));
+        let weak = std::sync::Arc::downgrade(&indexer);
+        let idle = model_idle_timeout();
+        tokio::spawn(async move {
+            let mut tick = tokio::time::interval(idle.min(Duration::from_secs(30)));
+            loop {
+                tick.tick().await;
+                let Some(indexer) = weak.upgrade() else {
+                    break;
+                };
+                if let Ok(mut guard) = indexer.try_lock()
+                    && guard.release_if_idle(idle)
+                {
+                    tracing::info!(
+                        "Released the embedding model after {}s idle",
+                        idle.as_secs()
+                    );
+                }
+            }
+        });
+        Ok(indexer)
     }
 
     pub fn for_profile(profile: EmbeddingProfile) -> Result<Self> {
@@ -426,7 +465,16 @@ fn load_vault_document(
     ) {
         doc.content = linked_content;
     }
+    strip_managed_rules(&mut doc);
     Some(doc)
+}
+
+/// Injected IDE rule blocks repeat the memory protocol in every linked rule
+/// file; indexing them only adds identical noise to search results.
+fn strip_managed_rules(doc: &mut rms_memory_core::document::Document) {
+    if let std::borrow::Cow::Owned(stripped) = rms_memory_core::managed_rules::strip(&doc.content) {
+        doc.content = stripped;
+    }
 }
 
 /// How far the vault index lags behind the Markdown files on disk.
@@ -575,6 +623,18 @@ async fn sync_vault_inner(
         store.delete_document_paths(&table, &excluded_paths).await?;
         // Re-read both views after deletion so duplicate document IDs cannot
         // leave stale timestamps or suppress canonical re-indexing.
+        existing_docs = store.get_all_document_timestamps(&table).await?;
+        path_info = store.get_file_timestamps(&table).await?;
+    }
+    // Rows indexed before injected rule blocks were stripped; dropping them
+    // makes their files look new, so they are reindexed below.
+    let managed_paths = store.paths_containing_managed_rules(&table).await?;
+    if !managed_paths.is_empty() {
+        tracing::info!(
+            "Sync: reindexing {} file(s) indexed with injected IDE rule blocks",
+            managed_paths.len()
+        );
+        store.delete_document_paths(&table, &managed_paths).await?;
         existing_docs = store.get_all_document_timestamps(&table).await?;
         path_info = store.get_file_timestamps(&table).await?;
     }
@@ -843,6 +903,7 @@ async fn index_vault_full_inner(
         ) {
             doc.content = linked_content;
         }
+        strip_managed_rules(&mut doc);
 
         if doc.content.trim().is_empty() {
             continue;
@@ -1071,5 +1132,82 @@ mod sync_tests {
         std::fs::remove_file(vault.join("notes/copy.md")).unwrap();
         let stale = super::vault_freshness(&workspace, &store).await.unwrap();
         assert_eq!((stale.added, stale.removed, stale.modified), (1, 1, 0));
+    }
+
+    #[tokio::test]
+    async fn injected_rule_blocks_are_not_indexed_and_legacy_rows_are_reindexed() {
+        use rms_memory_core::managed_rules::{END_MARKER, START_MARKER};
+        let directory = tempfile::tempdir().unwrap();
+        let vault = directory.path().join("vault");
+        let code = directory.path().join("code");
+        std::fs::create_dir_all(vault.join("rules")).unwrap();
+        std::fs::create_dir_all(vault.join("notes")).unwrap();
+        std::fs::create_dir_all(&code).unwrap();
+        let block =
+            format!("{START_MARKER}\n# RMS Memory protocol\n\nsearch first\n{END_MARKER}\n");
+        std::fs::write(code.join("AGENTS.md"), &block).unwrap();
+        std::fs::write(
+            vault.join("rules/AGENTS.md"),
+            "---\nid: stub-1\nlink: ../../code/AGENTS.md\n---\n",
+        )
+        .unwrap();
+        std::fs::write(
+            vault.join("notes/own.md"),
+            format!("# Own rules\n\nalways run the linter\n\n{block}"),
+        )
+        .unwrap();
+        let workspace = rms_memory_core::workspace::Workspace {
+            root: vault.clone(),
+            code_path: code.clone(),
+            include: vec!["**/*.md".to_string()],
+            exclude: vec![],
+            code_index_mode: rms_memory_core::workspace::CodeIndexMode::Manual,
+            code_languages: vec![],
+        };
+        let store =
+            crate::store::Store::init(&directory.path().join("db").to_string_lossy(), "memory")
+                .await
+                .unwrap();
+        let mut indexer = crate::indexer::Indexer::new().unwrap();
+        super::sync_vault(&workspace, &store, &mut indexer)
+            .await
+            .unwrap();
+        assert_eq!(indexed_paths(&store).await, vec!["notes/own.md"]);
+        let own = store.read_document("notes/own.md").await.unwrap();
+        assert!(own.contains("always run the linter"), "{own}");
+        assert!(!own.contains("search first"), "{own}");
+
+        // Rows written by an older version still hold the block.
+        let table = store.open_table().await.unwrap();
+        table
+            .update()
+            .only_if("path = 'notes/own.md'")
+            .column("text", format!("'{START_MARKER} search first'"))
+            .execute()
+            .await
+            .unwrap();
+        assert_eq!(
+            store.paths_containing_managed_rules(&table).await.unwrap(),
+            vec!["notes/own.md"]
+        );
+        super::sync_vault(&workspace, &store, &mut indexer)
+            .await
+            .unwrap();
+        let table = store.open_table().await.unwrap();
+        assert!(
+            store
+                .paths_containing_managed_rules(&table)
+                .await
+                .unwrap()
+                .is_empty()
+        );
+        assert_eq!(indexed_paths(&store).await, vec!["notes/own.md"]);
+        assert!(
+            store
+                .read_document("notes/own.md")
+                .await
+                .unwrap()
+                .contains("always run the linter")
+        );
     }
 }

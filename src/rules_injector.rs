@@ -9,8 +9,7 @@ const CLAUDE_RULES: &str = include_str!("../templates/claude_code_rules.md");
 const ZED_RULES: &str = include_str!("../templates/zed_assistant_rules.md");
 const GENERAL_RULES: &str = include_str!("../templates/general_mcp_guide.md");
 
-const START_MARKER: &str = "<!-- RMS-MEMORY-START -->";
-const END_MARKER: &str = "<!-- RMS-MEMORY-END -->";
+use rms_memory_core::managed_rules::{END_MARKER, START_MARKER};
 
 /// Returns the exact registry key whose `code_path` canonically equals `code_path`.
 ///

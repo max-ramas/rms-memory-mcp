@@ -828,12 +828,11 @@ impl LogArgs {
         // showing the conventional final ten lines, then follow appended data
         // until the user presses Ctrl+C. A smaller file after rotation resets
         // the offset safely.
-        let initial = std::fs::read_to_string(&log_file)?;
+        let (initial, mut offset) = read_log_end(&log_file)?;
         let initial_tail = tail_lines(&initial, 10);
         if !initial_tail.is_empty() {
             println!("{initial_tail}");
         }
-        let mut offset = std::fs::metadata(&log_file)?.len();
         loop {
             tokio::select! {
                 signal = tokio::signal::ctrl_c() => {
@@ -859,8 +858,31 @@ fn tail_lines(content: &str, max_lines: usize) -> String {
     lines.join("\n")
 }
 
+/// The last 64 KiB of the log (without a leading partial line) and its length.
+fn read_log_end(path: &Path) -> Result<(String, u64)> {
+    use std::io::{Read, Seek};
+    const MAX_TAIL_BYTES: u64 = 64 * 1024;
+    let mut file = std::fs::File::open(path)?;
+    let length = file.metadata()?.len();
+    let start = length.saturating_sub(MAX_TAIL_BYTES);
+    file.seek(std::io::SeekFrom::Start(start))?;
+    let mut bytes = Vec::new();
+    file.read_to_end(&mut bytes)?;
+    let text = String::from_utf8_lossy(&bytes);
+    let text = match (start > 0, text.find('\n')) {
+        (true, Some(newline)) => text[newline + 1..].to_string(),
+        _ => text.into_owned(),
+    };
+    Ok((text, length))
+}
+
 async fn read_appended_log(path: &Path, offset: &mut u64) -> Result<String> {
-    let length = tokio::fs::metadata(path).await?.len();
+    // Another process may have just moved the log to `rms.log.1`.
+    let length = match tokio::fs::metadata(path).await {
+        Ok(meta) => meta.len(),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => 0,
+        Err(error) => return Err(error.into()),
+    };
     if length < *offset {
         *offset = 0;
     }
@@ -878,7 +900,22 @@ async fn read_appended_log(path: &Path, offset: &mut u64) -> Result<String> {
 
 #[cfg(test)]
 mod log_tests {
-    use super::tail_lines;
+    use super::{read_log_end, tail_lines};
+
+    #[test]
+    fn log_end_skips_the_partial_first_line_of_a_large_log() {
+        let dir = tempfile::tempdir().unwrap();
+        let log = dir.path().join("rms.log");
+        let text = (0..5_000)
+            .map(|n| format!("line {n} {}", "x".repeat(40)))
+            .collect::<Vec<_>>()
+            .join("\n");
+        std::fs::write(&log, &text).unwrap();
+        let (end, length) = read_log_end(&log).unwrap();
+        assert_eq!(length, text.len() as u64);
+        assert!(end.starts_with("line "));
+        assert_eq!(tail_lines(&end, 1), text.lines().last().unwrap());
+    }
 
     #[test]
     fn tail_lines_keeps_the_last_lines_in_original_order() {

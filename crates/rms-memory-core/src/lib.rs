@@ -4,6 +4,7 @@ pub mod document;
 pub mod frontmatter;
 pub mod git_context;
 pub mod link;
+pub mod managed_rules;
 pub mod path_policy;
 pub mod secrets;
 pub mod vault_links;

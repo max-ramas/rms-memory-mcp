@@ -662,6 +662,38 @@ impl Store {
         Ok(())
     }
 
+    /// Vault paths whose indexed chunks still contain an injected rule marker.
+    pub async fn paths_containing_managed_rules(&self, table: &Table) -> Result<Vec<String>> {
+        use futures::stream::StreamExt;
+        use lancedb::query::{ExecutableQuery, QueryBase};
+        use rms_memory_core::managed_rules::{END_MARKER, START_MARKER};
+
+        let mut stream = table
+            .query()
+            .only_if(format!(
+                "text LIKE '%{}%' OR text LIKE '%{}%'",
+                escape_filter(START_MARKER),
+                escape_filter(END_MARKER)
+            ))
+            .select(lancedb::query::Select::Columns(vec!["path".to_string()]))
+            .execute()
+            .await?;
+        let mut paths = std::collections::BTreeSet::new();
+        while let Some(batch) = stream.next().await {
+            let batch = batch?;
+            let column = batch
+                .column_by_name("path")
+                .context("Missing 'path' column")?
+                .as_any()
+                .downcast_ref::<lancedb::arrow::arrow_array::StringArray>()
+                .context("'path' column is not a StringArray")?;
+            for i in 0..batch.num_rows() {
+                paths.insert(column.value(i).to_string());
+            }
+        }
+        Ok(paths.into_iter().collect())
+    }
+
     pub async fn get_all_document_timestamps(
         &self,
         table: &Table,

@@ -290,7 +290,7 @@ rms-memory embedding use bge-m3              # or: ollama:nomic-embed-text (loca
 | `rms-memory file-history catch-up\|reindex\|query` | Derived `code_path` git file→commit cache (Lance). `reindex` requires `--project`. Prefer MCP `rms_file_history` for agents. |
 | `rms-memory features` | Live GUI/AI status banner + capability catalog (`GUI`/`AI` tags; soft yellow when GUI absent, gray when installed). Informational only — MCP core is never paywalled. |
 | `rms-memory graph status\|ensure\|neighbors\|path\|snapshot\|export-dot\|…` | Durable knowledge graph (same actions as MCP `rms_graph`). Mutations require `--project`. |
-| `rms-memory log` | Tails the telemetry log (`~/.rms-memory/rms.log`). |
+| `rms-memory log` | Tails the telemetry log (`~/.rms-memory/rms.log`; moved to `rms.log.1` when a process starts and it exceeds 20 MB). |
 | `rms-memory export-llms` | Compiles the current vault into a single `llms.txt` payload. |
 | `rms-memory projects list` | Lists registered project keys and their code/vault paths. |
 | `rms-memory projects locate --project <key>` | Resolves one registered project key. |
