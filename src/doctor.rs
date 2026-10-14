@@ -37,7 +37,7 @@ pub struct DiagnoseOptions {
 pub async fn diagnose(workspace: &Workspace, options: DiagnoseOptions) -> Result<DoctorReport> {
     let mut checks = Vec::with_capacity(8);
     let mut issue_count = 0u32;
-    let read_only = workspace.ensure_writable().is_err();
+    let read_only = workspace.is_read_only().unwrap_or(false);
     if options.repair_frontmatter {
         workspace.ensure_writable()?;
     }
@@ -137,6 +137,13 @@ pub async fn diagnose(workspace: &Workspace, options: DiagnoseOptions) -> Result
             .into_iter()
             .map(|p| format!("repaired frontmatter ids: {p}"))
             .collect();
+        if !issues.is_empty() {
+            notes.push(if read_only {
+                "notes with invalid frontmatter are indexed as plain text".into()
+            } else {
+                "notes with invalid frontmatter are indexed as plain text; `rms-memory doctor --repair-frontmatter` fixes duplicate id keys".into()
+            });
+        }
         notes.extend(missing_id_notes(&missing_ids));
         checks.push(DoctorCheck {
             id: 2,
@@ -169,7 +176,22 @@ pub async fn diagnose(workspace: &Workspace, options: DiagnoseOptions) -> Result
     // 4. LanceDB store
     {
         let mut issues = Vec::new();
-        let mut notes = Vec::new();
+        let in_use = rms_memory_index::embedding::active();
+        let mut notes = vec![format!(
+            "embedding model: {} ({} dimensions)",
+            in_use.id, in_use.dimension
+        )];
+        match rms_memory_index::embedding::configured() {
+            Ok(configured) if configured.id != in_use.id => notes.push(format!(
+                "configured embedding model is {}; restart this process to use it",
+                configured.id
+            )),
+            Ok(_) => {}
+            Err(error) => issues.push(format!(
+                "configured embedding model is invalid, using {}: {error:#}",
+                in_use.id
+            )),
+        }
         match rms_memory_index::store::Store::for_workspace(workspace).await {
             Ok(store) => {
                 let inspection = rms_memory_index::index_lock::inspect(&store.storage_path);
@@ -229,6 +251,7 @@ pub async fn diagnose(workspace: &Workspace, options: DiagnoseOptions) -> Result
     // 5. Wiki index isolation
     {
         let mut issues = Vec::new();
+        let mut notes = Vec::new();
         match rms_memory_index::store::Store::for_workspace(workspace).await {
             Ok(store) => {
                 let leaked_vault = match store.open_table().await {
@@ -267,6 +290,9 @@ pub async fn diagnose(workspace: &Workspace, options: DiagnoseOptions) -> Result
                 for path in leaked_code {
                     issues.push(format!("wiki path in code index: {path}"));
                 }
+                if !issues.is_empty() {
+                    notes.push("a normal sync purges these records; `rms-memory reindex --code` rebuilds code memory now".into());
+                }
             }
             Err(e) => issues.push(format!("cannot verify wiki isolation: {e}")),
         }
@@ -276,7 +302,7 @@ pub async fn diagnose(workspace: &Workspace, options: DiagnoseOptions) -> Result
             name: "wiki_index_isolation".into(),
             ok: issues.is_empty(),
             issues,
-            notes: vec![],
+            notes,
         });
     }
 
@@ -284,37 +310,41 @@ pub async fn diagnose(workspace: &Workspace, options: DiagnoseOptions) -> Result
     {
         let mut issues = Vec::new();
         let mut notes = Vec::new();
-        if let Ok(registry) = rms_memory_core::config_manager::load_registry() {
-            let vault_canon =
-                std::fs::canonicalize(&workspace.root).unwrap_or_else(|_| workspace.root.clone());
-            let vault_str = vault_canon.to_string_lossy().to_string();
-            let mut found = false;
-            for proj in registry.projects.values() {
-                if let Ok(p) = std::fs::canonicalize(&proj.vault_path)
-                    && p.to_string_lossy() == vault_str
+        match rms_memory_core::config_manager::load_registry() {
+            Ok(registry) => {
+                use rms_memory_core::workspace::canonical_or_given;
+                let vault = canonical_or_given(&workspace.root);
+                let code = canonical_or_given(&workspace.code_path);
+                if registry
+                    .projects
+                    .values()
+                    .any(|project| canonical_or_given(Path::new(&project.vault_path)) == vault)
                 {
-                    found = true;
                     notes.push("project registered in registry.toml".into());
-                    break;
+                } else if registry
+                    .projects
+                    .values()
+                    .any(|project| canonical_or_given(Path::new(&project.code_path)) == code)
+                {
+                    notes.push("project matched by code_path".into());
+                } else {
+                    issues.push("workspace not found in registry.toml; run `rms-memory projects migrate` if the repository was moved or renamed".into());
+                }
+                let basename = workspace
+                    .code_path
+                    .file_name()
+                    .and_then(|name| name.to_str())
+                    .unwrap_or_default();
+                if let Some(key) = workspace.project_key()
+                    && !read_only
+                    && !rms_memory_core::workspace::Registry::keys_equivalent(basename, &key)
+                {
+                    notes.push(format!(
+                        "folder name `{basename}` differs from project key `{key}`; `rms-memory projects migrate` realigns them (never recreate .git)"
+                    ));
                 }
             }
-            if !found {
-                for proj in registry.projects.values() {
-                    if let Ok(p) = std::fs::canonicalize(&proj.code_path)
-                        && p == std::fs::canonicalize(&workspace.code_path)
-                            .unwrap_or_else(|_| workspace.code_path.clone())
-                    {
-                        found = true;
-                        notes.push("project matched by code_path".into());
-                        break;
-                    }
-                }
-            }
-            if !found {
-                issues.push("workspace not found in registry.toml".into());
-            }
-        } else {
-            issues.push("cannot load registry.toml".into());
+            Err(error) => issues.push(format!("cannot load registry.toml: {error:#}")),
         }
         issue_count += issues.len() as u32;
         checks.push(DoctorCheck {
@@ -415,12 +445,17 @@ pub async fn diagnose(workspace: &Workspace, options: DiagnoseOptions) -> Result
             .map(|(path, found)| format!("{path}: {found}"))
             .collect();
         issue_count += issues.len() as u32;
+        let notes = if issues.is_empty() {
+            Vec::new()
+        } else {
+            vec!["values are not shown and nothing is changed; revoke the keys and edit the notes (git history keeps old values)".into()]
+        };
         checks.push(DoctorCheck {
             id: 8,
             name: "credentials".into(),
             ok: issues.is_empty(),
             issues,
-            notes: vec![],
+            notes,
         });
     }
 
@@ -463,7 +498,7 @@ pub fn secrets_in_vault(
 /// new rows in; uncovered rows mean a running or interrupted sync, or a sync
 /// or reindex by a release before 1.3.0 (which built the index on an empty
 /// table). Returns `(is_issue, message)`.
-pub(crate) async fn fts_coverage_finding(
+async fn fts_coverage_finding(
     store: &rms_memory_index::store::Store,
     writer_active: bool,
 ) -> Option<(bool, String)> {
@@ -487,7 +522,7 @@ pub(crate) async fn fts_coverage_finding(
         )),
         Ok(None) if rows > 0 && !writer_active => Some((
             true,
-            "vault table has no full-text index; run `rms-memory reindex`".to_string(),
+            "vault table has no full-text index; run `rms-memory sync` to build it".to_string(),
         )),
         Ok(None) => None,
         Err(error) => Some((
@@ -499,9 +534,7 @@ pub(crate) async fn fts_coverage_finding(
 
 /// Vault-relative note paths a `supersedes` path may name, including the
 /// original paths of notes archived under `artifacts/pruned/<date>/`.
-pub(crate) fn supersession_paths(
-    relative_paths: impl IntoIterator<Item = String>,
-) -> HashSet<String> {
+fn supersession_paths(relative_paths: impl IntoIterator<Item = String>) -> HashSet<String> {
     let mut known = HashSet::new();
     for path in relative_paths {
         if let Some(original) = path
@@ -518,7 +551,7 @@ pub(crate) fn supersession_paths(
 
 /// `rms_write` stores the predecessor's id; hand-written notes often name
 /// its vault-relative path instead (optionally as `path:<path>`).
-pub(crate) fn supersession_target_exists(
+fn supersession_target_exists(
     target: &str,
     id_exists: impl Fn(&str) -> bool,
     path_exists: impl Fn(&str) -> bool,
@@ -550,7 +583,7 @@ fn capped_notes(header: String, items: impl ExactSizeIterator<Item = String>) ->
 
 /// Notes without an `id` are valid (indexed by path), so they are reported
 /// as information rather than issues.
-pub fn missing_id_notes(missing: &[String]) -> Vec<String> {
+fn missing_id_notes(missing: &[String]) -> Vec<String> {
     capped_notes(
         format!(
             "{} note(s) have no frontmatter `id` and are indexed by path; an `id` only keeps links stable across renames",
@@ -562,7 +595,7 @@ pub fn missing_id_notes(missing: &[String]) -> Vec<String> {
 
 /// Unresolved `[[wikilinks]]` are placeholders for notes not written yet in
 /// Obsidian, so they are information rather than issues.
-pub fn unresolved_wikilink_notes(links: &[BrokenLink]) -> Vec<String> {
+fn unresolved_wikilink_notes(links: &[BrokenLink]) -> Vec<String> {
     capped_notes(
         format!(
             "{} [[wikilink(s)]] point to notes that do not exist yet",
@@ -576,16 +609,16 @@ pub fn unresolved_wikilink_notes(links: &[BrokenLink]) -> Vec<String> {
 
 /// A link that resolves to neither a vault note nor an existing file.
 #[derive(Debug, Clone)]
-pub struct BrokenLink {
-    pub source: String,
+struct BrokenLink {
+    source: String,
     /// Target as written.
-    pub target: String,
+    target: String,
     /// `[[wikilink]]` / `![[embed]]`. Obsidian treats an unresolved wikilink as
     /// a note that does not exist yet, so these are informational.
-    pub wiki: bool,
+    wiki: bool,
 }
 
-pub fn broken_links(workspace: &Workspace, files: &[std::path::PathBuf]) -> Vec<BrokenLink> {
+fn broken_links(workspace: &Workspace, files: &[std::path::PathBuf]) -> Vec<BrokenLink> {
     use rms_memory_core::vault_links::{LinkResolution, LinkSyntax, VaultLinkIndex};
     let documents: Vec<_> = files
         .iter()
@@ -617,7 +650,7 @@ pub fn broken_links(workspace: &Workspace, files: &[std::path::PathBuf]) -> Vec<
 }
 
 /// Active checkpoints nobody touched for a while; details via `rms_hygiene`.
-pub fn stale_checkpoint_notes(workspace: &Workspace) -> Vec<String> {
+fn stale_checkpoint_notes(workspace: &Workspace) -> Vec<String> {
     crate::tools::hygiene::stale_checkpoints(&workspace.root, Utc::now())
         .unwrap_or_default()
         .into_iter()
@@ -631,6 +664,7 @@ pub fn stale_checkpoint_notes(workspace: &Workspace) -> Vec<String> {
 }
 
 pub fn parse_fm_datetime(raw: &str) -> Option<DateTime<Utc>> {
+    let raw = raw.trim();
     DateTime::parse_from_rfc3339(raw)
         .map(|dt| dt.with_timezone(&Utc))
         .ok()

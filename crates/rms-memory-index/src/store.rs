@@ -10,6 +10,20 @@ use lancedb::table::Table;
 /// Vector size of the default embedding model; a store's own size is `Store::dimension`.
 pub const VECTOR_DIMENSION: usize = 384;
 
+/// Deletes rows whose `column` is one of `values` in as few commits as
+/// possible, so readers never see a half-emptied table.
+async fn delete_where_in(table: &Table, column: &str, values: &[String]) -> Result<()> {
+    for values in values.chunks(500) {
+        let list = values
+            .iter()
+            .map(|value| format!("'{}'", escape_filter(value)))
+            .collect::<Vec<_>>()
+            .join(", ");
+        table.delete(&format!("{column} IN ({list})")).await?;
+    }
+    Ok(())
+}
+
 fn escape_filter(s: &str) -> String {
     s.replace('\'', "''")
 }
@@ -254,10 +268,21 @@ impl Store {
 
     /// Fold rows written since an index was built into it. Unindexed rows
     /// stay searchable by brute force, but slower and, for full-text search,
-    /// without relevance order.
+    /// without relevance order. A full-text index that an interrupted full
+    /// reindex never built is created here.
     pub async fn index_new_rows(&self, table: &Table) -> Result<()> {
+        let indices = table.list_indices().await?;
+        if !indices
+            .iter()
+            .any(|index| matches!(index.index_type, lancedb::index::IndexType::FTS))
+        {
+            if table.count_rows(None).await? > 0 {
+                self.create_fts_index(table).await?;
+            }
+            return Ok(());
+        }
         let mut pending = false;
-        for index in table.list_indices().await? {
+        for index in indices {
             if let Some(stats) = table.index_stats(&index.name).await?
                 && stats.num_unindexed_rows > 0
             {
@@ -391,20 +416,25 @@ impl Store {
     }
 
     pub async fn open_or_create_code_table(&self) -> Result<(Table, bool)> {
-        let name = self.code_table_name();
-        match self.db.open_table(&name).execute().await {
+        self.open_or_create(&self.code_table_name(), self.code_schema())
+            .await
+    }
+
+    /// Opens table `name`, creating it empty when missing; a process that
+    /// creates it at the same moment is tolerated. `true` when created here.
+    pub(crate) async fn open_or_create(
+        &self,
+        name: &str,
+        schema: Arc<ArrowSchema>,
+    ) -> Result<(Table, bool)> {
+        match self.db.open_table(name).execute().await {
             Ok(table) => Ok((table, false)),
-            Err(open_error) => match self
-                .db
-                .create_empty_table(&name, self.code_schema())
-                .execute()
-                .await
-            {
+            Err(open_error) => match self.db.create_empty_table(name, schema).execute().await {
                 Ok(table) => Ok((table, true)),
                 Err(create_error) => Ok((
-                    self.db.open_table(&name).execute().await.with_context(|| {
+                    self.db.open_table(name).execute().await.with_context(|| {
                         format!(
-                            "could not open code table after create race; initial open error: {open_error}; create error: {create_error}"
+                            "could not open table {name} after create race; open error: {open_error}; create error: {create_error}"
                         )
                     })?,
                     false,
@@ -546,12 +576,7 @@ impl Store {
     }
 
     pub async fn delete_code_segments(&self, table: &Table, ids: &[String]) -> Result<()> {
-        for id in ids {
-            table
-                .delete(&format!("id = '{}'", escape_filter(id)))
-                .await?;
-        }
-        Ok(())
+        delete_where_in(table, "id", ids).await
     }
 
     /// Remove every derived code segment belonging to the supplied relative paths.
@@ -560,12 +585,7 @@ impl Store {
             Ok(table) => table,
             Err(_) => return Ok(()),
         };
-        for path in paths {
-            table
-                .delete(&format!("file_path = '{}'", escape_filter(path)))
-                .await?;
-        }
-        Ok(())
+        delete_where_in(&table, "file_path", paths).await
     }
 
     pub async fn create_code_fts_index(&self, table: &Table) -> Result<()> {
@@ -661,25 +681,9 @@ impl Store {
         Ok(())
     }
 
-    pub async fn delete_document(&self, table: &Table, document_id: &str) -> Result<()> {
-        table
-            .delete(&format!("document_id = '{}'", escape_filter(document_id)))
-            .await?;
-        Ok(())
-    }
-
-    /// Delete every chunk of `document_ids` in as few commits as possible, so
-    /// readers do not see a half-emptied table while many notes are replaced.
+    /// Delete every chunk of `document_ids`.
     pub async fn delete_documents(&self, table: &Table, document_ids: &[String]) -> Result<()> {
-        for ids in document_ids.chunks(500) {
-            let list = ids
-                .iter()
-                .map(|id| format!("'{}'", escape_filter(id)))
-                .collect::<Vec<_>>()
-                .join(", ");
-            table.delete(&format!("document_id IN ({list})")).await?;
-        }
-        Ok(())
+        delete_where_in(table, "document_id", document_ids).await
     }
 
     /// Remove persisted chunks by their relative Vault path.
@@ -687,12 +691,7 @@ impl Store {
     /// Path-based deletion is required for namespace migrations because legacy
     /// Wiki records can share a frontmatter ID with their canonical source.
     pub async fn delete_document_paths(&self, table: &Table, paths: &[String]) -> Result<()> {
-        for path in paths {
-            table
-                .delete(&format!("path = '{}'", escape_filter(path)))
-                .await?;
-        }
-        Ok(())
+        delete_where_in(table, "path", paths).await
     }
 
     /// Vault paths whose indexed chunks still contain an injected rule marker.
@@ -1726,5 +1725,27 @@ mod tests {
                 .all(|pair| pair[0].score.unwrap() <= pair[1].score.unwrap()),
             "{results:?}"
         );
+    }
+
+    #[tokio::test]
+    async fn a_missing_full_text_index_is_built_by_the_next_sync() {
+        let directory = tempfile::tempdir().unwrap();
+        let store = Store::init(&directory.path().to_string_lossy(), "memory")
+            .await
+            .unwrap();
+        let table = store.create_table().await.unwrap();
+        store.index_new_rows(&table).await.unwrap();
+        assert_eq!(store.fts_coverage(&table).await.unwrap(), None);
+
+        // A full reindex killed after its insert, before the index was built.
+        store
+            .insert_batch(
+                &table,
+                vec![chunk("notes/a.md", "harlem shake", Some("active"), None)],
+            )
+            .await
+            .unwrap();
+        store.index_new_rows(&table).await.unwrap();
+        assert_eq!(store.fts_coverage(&table).await.unwrap(), Some((1, 0)));
     }
 }

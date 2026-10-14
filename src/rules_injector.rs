@@ -31,8 +31,8 @@ pub fn registered_project_key(code_path: &Path) -> Option<String> {
 }
 
 pub fn inject_rules(project_root: &Path, options: InjectOptions) -> Result<()> {
-    let canonical_root =
-        fs::canonicalize(project_root).unwrap_or_else(|_| project_root.to_path_buf());
+    let canonical_root = crate::workspace::canonical_or_given(project_root);
+    rms_memory_core::workspace::ensure_vault_writable(&canonical_root)?;
     let project_key = registered_project_key(project_root)
         .or_else(|| {
             canonical_root

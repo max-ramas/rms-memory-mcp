@@ -234,6 +234,7 @@ impl DoctorArgs {
                     "Repair path is outside every registered RMS Memory vault"
                 ));
             }
+            crate::workspace::ensure_vault_writable_in(&registry, &path)?;
 
             if crate::document::Document::repair_duplicate_ids(&path)? {
                 println!("Repaired frontmatter IDs: {}", path.display());
@@ -245,470 +246,14 @@ impl DoctorArgs {
 
         let current_dir = std::env::current_dir()?;
         let workspace = Workspace::discover_with_scope(scope.as_deref(), &current_dir, None)?;
-        println!("Doctor checks for {:?}", workspace.root);
-        let embedding = crate::embedding::active();
-        println!(
-            "Embedding model: {} ({} dimensions)",
-            embedding.id, embedding.dimension
-        );
-        println!("{}", "─".repeat(60));
-
-        let mut issues = 0u32;
-        if let Err(error) = crate::embedding::configured() {
-            issues += 1;
-            println!("  ⚠ Configured embedding model is invalid, using the default: {error:#}");
-        }
-
-        // 1. Check vault directory structure
-        if self.repair_frontmatter {
-            workspace.ensure_writable()?;
-        }
-        let read_only = workspace.ensure_writable().is_err();
-        println!("\n[1/8] Vault directory structure...");
-        let required_dirs = [
-            "rules",
-            "decisions",
-            "architecture",
-            "artifacts",
-            "docs",
-            "api",
-        ];
-        for dir in &required_dirs {
-            let p = workspace.root.join(dir);
-            if p.exists() {
-                println!("  ✅ {}/ exists", dir);
-            } else if read_only {
-                println!("  ℹ️  {}/ absent (read-only vault, not created)", dir);
-            } else {
-                println!("  ⚠️  {}/ missing", dir);
-                issues += 1;
-            }
-        }
-
-        // 2. Check for files missing document IDs
-        println!("\n[2/8] Document IDs...");
-        let files = workspace.find_markdown_files().unwrap_or_default();
-        let mut missing_ids = Vec::new();
-        let mut invalid_frontmatter = Vec::new();
-        for f in &files {
-            match crate::document::Document::parse(f) {
-                Ok(doc) => {
-                    if doc
-                        .frontmatter
-                        .as_ref()
-                        .and_then(|fm| fm.id.as_ref())
-                        .is_none()
-                    {
-                        if self.repair_frontmatter {
-                            match crate::document::Document::repair_duplicate_ids(f) {
-                                Ok(true) => {
-                                    println!("  🔧 Repaired frontmatter IDs: {}", f.display());
-                                    continue;
-                                }
-                                Ok(false) => {}
-                                Err(repair_error) => {
-                                    invalid_frontmatter.push(format!(
-                                        "{}: valid frontmatter is missing an ID (repair failed: {:#})",
-                                        f.display(),
-                                        repair_error
-                                    ));
-                                    continue;
-                                }
-                            }
-                        }
-                        missing_ids.push(
-                            f.strip_prefix(&workspace.root)
-                                .unwrap_or(f)
-                                .to_string_lossy()
-                                .replace('\\', "/"),
-                        );
-                    }
-                }
-                Err(error) => {
-                    if self.repair_frontmatter {
-                        match crate::document::Document::repair_duplicate_ids(f) {
-                            Ok(true) => {
-                                println!("  🔧 Repaired frontmatter IDs: {}", f.display());
-                                continue;
-                            }
-                            Ok(false) => {}
-                            Err(repair_error) => {
-                                invalid_frontmatter.push(format!(
-                                    "{}: {:#} (repair failed: {:#})",
-                                    f.display(),
-                                    error,
-                                    repair_error
-                                ));
-                                continue;
-                            }
-                        }
-                    }
-                    invalid_frontmatter.push(format!("{}: {:#}", f.display(), error));
-                }
-            }
-        }
-        if missing_ids.is_empty() {
-            println!("  ✅ All {} documents have IDs", files.len());
-        } else {
-            for note in crate::doctor::missing_id_notes(&missing_ids) {
-                println!("  ℹ️  {note}");
-            }
-        }
-        if !invalid_frontmatter.is_empty() {
-            println!(
-                "  ❌ {} files have invalid YAML frontmatter:",
-                invalid_frontmatter.len()
-            );
-            for error in &invalid_frontmatter {
-                println!("     - {}", error);
-            }
-            println!("     These notes are indexed as plain text without their frontmatter.");
-            if !read_only {
-                println!(
-                    "     Run `rms-memory doctor --repair-frontmatter` for duplicate id keys."
-                );
-            }
-            issues += invalid_frontmatter.len() as u32;
-        }
-
-        // 3. Check for broken Markdown links
-        println!("\n[3/8] Cross-document links...");
-        let (wiki_links, broken_links): (Vec<_>, Vec<_>) =
-            crate::doctor::broken_links(&workspace, &files)
-                .into_iter()
-                .partition(|link| link.wiki);
-        if broken_links.is_empty() {
-            println!("  ✅ No broken cross-document links found");
-        } else {
-            println!("  ⚠️  {} broken links:", broken_links.len());
-            for link in &broken_links {
-                println!("     - {} → {} (not found)", link.source, link.target);
-            }
-            issues += broken_links.len() as u32;
-        }
-        for note in crate::doctor::unresolved_wikilink_notes(&wiki_links) {
-            println!("  ℹ️  {note}");
-        }
-
-        // 4. Check LanceDB store
-        println!("\n[4/8] LanceDB store...");
-        match crate::store::Store::for_workspace(&workspace).await {
-            Ok(store) => {
-                let inspection = crate::index_lock::inspect(&store.storage_path);
-                let writer_active =
-                    matches!(inspection, Ok(crate::index_lock::LockInspection::Active(_)));
-                match inspection {
-                    Ok(crate::index_lock::LockInspection::Active(Some(owner))) => println!(
-                        "  ℹ️  Index writer active: PID {} (since {})",
-                        owner.pid, owner.acquired_at
-                    ),
-                    Ok(crate::index_lock::LockInspection::Active(None)) => {
-                        println!("  ℹ️  Index writer active (owner metadata unavailable)")
-                    }
-                    Ok(crate::index_lock::LockInspection::StaleMetadataCleared(owner)) => println!(
-                        "  🔧 Cleared stale lock metadata for PID {} (recorded {})",
-                        owner.pid, owner.acquired_at
-                    ),
-                    Ok(crate::index_lock::LockInspection::Unlocked) => {
-                        println!("  ✅ Index writer lock is free")
-                    }
-                    Err(e) => {
-                        println!("  ⚠️  Cannot inspect index writer lock: {}", e);
-                        issues += 1;
-                    }
-                }
-                match store.open_table().await {
-                    Ok(_table) => {
-                        println!("  ✅ LanceDB table accessible");
-                        match crate::indexer::vault_freshness(&workspace, &store).await {
-                            Ok(freshness) => println!("  ℹ️  {}", freshness.describe()),
-                            Err(e) => println!("  ℹ️  index freshness unavailable: {e:#}"),
-                        }
-                        match crate::doctor::fts_coverage_finding(&store, writer_active).await {
-                            Some((true, message)) => {
-                                println!("  ⚠️  {message}");
-                                issues += 1;
-                            }
-                            Some((false, message)) => println!("  ℹ️  {message}"),
-                            None => {}
-                        }
-                    }
-                    Err(e) => {
-                        println!("  ⚠️  LanceDB table not accessible: {}", e);
-                        issues += 1;
-                    }
-                }
-            }
-            Err(e) => {
-                println!("  ⚠️  Cannot connect to LanceDB: {}", e);
-                issues += 1;
-            }
-        }
-
-        // 5. Verify that GUI Wiki output has not leaked into canonical memory.
-        println!("\n[5/8] Wiki index isolation...");
-        match crate::store::Store::for_workspace(&workspace).await {
-            Ok(store) => {
-                let leaked_vault = match store.open_table().await {
-                    Ok(table) => store
-                        .get_file_timestamps(&table)
-                        .await
-                        .map(|paths| {
-                            paths
-                                .into_keys()
-                                .filter(|path| {
-                                    crate::path_policy::is_vault_wiki_relative_path(path)
-                                })
-                                .collect::<Vec<_>>()
-                        })
-                        .unwrap_or_default(),
-                    Err(_) => Vec::new(),
-                };
-                let leaked_code = store
-                    .indexed_code_file_paths()
-                    .await
-                    .map(|paths| {
-                        paths
-                            .into_iter()
-                            .filter(|path| {
-                                crate::path_policy::is_vault_wiki_path(
-                                    &workspace.root,
-                                    &workspace.code_path.join(path),
-                                )
-                            })
-                            .collect::<Vec<_>>()
-                    })
-                    .unwrap_or_default();
-                if leaked_vault.is_empty() && leaked_code.is_empty() {
-                    println!("  ✅ wiki/** is excluded from canonical Vault and code indexes");
-                } else {
-                    println!(
-                        "  ⚠️  Legacy Wiki records found: {} Vault path(s), {} code path(s)",
-                        leaked_vault.len(),
-                        leaked_code.len()
-                    );
-                    for path in leaked_vault.iter().chain(leaked_code.iter()) {
-                        println!("     - {path}");
-                    }
-                    println!(
-                        "     A normal sync purges these records; run `rms-memory reindex --code` to rebuild code memory immediately."
-                    );
-                    issues += (leaked_vault.len() + leaked_code.len()) as u32;
-                }
-            }
-            Err(error) => {
-                println!("  ⚠️  Cannot verify Wiki isolation: {error}");
-                issues += 1;
-            }
-        }
-
-        // 6. Check registry coherence
-        println!("\n[6/8] Registry coherence...");
-        if let Ok(registry) = crate::config_manager::load_registry() {
-            let vault_canon =
-                std::fs::canonicalize(&workspace.root).unwrap_or_else(|_| workspace.root.clone());
-            let vault_str = vault_canon.to_string_lossy().to_string();
-            let mut found = false;
-            for proj in registry.projects.values() {
-                if let Ok(p) = std::fs::canonicalize(&proj.vault_path)
-                    && p.to_string_lossy() == vault_str
-                {
-                    found = true;
-                    println!("  ✅ Project registered in registry.toml");
-                    break;
-                }
-            }
-            if !found {
-                // Try by code_path
-                let code_canon = std::fs::canonicalize(&workspace.code_path)
-                    .unwrap_or_else(|_| workspace.code_path.clone());
-                let code_str = code_canon.to_string_lossy().to_string();
-                for proj in registry.projects.values() {
-                    if proj.code_path == code_str {
-                        found = true;
-                        println!("  ✅ Found by code_path: {}", proj.code_path);
-                        break;
-                    }
-                }
-            }
-            if !found {
-                println!("  ⚠️  Project not found in registry — may be orphaned");
-                println!(
-                    "     Run `rms-memory projects migrate` if the repository was moved or renamed."
-                );
-                issues += 1;
-            }
-
-            if let Some(key) = workspace.project_key() {
-                let basename = workspace
-                    .code_path
-                    .file_name()
-                    .and_then(|name| name.to_str())
-                    .unwrap_or_default();
-                if !crate::workspace::Registry::keys_equivalent(basename, &key) {
-                    println!("  ⚠️  Folder basename '{basename}' differs from project key '{key}'");
-                    println!(
-                        "     This is informational only. Use `rms-memory projects migrate` to realign paths/keys; do not recreate .git."
-                    );
-                    issues += 1;
-                }
-            }
-        } else {
-            println!("  ⚠️  Cannot read registry.toml");
-            issues += 1;
-        }
-
-        // 7. Temporal freshness (valid_until / learned_at)
-        println!("\n[7/8] Knowledge freshness...");
-        let now = chrono::Utc::now();
-        let mut expired = Vec::new();
-        let mut stale_learned = Vec::new();
-        let mut broken_supersession = Vec::new();
-        let mut id_to_path: std::collections::HashMap<String, String> =
-            std::collections::HashMap::new();
-        for f in &files {
-            if let Ok(doc) = crate::document::Document::parse(f) {
-                let rel = f
-                    .strip_prefix(&workspace.root)
-                    .unwrap_or(f)
-                    .to_string_lossy()
-                    .to_string();
-                if let Some(fm) = &doc.frontmatter {
-                    if let Some(id) = &fm.id {
-                        id_to_path.insert(id.clone(), rel.clone());
-                    }
-                    if let Some(until) = fm.valid_until.as_deref()
-                        && let Some(ts) = parse_fm_datetime(until)
-                        && ts < now
-                    {
-                        expired.push(format!("{rel} (valid_until={until})"));
-                    }
-                    if fm.valid_until.is_none()
-                        && let Some(learned) = fm.learned_at.as_deref()
-                        && let Some(ts) = parse_fm_datetime(learned)
-                    {
-                        let age_days = (now - ts).num_days();
-                        if age_days > 365 {
-                            stale_learned.push(format!(
-                                "{rel} (learned_at={learned}, {age_days}d old; consider valid_until or supersede)"
-                            ));
-                        }
-                    }
-                    if fm
-                        .status
-                        .as_deref()
-                        .is_some_and(|s| s.eq_ignore_ascii_case("superseded"))
-                        && fm.superseded_by.is_none()
-                    {
-                        broken_supersession
-                            .push(format!("{rel} (status=superseded without superseded_by)"));
-                    }
-                }
-            }
-        }
-        let vault_paths = crate::doctor::supersession_paths(files.iter().map(|f| {
-            f.strip_prefix(&workspace.root)
-                .unwrap_or(f)
-                .to_string_lossy()
-                .replace('\\', "/")
-        }));
-        for f in &files {
-            if let Ok(doc) = crate::document::Document::parse(f) {
-                let Some(fm) = &doc.frontmatter else {
-                    continue;
-                };
-                let Some(target) = fm.supersedes.as_deref() else {
-                    continue;
-                };
-                if !crate::doctor::supersession_target_exists(
-                    target,
-                    |id| id_to_path.contains_key(id),
-                    |path| vault_paths.contains(path),
-                ) {
-                    let rel = f
-                        .strip_prefix(&workspace.root)
-                        .unwrap_or(f)
-                        .to_string_lossy();
-                    broken_supersession.push(format!(
-                        "{rel} (supersedes={target} matches no vault note id or path)"
-                    ));
-                }
-            }
-        }
-        if expired.is_empty() && stale_learned.is_empty() && broken_supersession.is_empty() {
-            println!("  ✅ No expired valid_until / stale learned_at / broken supersession links");
-        } else {
-            if !expired.is_empty() {
-                println!(
-                    "  ⚠️  {} document(s) past valid_until (excluded from recall, still on disk):",
-                    expired.len()
-                );
-                for line in &expired {
-                    println!("     - {line}");
-                }
-                issues += expired.len() as u32;
-            }
-            if !stale_learned.is_empty() {
-                println!(
-                    "  ℹ️  {} document(s) with learned_at older than 365d and no valid_until:",
-                    stale_learned.len()
-                );
-                for line in &stale_learned {
-                    println!("     - {line}");
-                }
-                // Informational only — do not inflate issue count.
-            }
-            if !broken_supersession.is_empty() {
-                println!(
-                    "  ⚠️  {} supersession link issue(s):",
-                    broken_supersession.len()
-                );
-                for line in &broken_supersession {
-                    println!("     - {line}");
-                }
-                issues += broken_supersession.len() as u32;
-            }
-        }
-
-        for note in crate::doctor::stale_checkpoint_notes(&workspace) {
-            println!("  ℹ️  {note}");
-        }
-
-        println!("\n[8/8] Credentials in notes...");
-        let secrets = crate::doctor::secrets_in_vault(&workspace, &files);
-        if secrets.is_empty() {
-            println!("  ✅ No provider tokens or private keys found in vault notes");
-        } else {
-            println!(
-                "  ⚠️  {} note(s) contain what looks like credentials (values not shown):",
-                secrets.len()
-            );
-            for (path, found) in &secrets {
-                println!("     - {path}: {found}");
-            }
-            println!(
-                "     Report only — nothing is changed. Revoke the keys, edit the notes; if the vault is in git, the old values stay in its history."
-            );
-            issues += secrets.len() as u32;
-        }
-
-        // Summary
-        println!("\n{}", "─".repeat(60));
-        if issues == 0 {
-            println!("✅ All checks passed. Vault is healthy.");
-        } else {
-            println!(
-                "⚠️  {} issue(s) found. Run `rms-memory reindex` or `rms-memory init` to repair.",
-                issues
-            );
-        }
-
-        let notices = tokio::task::spawn_blocking(crate::update_check::doctor_notices)
-            .await
-            .unwrap_or_default();
-        for notice in notices {
-            println!("\nℹ️  {notice}");
-        }
+        let report = crate::doctor::diagnose(
+            &workspace,
+            crate::doctor::DiagnoseOptions {
+                repair_frontmatter: self.repair_frontmatter,
+            },
+        )
+        .await?;
+        print_doctor_report(&report);
 
         let companion = crate::companion_status::detect();
         print!(
@@ -726,6 +271,9 @@ impl DoctorArgs {
             let project_key = self.project.clone().or_else(|| workspace.project_key());
 
             if let Some(key) = &project_key {
+                if self.apply {
+                    workspace.ensure_writable()?;
+                }
                 println!(
                     "\n[🔖] Stamp-project mode: project = '{key}'{}",
                     if self.apply {
@@ -735,7 +283,7 @@ impl DoctorArgs {
                     }
                 );
 
-                let files = workspace.find_markdown_files().unwrap_or_default();
+                let files = workspace.find_markdown_files()?;
                 let mut stamped = 0;
                 let mut skipped = 0;
 
@@ -747,38 +295,25 @@ impl DoctorArgs {
                         }
                     }
 
-                    match std::fs::read_to_string(f) {
-                        Ok(content) => {
-                            if content.contains(&format!("project: {}", key)) {
-                                skipped += 1;
-                                continue;
-                            }
-                            if self.apply {
-                                let new_content = if content.starts_with("---\n") {
-                                    content.replacen(
-                                        "---\n",
-                                        &format!("---\nproject: {}\n", key),
-                                        1,
-                                    )
-                                } else {
-                                    format!("---\nproject: {key}\n---\n\n{content}", key = key)
-                                };
-                                let bak = format!("{}.stamp-project.bak", f.to_string_lossy());
-                                let _ = std::fs::copy(f, &bak);
-                                if let Err(e) = std::fs::write(f, &new_content) {
-                                    eprintln!("  ❌ Failed to stamp {}: {}", f.display(), e);
-                                } else {
-                                    stamped += 1;
-                                    println!("  ✅ Stamped: {}", f.display());
-                                }
-                            } else {
-                                stamped += 1;
-                                println!("  [DRY-RUN] Would stamp: {}", f.display());
-                            }
+                    let stamp = |mapping: &mut serde_yaml::Mapping| {
+                        let project = serde_yaml::Value::from("project");
+                        if mapping.contains_key(&project) {
+                            return false;
                         }
-                        Err(e) => {
-                            eprintln!("  ❌ Cannot read {}: {}", f.display(), e);
+                        mapping.insert(project, key.as_str().into());
+                        true
+                    };
+                    match crate::frontmatter::update_file(f, self.apply, stamp) {
+                        Ok(true) if self.apply => {
+                            stamped += 1;
+                            println!("  ✅ Stamped: {}", f.display());
                         }
+                        Ok(true) => {
+                            stamped += 1;
+                            println!("  [DRY-RUN] Would stamp: {}", f.display());
+                        }
+                        Ok(false) => skipped += 1,
+                        Err(e) => eprintln!("  ❌ Skipped {}: {e:#}", f.display()),
                     }
                 }
 
@@ -889,12 +424,13 @@ fn read_log_end(path: &Path) -> Result<(String, u64)> {
     file.seek(std::io::SeekFrom::Start(start))?;
     let mut bytes = Vec::new();
     file.read_to_end(&mut bytes)?;
+    let end = start + bytes.len() as u64;
     let text = String::from_utf8_lossy(&bytes);
     let text = match (start > 0, text.find('\n')) {
         (true, Some(newline)) => text[newline + 1..].to_string(),
         _ => text.into_owned(),
     };
-    Ok((text, length))
+    Ok((text, end))
 }
 
 async fn read_appended_log(path: &Path, offset: &mut u64) -> Result<String> {
@@ -915,7 +451,7 @@ async fn read_appended_log(path: &Path, offset: &mut u64) -> Result<String> {
     file.seek(std::io::SeekFrom::Start(*offset)).await?;
     let mut bytes = Vec::with_capacity((length - *offset) as usize);
     file.read_to_end(&mut bytes).await?;
-    *offset = length;
+    *offset += bytes.len() as u64;
     Ok(String::from_utf8_lossy(&bytes).into_owned())
 }
 
@@ -1025,27 +561,30 @@ impl ExportLlmsArgs {
     }
 }
 
-fn parse_fm_datetime(raw: &str) -> Option<chrono::DateTime<chrono::Utc>> {
-    let trimmed = raw.trim();
-    if let Ok(dt) = chrono::DateTime::parse_from_rfc3339(trimmed) {
-        return Some(dt.with_timezone(&chrono::Utc));
+fn print_doctor_report(report: &crate::doctor::DoctorReport) {
+    println!("Doctor checks for {}", report.vault_root);
+    println!("{}", "─".repeat(60));
+    for check in &report.checks {
+        let mut title = check.name.replace('_', " ");
+        title[..1].make_ascii_uppercase();
+        println!("\n[{}/{}] {title}", check.id, report.checks.len());
+        if check.ok {
+            println!("  ✅ ok");
+        }
+        for issue in &check.issues {
+            println!("  ⚠️  {issue}");
+        }
+        for note in &check.notes {
+            println!("  ℹ️  {note}");
+        }
     }
-    if let Ok(naive) = chrono::NaiveDate::parse_from_str(trimmed, "%Y-%m-%d") {
-        return naive.and_hms_opt(0, 0, 0).map(|ndt| {
-            chrono::DateTime::<chrono::Utc>::from_naive_utc_and_offset(ndt, chrono::Utc)
-        });
+    println!("\n{}", "─".repeat(60));
+    if report.healthy {
+        println!("✅ All checks passed. Vault is healthy.");
+    } else {
+        println!("⚠️  {} issue(s) found.", report.issue_count);
     }
-    None
-}
-
-#[cfg(test)]
-mod freshness_tests {
-    use super::parse_fm_datetime;
-
-    #[test]
-    fn parses_rfc3339_and_date_only() {
-        assert!(parse_fm_datetime("2020-01-01T00:00:00Z").is_some());
-        assert!(parse_fm_datetime("2020-01-01").is_some());
-        assert!(parse_fm_datetime("not-a-date").is_none());
+    for notice in &report.notices {
+        println!("\nℹ️  {notice}");
     }
 }

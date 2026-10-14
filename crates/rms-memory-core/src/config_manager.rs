@@ -66,7 +66,7 @@ impl ConfigManager {
             .parent()
             .context("Configuration path has no parent")?
             .to_path_buf();
-        let watched_path = self.path.clone();
+        let watched_paths = [self.path.clone(), read_only_list_path(&self.path)];
         let manager = self.clone();
         let stop = Arc::new(AtomicBool::new(false));
         let thread_stop = stop.clone();
@@ -86,10 +86,9 @@ impl ConfigManager {
                 let Ok(event) = events_rx.recv_timeout(Duration::from_millis(100)) else {
                     continue;
                 };
-                if event
-                    .ok()
-                    .is_some_and(|event| event.paths.iter().any(|path| path == &watched_path))
-                    && let Err(error) = manager.reload()
+                if event.ok().is_some_and(|event| {
+                    event.paths.iter().any(|path| watched_paths.contains(path))
+                }) && let Err(error) = manager.reload()
                 {
                     tracing::warn!("Ignoring invalid external configuration update: {error}");
                 }
@@ -130,8 +129,10 @@ impl ConfigManager {
         let mut registry = registry;
         registry.schema_version = crate::workspace::REGISTRY_SCHEMA_VERSION;
         registry.config_revision = current.revision + 1;
-        write_atomic(&self.path, &registry)?;
+        // The list first: if the registry write then fails, a vault is at
+        // worst still treated as read-only.
         write_read_only_list(&self.path, &registry)?;
+        write_atomic(&self.path, &registry)?;
         lock.release()?;
 
         let snapshot = ConfigSnapshot {
@@ -199,9 +200,9 @@ fn read_only_list_path(config_path: &Path) -> PathBuf {
 }
 
 fn canonical_vault(vault_path: &str) -> String {
-    std::fs::canonicalize(vault_path)
-        .map(|path| path.to_string_lossy().into_owned())
-        .unwrap_or_else(|_| vault_path.to_string())
+    crate::workspace::canonical_or_given(Path::new(vault_path))
+        .to_string_lossy()
+        .into_owned()
 }
 
 fn apply_read_only_list(config_path: &Path, registry: &mut crate::workspace::Registry) {

@@ -15,22 +15,18 @@ impl RetrievalService {
     }
 
     pub async fn search_vault(&self, query: &str, limit: usize) -> Result<Vec<SearchResult>> {
-        let mut idx = self.indexer.lock().await;
-        let query_vector = idx
-            .embed_query(query)
+        let query_vector = Indexer::embed_query_shared(&self.indexer, query)
+            .await
             .map_err(|e| anyhow::anyhow!("Embed failed: {}", e))?;
-        drop(idx);
         self.store
             .search(query_vector, query.to_string(), limit, None)
             .await
     }
 
     pub async fn search_code(&self, query: &str, limit: usize) -> Result<Vec<CodeSearchResult>> {
-        let mut idx = self.indexer.lock().await;
-        let query_vector = idx
-            .embed_query(query)
+        let query_vector = Indexer::embed_query_shared(&self.indexer, query)
+            .await
             .map_err(|e| anyhow::anyhow!("Embed failed: {}", e))?;
-        drop(idx);
         self.store.search_code(query_vector, limit).await
     }
 }

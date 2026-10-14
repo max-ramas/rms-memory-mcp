@@ -6,10 +6,6 @@ fn is_safe_link(link: &str) -> bool {
     !link.is_empty() && !link.starts_with('/')
 }
 
-fn canonical_root(path: &Path) -> PathBuf {
-    std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf())
-}
-
 /// Canonicalize `path` (which may point at a symlink) and require the
 /// resulting real path to remain inside one of the allowed roots.
 fn canonicalize_inside_allowed(path: &Path, allowed_roots: &[PathBuf]) -> Result<PathBuf> {
@@ -25,9 +21,9 @@ fn canonicalize_inside_allowed(path: &Path, allowed_roots: &[PathBuf]) -> Result
 }
 
 fn allowed_roots(vault_root: &Path, code_path: Option<&Path>) -> Vec<PathBuf> {
-    let mut roots = vec![canonical_root(vault_root)];
+    let mut roots = vec![crate::workspace::canonical_or_given(vault_root)];
     if let Some(code_path) = code_path {
-        roots.push(canonical_root(code_path));
+        roots.push(crate::workspace::canonical_or_given(code_path));
     }
     roots
 }

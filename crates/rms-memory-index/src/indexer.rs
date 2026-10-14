@@ -52,15 +52,11 @@ pub enum EmbedderRef<'a> {
 impl EmbedderRef<'_> {
     pub async fn embed(&mut self, texts: &[String]) -> Result<Vec<Vec<f32>>> {
         match self {
-            Self::Exclusive(indexer) => indexer.embed(texts),
-            Self::Shared(indexer) => indexer.lock().await.embed(texts),
-        }
-    }
-
-    pub fn reborrow(&mut self) -> EmbedderRef<'_> {
-        match self {
-            Self::Exclusive(indexer) => EmbedderRef::Exclusive(indexer),
-            Self::Shared(indexer) => EmbedderRef::Shared(indexer),
+            Self::Exclusive(indexer) => off_async_workers(|| indexer.embed(texts)),
+            Self::Shared(indexer) => {
+                let mut indexer = indexer.lock().await;
+                off_async_workers(|| indexer.embed(texts))
+            }
         }
     }
 }
@@ -80,6 +76,17 @@ impl<'a> From<&'a mut tokio::sync::MutexGuard<'_, Indexer>> for EmbedderRef<'a> 
 impl<'a> From<&'a tokio::sync::Mutex<Indexer>> for EmbedderRef<'a> {
     fn from(indexer: &'a tokio::sync::Mutex<Indexer>) -> Self {
         Self::Shared(indexer)
+    }
+}
+
+/// Runs blocking model work (loading, ONNX, Ollama requests) without stalling
+/// the async worker it is called on; a current-thread runtime runs it inline.
+fn off_async_workers<T>(work: impl FnOnce() -> T) -> T {
+    match tokio::runtime::Handle::try_current() {
+        Ok(handle) if handle.runtime_flavor() == tokio::runtime::RuntimeFlavor::MultiThread => {
+            tokio::task::block_in_place(work)
+        }
+        _ => work(),
     }
 }
 
@@ -191,13 +198,6 @@ impl Indexer {
         Ok(())
     }
 
-    pub fn is_loaded(&self) -> bool {
-        match &self.engine {
-            Engine::Fastembed { session, .. } => session.is_some(),
-            Engine::Ollama { .. } => true,
-        }
-    }
-
     /// Drops the local model when it has not been used for `idle`; the next
     /// embedding call loads it again. Returns whether memory was released.
     pub fn release_if_idle(&mut self, idle: Duration) -> bool {
@@ -208,10 +208,6 @@ impl Indexer {
             Engine::Fastembed { session, .. } => session.take().is_some(),
             Engine::Ollama { .. } => false,
         }
-    }
-
-    pub fn profile(&self) -> &EmbeddingProfile {
-        &self.profile
     }
 
     fn load_fastembed(model: EmbeddingModel) -> Result<TextEmbedding> {
@@ -419,6 +415,15 @@ impl Indexer {
     pub fn embed_queries(&mut self, queries: &[String]) -> Result<Vec<Vec<f32>>> {
         let prefix = self.profile.query_prefix.clone();
         self.embed_with_prefix(&prefix, queries)
+    }
+
+    /// Embeds a search query with a model shared between tasks.
+    pub async fn embed_query_shared(
+        indexer: &tokio::sync::Mutex<Indexer>,
+        query: &str,
+    ) -> Result<Vec<f32>> {
+        let mut indexer = indexer.lock().await;
+        off_async_workers(|| indexer.embed_query(query))
     }
 
     pub fn embed_query(&mut self, query: &str) -> Result<Vec<f32>> {
@@ -772,6 +777,9 @@ async fn sync_vault_inner(
     // find the previous version of changed notes.
     tracing::info!("Sync: Indexing {} modified/new files...", to_index.len());
     let mut records = Vec::new();
+    // Notes whose new version could not be embedded keep their old rows; the
+    // next sync retries them because their stored mtime is older.
+    let mut failed_docs = std::collections::HashSet::new();
     for (file_path, doc, mtime, doc_id) in to_index {
         let rel_path = file_path
             .strip_prefix(&workspace.root)
@@ -836,6 +844,7 @@ async fn sync_vault_inner(
         }
 
         if failed {
+            failed_docs.insert(doc_id);
             continue;
         }
 
@@ -864,14 +873,19 @@ async fn sync_vault_inner(
         }
     }
 
+    if !failed_docs.is_empty() {
+        to_delete.retain(|doc_id| !failed_docs.contains(doc_id));
+        records.retain(|record| !failed_docs.contains(&record.document_id));
+    }
     if !to_delete.is_empty() {
         tracing::info!(
             "Sync: replacing {} outdated/orphaned document(s)",
             to_delete.len()
         );
-        if let Err(e) = store.delete_documents(&table, &to_delete).await {
-            tracing::warn!("Failed to delete outdated documents: {e}");
-        }
+        store
+            .delete_documents(&table, &to_delete)
+            .await
+            .context("Failed to delete outdated documents; nothing was replaced")?;
     }
     if !records.is_empty() {
         store.insert_batch(&table, records).await?;
@@ -1241,9 +1255,10 @@ mod sync_tests {
 
         let (mut searches_during_sync, mut found_old_rows_during_sync) = (0, false);
         while !sync.is_finished() {
-            let vector = tokio::time::timeout(Duration::from_secs(60), async {
-                indexer.lock().await.embed_query("keyword7")
-            })
+            let vector = tokio::time::timeout(
+                Duration::from_secs(60),
+                super::Indexer::embed_query_shared(&indexer, "keyword7"),
+            )
             .await
             .expect("query embedding waited for the whole sync")
             .unwrap();

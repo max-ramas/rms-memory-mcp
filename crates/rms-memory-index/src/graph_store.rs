@@ -25,17 +25,20 @@ impl Store {
     pub async fn open_or_create_graph_tables(&self) -> Result<GraphTables> {
         Ok(GraphTables {
             nodes: self
-                .open_or_create_table(&self.graph_nodes_table_name(), Self::graph_nodes_schema())
-                .await?,
+                .open_or_create(&self.graph_nodes_table_name(), Self::graph_nodes_schema())
+                .await?
+                .0,
             edges: self
-                .open_or_create_table(&self.graph_edges_table_name(), Self::graph_edges_schema())
-                .await?,
+                .open_or_create(&self.graph_edges_table_name(), Self::graph_edges_schema())
+                .await?
+                .0,
             overrides: self
-                .open_or_create_table(
+                .open_or_create(
                     &self.graph_edge_overrides_table_name(),
                     Self::graph_edge_overrides_schema(),
                 )
-                .await?,
+                .await?
+                .0,
         })
     }
 
@@ -44,24 +47,6 @@ impl Store {
         let node_max = max_generation(&tables.nodes).await?;
         let edge_max = max_generation(&tables.edges).await?;
         Ok(node_max.max(edge_max).unwrap_or(0) + 1)
-    }
-
-    async fn open_or_create_table(
-        &self,
-        name: &str,
-        schema: Arc<lancedb::arrow::arrow_schema::Schema>,
-    ) -> Result<Table> {
-        match self.db.open_table(name).execute().await {
-            Ok(table) => Ok(table),
-            Err(open_error) => match self.db.create_empty_table(name, schema).execute().await {
-                Ok(table) => Ok(table),
-                Err(create_error) => self.db.open_table(name).execute().await.with_context(|| {
-                    format!(
-                        "could not open graph table {name} after create race; initial open error: {open_error}; create error: {create_error}"
-                    )
-                }),
-            },
-        }
     }
 
     /// Reconcile a complete derived graph generation. User nodes, user edges, and

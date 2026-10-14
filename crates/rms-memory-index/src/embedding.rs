@@ -178,9 +178,15 @@ impl EmbeddingProfile {
             if model.is_empty() {
                 bail!("Name the Ollama model, for example `ollama:nomic-embed-text`");
             }
+            // The recorded vector size belongs to the configured Ollama model only.
+            let configured = global
+                .embedding_model
+                .as_deref()
+                .and_then(|configured| configured.trim().strip_prefix(OLLAMA_PREFIX))
+                .map(str::trim);
             let dimension = global
                 .embedding_dimension
-                .filter(|dimension| *dimension > 0)
+                .filter(|dimension| *dimension > 0 && configured == Some(model))
                 .ok_or_else(|| {
                     anyhow!(
                         "Embedding model `{id}` has no recorded vector size; run `rms-memory embedding use {id}` to detect it"
@@ -234,8 +240,11 @@ impl EmbeddingProfile {
     }
 }
 
+/// Folder name for a model id. Ids that lose characters on the way (such as
+/// `ollama:a/b` and `ollama:a-b`) get a hash suffix so they never share one.
 fn slug(id: &str) -> String {
-    id.chars()
+    let slug: String = id
+        .chars()
         .map(|c| {
             if c.is_ascii_alphanumeric() || c == '-' || c == '.' {
                 c.to_ascii_lowercase()
@@ -243,7 +252,12 @@ fn slug(id: &str) -> String {
                 '-'
             }
         })
-        .collect()
+        .collect();
+    if slug == id {
+        slug
+    } else {
+        format!("{slug}-{}", &blake3::hash(id.as_bytes()).to_hex()[..8])
+    }
 }
 
 pub fn ollama_url(global: &GlobalConfig) -> Result<String> {
@@ -284,9 +298,11 @@ pub fn configure(
 ) -> Result<EmbeddingProfile> {
     let mut updated = global.clone();
     if let Some(url) = ollama_url.map(str::trim).filter(|url| !url.is_empty()) {
+        ensure_loopback(url)?;
         updated.ollama_url = Some(url.to_string());
     }
     let id = id.trim();
+    updated.embedding_model = Some(id.to_string());
     updated.embedding_dimension = match id.strip_prefix(OLLAMA_PREFIX) {
         Some(model) => {
             let url = self::ollama_url(&updated)?;
@@ -319,9 +335,7 @@ pub fn active() -> &'static EmbeddingProfile {
 
 /// The model the global config (or `RMS_MEMORY_EMBEDDING_MODEL`) asks for.
 pub fn configured() -> Result<EmbeddingProfile> {
-    let global = rms_memory_core::config_manager::load_registry()
-        .map(|registry| registry.global)
-        .unwrap_or_default();
+    let global = rms_memory_core::config_manager::load_registry()?.global;
     match std::env::var(MODEL_ENV) {
         Ok(id) if !id.trim().is_empty() => EmbeddingProfile::resolve(&id, &global),
         _ => EmbeddingProfile::from_config(&global),
@@ -334,8 +348,11 @@ pub fn ollama_embed(url: &str, model: &str, inputs: &[String]) -> Result<Vec<Vec
     struct EmbedResponse {
         embeddings: Vec<Vec<f32>>,
     }
+    // A proxy from HTTP(S)_PROXY or a redirect would send notes off the machine.
     let agent: ureq::Agent = ureq::Agent::config_builder()
         .timeout_global(Some(Duration::from_secs(300)))
+        .proxy(None)
+        .max_redirects(0)
         .build()
         .into();
     let response: EmbedResponse = agent
@@ -405,6 +422,7 @@ mod tests {
         assert!(EmbeddingProfile::from_config(&global).is_err());
 
         global.embedding_dimension = Some(768);
+        assert!(EmbeddingProfile::resolve("ollama:mxbai-embed-large", &global).is_err());
         let profile = EmbeddingProfile::from_config(&global).unwrap();
         assert_eq!(
             profile.backend,
@@ -413,10 +431,11 @@ mod tests {
                 model: "nomic-embed-text".to_string()
             }
         );
-        assert_eq!(
-            profile.index_dir(Path::new("/dbs/abc")),
-            Path::new("/dbs/abc/models/ollama-nomic-embed-text")
-        );
+        let index_dir = profile.index_dir(Path::new("/dbs/abc"));
+        let folder = index_dir.file_name().unwrap().to_string_lossy();
+        assert!(folder.starts_with("ollama-nomic-embed-text-"), "{folder}");
+        assert_ne!(slug("ollama:a/b"), slug("ollama:a-b"));
+        assert_eq!(slug("bge-m3"), "bge-m3");
 
         for allowed in [
             "http://localhost:11434/",

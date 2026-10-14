@@ -95,6 +95,41 @@ fn frontmatter_is_valid(text: &str) -> bool {
     frontmatter::split(text).is_some_and(|split| frontmatter::parse_mapping(split.yaml).is_ok())
 }
 
+/// Creates `target` with the scanned `bytes` (or a copy of `source` when the
+/// file was too large to scan). Never overwrites, and refuses destination
+/// folders that are symlinks, so nothing is written outside `vault`.
+fn write_new_file(vault: &Path, source: &Path, target: &Path, bytes: Option<&[u8]>) -> Result<()> {
+    use std::io::Write;
+    let parent = target.parent().context("Import target has no parent")?;
+    let mut folder = vault.to_path_buf();
+    for part in parent.strip_prefix(vault).unwrap_or(parent).components() {
+        folder.push(part);
+        if folder
+            .symlink_metadata()
+            .is_ok_and(|meta| meta.file_type().is_symlink())
+        {
+            bail!(
+                "Refusing to import through the symlinked folder {}",
+                folder.display()
+            );
+        }
+    }
+    std::fs::create_dir_all(parent)
+        .with_context(|| format!("Failed to create {}", parent.display()))?;
+    let mut file = std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(target)
+        .with_context(|| format!("Failed to create {}", target.display()))?;
+    match bytes {
+        Some(bytes) => file.write_all(bytes)?,
+        None => {
+            std::io::copy(&mut std::fs::File::open(source)?, &mut file)?;
+        }
+    }
+    Ok(())
+}
+
 pub fn import_obsidian_vault(
     source: &Path,
     vault_root: &Path,
@@ -160,24 +195,33 @@ pub fn import_obsidian_vault(
             .is_some_and(|ext| ext.eq_ignore_ascii_case("md"));
 
         let size = entry.metadata().map(|m| m.len()).unwrap_or(u64::MAX);
-        if size <= SCAN_LIMIT_BYTES
-            && let Ok(bytes) = std::fs::read(entry.path())
-            && let Ok(text) = std::str::from_utf8(&bytes)
-        {
-            let findings = rms_memory_core::secrets::scan(text);
-            if !findings.is_empty() {
-                report.skipped_secrets.push(format!(
-                    "{display}: {}",
-                    rms_memory_core::secrets::describe(&findings)
-                ));
-                continue;
-            }
-            if is_note && !frontmatter_is_valid(text) {
-                report.invalid_frontmatter.push(display.clone());
+        let scanned = if size <= SCAN_LIMIT_BYTES {
+            Some(
+                std::fs::read(entry.path())
+                    .with_context(|| format!("Failed to read {}", entry.path().display()))?,
+            )
+        } else {
+            None
+        };
+        if let Some(bytes) = &scanned {
+            let utf8 = std::str::from_utf8(bytes).is_ok();
+            if is_note || utf8 {
+                let text = String::from_utf8_lossy(bytes);
+                let findings = rms_memory_core::secrets::scan(&text);
+                if !findings.is_empty() {
+                    report.skipped_secrets.push(format!(
+                        "{display}: {}",
+                        rms_memory_core::secrets::describe(&findings)
+                    ));
+                    continue;
+                }
+                if is_note && !frontmatter_is_valid(&text) {
+                    report.invalid_frontmatter.push(display.clone());
+                }
             }
         }
 
-        if target.exists() {
+        if target.exists() || target.symlink_metadata().is_ok() {
             if same_content(entry.path(), &target) {
                 report.unchanged.push(display);
             } else {
@@ -186,17 +230,7 @@ pub fn import_obsidian_vault(
             continue;
         }
         if !dry_run {
-            if let Some(parent) = target.parent() {
-                std::fs::create_dir_all(parent)
-                    .with_context(|| format!("Failed to create {}", parent.display()))?;
-            }
-            std::fs::copy(entry.path(), &target).with_context(|| {
-                format!(
-                    "Failed to copy {} to {}",
-                    entry.path().display(),
-                    target.display()
-                )
-            })?;
+            write_new_file(&vault, entry.path(), &target, scanned.as_deref())?;
         }
         if is_note {
             report.notes.push(display);
@@ -293,6 +327,35 @@ mod tests {
         );
         assert!(!vault.path().join("obsidian/Credentials/Server.md").exists());
         assert!(vault.path().join("obsidian/Credentials/plain.md").exists());
+    }
+
+    #[test]
+    fn notes_that_are_not_valid_utf8_are_still_scanned() {
+        let source = obsidian_fixture();
+        let mut note = b"# Legacy \xe9\n".to_vec();
+        note.extend_from_slice(b"token ghp_abcdefghijklmnopqrstuvwxyz0123456789\n");
+        std::fs::write(source.path().join("Legacy.md"), note).unwrap();
+
+        let vault = tempfile::tempdir().unwrap();
+        let report = import_obsidian_vault(source.path(), vault.path(), "obsidian", false).unwrap();
+        assert_eq!(
+            report.skipped_secrets,
+            vec!["obsidian/Legacy.md: github_token (line 2)"]
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn symlinked_destination_folders_are_refused() {
+        let source = obsidian_fixture();
+        let vault = tempfile::tempdir().unwrap();
+        let elsewhere = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(vault.path().join("obsidian")).unwrap();
+        std::os::unix::fs::symlink(elsewhere.path(), vault.path().join("obsidian/Projects"))
+            .unwrap();
+
+        assert!(import_obsidian_vault(source.path(), vault.path(), "obsidian", false).is_err());
+        assert_eq!(std::fs::read_dir(elsewhere.path()).unwrap().count(), 0);
     }
 
     #[test]

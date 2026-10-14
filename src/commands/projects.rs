@@ -87,7 +87,8 @@ impl ProjectsCommands {
 fn attach_obsidian(args: &AttachObsidianArgs) -> Result<()> {
     let key = match &args.key {
         Some(key) => key.clone(),
-        None => std::fs::canonicalize(&args.path)?
+        None => std::fs::canonicalize(&args.path)
+            .map_err(|e| anyhow::anyhow!("Folder not found: {}: {e}", args.path.display()))?
             .file_name()
             .map(|name| name.to_string_lossy().to_string())
             .ok_or_else(|| anyhow::anyhow!("Pass --key for this folder"))?,

@@ -159,15 +159,18 @@ fn strip_anchor(target: &str) -> &str {
 }
 
 fn percent_decode(input: &str) -> String {
+    fn hex(byte: u8) -> Option<u8> {
+        (byte as char).to_digit(16).map(|digit| digit as u8)
+    }
     let bytes = input.as_bytes();
     let mut out = Vec::with_capacity(bytes.len());
     let mut i = 0;
     while i < bytes.len() {
         if bytes[i] == b'%'
-            && i + 2 < bytes.len()
-            && let Ok(value) = u8::from_str_radix(&input[i + 1..i + 3], 16)
+            && let Some(&[high, low]) = bytes.get(i + 1..i + 3)
+            && let (Some(high), Some(low)) = (hex(high), hex(low))
         {
-            out.push(value);
+            out.push(high << 4 | low);
             i += 3;
             continue;
         }
@@ -206,6 +209,7 @@ fn has_non_markdown_extension(target: &str) -> bool {
     match name.rsplit_once('.') {
         Some((stem, ext)) => {
             !stem.is_empty()
+                && !ext.is_empty()
                 && !ext.eq_ignore_ascii_case("md")
                 && ext.len() <= 5
                 && ext.chars().all(|c| c.is_ascii_alphanumeric())
@@ -321,8 +325,12 @@ impl VaultLinkIndex {
 
     fn resolve_wiki(&self, source: &str, target: &str) -> LinkResolution {
         let target = target.trim_start_matches('/');
+        // `[[Node.js]]` names a note whose title contains a dot.
         if has_non_markdown_extension(target) {
-            return self.resolve_attachment(source, target);
+            match self.resolve_attachment(source, target) {
+                LinkResolution::Missing(_) => {}
+                found => return found,
+            }
         }
         if target.contains('/') {
             for candidate in [
@@ -422,19 +430,18 @@ impl VaultLinkIndex {
     fn attachment_names(&self) -> &HashMap<String, Vec<String>> {
         self.attachments.get_or_init(|| {
             let mut names: HashMap<String, Vec<String>> = HashMap::new();
-            let pattern = self.root.join("**").join("*");
-            let Ok(entries) = glob::glob(&pattern.to_string_lossy()) else {
-                return names;
-            };
-            for path in entries.flatten() {
-                let Ok(relative) = path.strip_prefix(&self.root) else {
+            let entries = walkdir::WalkDir::new(&self.root)
+                .into_iter()
+                .filter_entry(|entry| {
+                    entry.depth() == 0 || !entry.file_name().to_string_lossy().starts_with('.')
+                })
+                .flatten();
+            for entry in entries {
+                let Ok(relative) = entry.path().strip_prefix(&self.root) else {
                     continue;
                 };
                 let relative = relative.to_string_lossy().replace('\\', "/");
-                if !path.is_file()
-                    || relative.ends_with(".md")
-                    || relative.split('/').any(|part| part.starts_with('.'))
-                {
+                if !entry.file_type().is_file() || relative.ends_with(".md") {
                     continue;
                 }
                 let name = relative.rsplit('/').next().unwrap_or(&relative);
@@ -595,6 +602,38 @@ mod tests {
             index.resolve("notes/a.md", &markdown("/assets")),
             LinkResolution::Attachment("assets".into())
         );
+    }
+
+    #[test]
+    fn malformed_percent_escapes_are_kept_as_text() {
+        for (link, expected) in [
+            ("%1ж.md", "%1ж.md"),
+            ("%a€.md", "%a€.md"),
+            ("%+5.md", "%+5.md"),
+            ("100%", "100%"),
+            ("my%20note.md", "my note.md"),
+            ("%D0%B6.md", "ж.md"),
+        ] {
+            assert_eq!(percent_decode(link), expected, "{link}");
+        }
+    }
+
+    #[test]
+    fn note_names_with_dots_are_notes_not_attachments() {
+        let dir = tempfile::tempdir().unwrap();
+        let index = VaultLinkIndex::new(
+            dir.path(),
+            [
+                "Node.js.md".to_string(),
+                "Meeting 2024.01.15.md".to_string(),
+            ],
+        );
+        for name in ["Node.js", "Meeting 2024.01.15"] {
+            assert_eq!(
+                index.resolve("a.md", &wiki(name)),
+                LinkResolution::Note(format!("{name}.md"))
+            );
+        }
     }
 
     #[test]

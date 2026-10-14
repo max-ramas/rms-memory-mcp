@@ -74,8 +74,8 @@ pub fn suggest_project_key(old_key: &str, new_code_path: &Path) -> String {
 }
 
 pub fn paths_equivalent(left: &Path, right: &Path) -> bool {
-    let left_canon = canonical_or_original(left);
-    let right_canon = canonical_or_original(right);
+    let left_canon = rms_memory_core::workspace::canonical_or_given(left);
+    let right_canon = rms_memory_core::workspace::canonical_or_given(right);
     if left_canon == right_canon {
         return true;
     }
@@ -116,7 +116,7 @@ pub fn build_plan(
     }
 
     let old_code_path = PathBuf::from(&config.code_path);
-    let new_code_path = canonical_or_original(new_code_dir);
+    let new_code_path = rms_memory_core::workspace::canonical_or_given(new_code_dir);
     let new_key = options
         .new_key
         .clone()
@@ -373,12 +373,8 @@ fn rollback_filesystem(moves: &[(PathBuf, PathBuf)]) -> Result<()> {
     }
 }
 
-fn canonical_or_original(path: &Path) -> PathBuf {
-    std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf())
-}
-
 fn index_path_for_vault(vault: &Path) -> PathBuf {
-    let canon = canonical_or_original(vault);
+    let canon = rms_memory_core::workspace::canonical_or_given(vault);
     let hash = blake3::hash(canon.to_string_lossy().as_bytes())
         .to_hex()
         .to_string();
@@ -459,8 +455,8 @@ fn plan_link_repairs(
     new_code_path: &Path,
     warnings: &mut Vec<String>,
 ) -> Result<Vec<LinkRepairEntry>> {
-    let old_code = canonical_or_original(old_code_path);
-    let new_code = canonical_or_original(new_code_path);
+    let old_code = rms_memory_core::workspace::canonical_or_given(old_code_path);
+    let new_code = rms_memory_core::workspace::canonical_or_given(new_code_path);
     let mut repairs = Vec::new();
 
     for file_path in iter_vault_markdown(vault_root)? {
@@ -583,24 +579,10 @@ fn plan_project_stamp_updates(
 /// Sets one frontmatter key; every other key (including ones the typed
 /// `Frontmatter` does not know, such as Obsidian `tags`) is kept verbatim.
 fn set_frontmatter_key(path: &Path, key: &str, value: &str) -> Result<()> {
-    use rms_memory_core::frontmatter;
-    let text = std::fs::read_to_string(path)
-        .with_context(|| format!("Failed to read {}", path.display()))?;
-    let (mut mapping, body) = if text.starts_with("---\n") || text.starts_with("---\r\n") {
-        let split = frontmatter::split(&text)
-            .with_context(|| format!("Unclosed YAML frontmatter in {}", path.display()))?;
-        (
-            frontmatter::parse_mapping(split.yaml)
-                .with_context(|| format!("Invalid YAML frontmatter in {}", path.display()))?,
-            split.body,
-        )
-    } else {
-        (serde_yaml::Mapping::new(), text.as_str())
-    };
-    mapping.insert(key.into(), value.into());
-    let rebuilt = frontmatter::compose(&mapping, body)?;
-    std::fs::write(path, rebuilt)
-        .with_context(|| format!("Failed to update frontmatter in {}", path.display()))?;
+    rms_memory_core::frontmatter::update_file(path, true, |mapping| {
+        mapping.insert(key.into(), value.into());
+        true
+    })?;
     Ok(())
 }
 

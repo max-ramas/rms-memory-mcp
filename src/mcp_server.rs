@@ -546,7 +546,17 @@ impl McpServer {
     /// or a server-initiated request to send to the client.
     pub(crate) async fn handle_message(&mut self, message: Value) -> Result<Option<Value>> {
         if message.get("method").is_some() {
-            let request: RpcRequest = serde_json::from_value(message)?;
+            let id = message.get("id").cloned().unwrap_or(Value::Null);
+            let request: RpcRequest = match serde_json::from_value(message) {
+                Ok(request) => request,
+                Err(error) => {
+                    return Ok(Some(json!({
+                        "jsonrpc": "2.0",
+                        "id": id,
+                        "error": { "code": -32600, "message": format!("Invalid request: {error}") }
+                    })));
+                }
+            };
             let Some(id) = request.id else {
                 return self
                     .handle_notification(&request.method, request.params)
@@ -572,7 +582,9 @@ impl McpServer {
             return Ok(Some(serde_json::to_value(response)?));
         }
         if message.get("id").is_some() {
-            self.handle_client_response(&message).await?;
+            if let Err(error) = self.handle_client_response(&message).await {
+                tracing::warn!("Could not use the client's response: {error:#}");
+            }
         } else {
             tracing::warn!("Ignoring JSON-RPC message without method or id");
         }
@@ -621,11 +633,11 @@ impl McpServer {
             }
 
             match serde_json::from_str::<Value>(&line) {
-                Ok(message) => {
-                    if let Some(outbound) = server.handle_message(message).await? {
-                        write_json_line(&mut stdout, &outbound)?;
-                    }
-                }
+                Ok(message) => match server.handle_message(message).await {
+                    Ok(Some(outbound)) => write_json_line(&mut stdout, &outbound)?,
+                    Ok(None) => {}
+                    Err(error) => tracing::error!("Failed to answer JSON-RPC message: {error:#}"),
+                },
                 Err(e) => {
                     tracing::error!("Failed to parse JSON-RPC: {}", e);
                     write_json_line(&mut stdout, &Self::parse_error(format!("Parse error: {e}")))?;
@@ -633,7 +645,7 @@ impl McpServer {
             }
         }
         tracing::info!("Stdin closed (EOF). Shutting down watcher...");
-        let _ = server.shutdown_tx.send(true);
+        server.shutdown();
         tracing::info!("Server stopped.");
         Ok(())
     }
@@ -876,6 +888,10 @@ impl McpServer {
         if self.ctx.workspace_root.is_some() {
             return true;
         }
+        // One HTTP server answers clients working in any folder.
+        if self.http {
+            return false;
+        }
         let Ok(cwd) = std::env::current_dir() else {
             return false;
         };
@@ -931,6 +947,7 @@ impl McpServer {
                 }
                 if path.is_none()
                     && !self.client_supports_roots
+                    && !self.http
                     && let Ok(cwd) = std::env::current_dir()
                     && cwd != std::path::Path::new("/")
                 {
@@ -966,7 +983,7 @@ impl McpServer {
                 let protocol_version = PROTOCOL_VERSIONS
                     .into_iter()
                     .find(|version| Some(*version) == requested_version)
-                    .unwrap_or("2024-11-05");
+                    .unwrap_or(PROTOCOL_VERSIONS[0]);
                 let mut result = json!({
                     "protocolVersion": protocol_version,
                     "serverInfo": {

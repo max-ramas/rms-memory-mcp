@@ -141,11 +141,12 @@ mod lenient {
     }
 
     pub fn float<'de, D: Deserializer<'de>>(d: D) -> Result<Option<f64>, D::Error> {
-        Ok(match Option::<Value>::deserialize(d)? {
+        let value = match Option::<Value>::deserialize(d)? {
             Some(Value::Number(n)) => n.as_f64(),
             Some(Value::String(s)) => s.trim().parse().ok(),
             _ => None,
-        })
+        };
+        Ok(value.filter(|value: &f64| value.is_finite()))
     }
 
     pub fn int<'de, D: Deserializer<'de>>(d: D) -> Result<Option<i32>, D::Error> {
@@ -289,7 +290,7 @@ impl Document {
         // writers must not shadow it or survive next to a fresh id.
         let is_real_id = |line: &str| {
             let value = line["id:".len()..].trim();
-            !matches!(value, "" | "null" | "~" | "''" | "\"\"")
+            !matches!(value, "" | "null" | "~" | "''" | "\"\"") && !value.starts_with(['[', '{'])
         };
         let lines: Vec<&str> = frontmatter.split(newline).collect();
         let id_count = lines.iter().filter(|line| line.starts_with("id:")).count();
@@ -495,6 +496,18 @@ mod tests {
                 .id
                 .is_some()
         );
+    }
+
+    #[test]
+    fn repair_replaces_a_non_scalar_id_and_settles() {
+        let dir = tempdir().unwrap();
+        let file_path = dir.path().join("list-id.md");
+        fs::write(&file_path, "---\nid: []\ntype: note\n---\n# Content").unwrap();
+
+        assert!(Document::repair_duplicate_ids(&file_path).unwrap());
+        let repaired = fs::read_to_string(&file_path).unwrap();
+        assert_eq!(repaired.matches("\nid:").count(), 1, "{repaired}");
+        assert!(!Document::repair_duplicate_ids(&file_path).unwrap());
     }
 
     #[test]

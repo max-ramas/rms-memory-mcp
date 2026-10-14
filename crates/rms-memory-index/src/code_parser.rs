@@ -1083,16 +1083,13 @@ fn parse_html_file(file_path: &str, source: &str) -> Result<Vec<ParsedCodeItem>>
     ) -> Result<()> {
         match node.kind() {
             "script_element" => {
-                let header = node
-                    .named_child(0)
-                    .map(|tag| node_text(tag, source))
-                    .unwrap_or_default();
                 let mut c = node.walk();
                 let raw = node.named_children(&mut c).find(|n| n.kind() == "raw_text");
                 // Only classic and module scripts; JSON, templates and the like are data.
-                let javascript = !header.contains("type=")
-                    || header.contains("javascript")
-                    || header.contains("module");
+                let javascript = html_attribute(node, source, "type").is_none_or(|kind| {
+                    let kind = kind.to_ascii_lowercase();
+                    kind.is_empty() || kind == "module" || kind.ends_with("javascript")
+                });
                 if let Some(raw) = raw.filter(|_| javascript)
                     && let Ok(parsed) =
                         parse_web_file(file, node_text(raw, source), LanguageId::JavaScript)
@@ -1109,7 +1106,7 @@ fn parse_html_file(file_path: &str, source: &str) -> Result<Vec<ParsedCodeItem>>
                 return Ok(());
             }
             "element" => {
-                if let Some(id) = html_element_id(node, source) {
+                if let Some(id) = html_attribute(node, source, "id").filter(|id| !id.is_empty()) {
                     items.push(build_markup_item(
                         node,
                         file,
@@ -1141,7 +1138,8 @@ fn parse_html_file(file_path: &str, source: &str) -> Result<Vec<ParsedCodeItem>>
     Ok(items)
 }
 
-fn html_element_id(element: Node<'_>, source: &str) -> Option<String> {
+/// Trimmed value of attribute `name` on the start tag of `element`.
+fn html_attribute(element: Node<'_>, source: &str, name: &str) -> Option<String> {
     let mut c = element.walk();
     let tag = element
         .named_children(&mut c)
@@ -1153,15 +1151,15 @@ fn html_element_id(element: Node<'_>, source: &str) -> Option<String> {
         }
         let mut c = attribute.walk();
         let parts: Vec<Node<'_>> = attribute.named_children(&mut c).collect();
-        let name = parts.iter().find(|n| n.kind() == "attribute_name")?;
-        if !node_text(*name, source).eq_ignore_ascii_case("id") {
+        let attribute_name = parts.iter().find(|n| n.kind() == "attribute_name")?;
+        if !node_text(*attribute_name, source).eq_ignore_ascii_case(name) {
             return None;
         }
         let value = parts
             .iter()
-            .find(|n| matches!(n.kind(), "attribute_value" | "quoted_attribute_value"))?;
-        let value = node_text(*value, source).trim_matches(['"', '\'']).trim();
-        (!value.is_empty()).then(|| value.to_string())
+            .find(|n| matches!(n.kind(), "attribute_value" | "quoted_attribute_value"))
+            .map_or("", |value| node_text(*value, source));
+        Some(value.trim_matches(['"', '\'']).trim().to_string())
     })
 }
 
@@ -2726,6 +2724,8 @@ fn helper() { let _ = Thing::default(); }
     function submitLogin() { return true; }
   </script>
   <script type="application/json">{"not": "code"}</script>
+  <script TYPE="text/template" src="/js/javascript-helpers.js">function notCode() {}</script>
+  <script data-type="x">function dataTyped() {}</script>
 </body>
 </html>
 "#;
@@ -2744,7 +2744,9 @@ fn helper() { let _ = Thing::default(); }
             .find(|i| i.symbol_name == "submitLogin")
             .expect("inline script function");
         assert_eq!(script.start_line, 6);
-        assert_eq!(parsed.items.len(), 3, "{names:?}");
+        assert!(names.contains(&"dataTyped"), "{names:?}");
+        assert!(!names.contains(&"notCode"), "{names:?}");
+        assert_eq!(parsed.items.len(), 4, "{names:?}");
 
         let css = ".btn, .btn-primary {\n  color: red;\n}\n@media (max-width: 600px) {\n  .btn { color: blue; }\n}\n@keyframes fade-in {\n  from { opacity: 0; }\n  to { opacity: 1; }\n}\n.btn { margin: 0; }\n";
         let parsed = parse_code_file("web/app.css", css).unwrap();

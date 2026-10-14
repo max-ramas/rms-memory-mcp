@@ -99,6 +99,22 @@ fn default_code_languages() -> Vec<String> {
     vec!["auto".to_string()]
 }
 
+impl ProjectConfig {
+    /// A writable project with the default include/exclude and code settings.
+    pub fn new(code_path: &Path, vault_path: &Path) -> Self {
+        Self {
+            code_path: code_path.to_string_lossy().into_owned(),
+            vault_path: vault_path.to_string_lossy().into_owned(),
+            include: default_include(),
+            exclude: default_exclude(),
+            code_index_mode: CodeIndexMode::default(),
+            code_languages: default_code_languages(),
+            cross_project_vault: false,
+            read_only: false,
+        }
+    }
+}
+
 #[derive(Deserialize, Serialize, Debug, Clone, Copy, Default, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum CodeIndexMode {
@@ -185,24 +201,9 @@ impl Registry {
         base_dir().join("registry.toml")
     }
 
+    /// The registry with read-only vaults applied; see [`crate::config_manager`].
     pub fn load() -> Result<Self> {
-        let path = Self::config_path();
-        if !path.exists() {
-            return Ok(Self::default());
-        }
-        let content = fs::read_to_string(&path)?;
-        let registry: Registry = toml::from_str(&content)?;
-        Ok(registry)
-    }
-
-    pub fn save(&self) -> Result<()> {
-        let path = Self::config_path();
-        if let Some(parent) = path.parent() {
-            fs::create_dir_all(parent)?;
-        }
-        let content = toml::to_string_pretty(self)?;
-        fs::write(path, content)?;
-        Ok(())
+        crate::config_manager::load_registry()
     }
 }
 
@@ -233,28 +234,29 @@ pub fn create_vault_dirs(vault_path: &Path) -> Result<()> {
     Ok(())
 }
 
-/// Errors when a registered project marks `vault_root` as read-only.
+/// Errors when `vault_root` is, lies inside or contains a vault that a
+/// registered project marks read-only.
 pub fn ensure_vault_writable(vault_root: &Path) -> Result<()> {
-    let registry = crate::config_manager::ConfigManager::open()?
-        .snapshot()
-        .registry;
-    ensure_vault_writable_in(&registry, vault_root)
+    ensure_vault_writable_in(&crate::config_manager::load_registry()?, vault_root)
 }
 
 pub fn ensure_vault_writable_in(registry: &Registry, vault_root: &Path) -> Result<()> {
-    let canonical = |path: &Path| fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
-    let root = canonical(vault_root);
-    if let Some((key, _)) = registry
-        .projects
-        .iter()
-        .find(|(_, project)| project.read_only && canonical(Path::new(&project.vault_path)) == root)
-    {
+    let root = canonical_or_given(vault_root);
+    if let Some((key, _)) = registry.projects.iter().find(|(_, project)| {
+        let read_only = canonical_or_given(Path::new(&project.vault_path));
+        project.read_only && (root.starts_with(&read_only) || read_only.starts_with(&root))
+    }) {
         return Err(anyhow!(
             "Vault of project `{key}` is read-only ({}): RMS Memory does not change files there. Disable with `rms-memory config --read-only false` in that project.",
             vault_root.display()
         ));
     }
     Ok(())
+}
+
+/// The canonical path, or `path` itself when it does not exist (yet).
+pub fn canonical_or_given(path: &Path) -> PathBuf {
+    fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf())
 }
 
 #[derive(Debug, Clone)]
@@ -363,6 +365,13 @@ impl Workspace {
         ensure_vault_writable(&self.root)
     }
 
+    /// Whether a registered project marks this vault read-only. Unlike
+    /// `ensure_writable().is_err()`, an unreadable registry is an error.
+    pub fn is_read_only(&self) -> Result<bool> {
+        let registry = crate::config_manager::load_registry()?;
+        Ok(ensure_vault_writable_in(&registry, &self.root).is_err())
+    }
+
     pub fn canonical_path(&self) -> Result<String> {
         let canon = fs::canonicalize(&self.root).unwrap_or_else(|_| self.root.clone());
         Ok(canon.to_string_lossy().to_string())
@@ -414,20 +423,22 @@ impl Workspace {
 
     pub fn find_markdown_files(&self) -> Result<Vec<PathBuf>> {
         use glob::{Pattern, glob};
-        let mut include_patterns = Vec::new();
-        for inc in &self.include {
-            let pat = self.root.join(inc).to_string_lossy().to_string();
-            include_patterns.push(Pattern::new(&pat)?);
-        }
-
-        let mut exclude_patterns = Vec::new();
-        for exc in &self.exclude {
-            let pat = self.root.join(exc).to_string_lossy().to_string();
-            exclude_patterns.push(Pattern::new(&pat)?);
-        }
+        // A vault named `Notes [Work]` must not turn into a character class.
+        let root = Pattern::escape(&self.root.to_string_lossy());
+        let under_root = |pattern: &str| Pattern::new(&format!("{root}/{pattern}"));
+        let include_patterns = self
+            .include
+            .iter()
+            .map(|pattern| under_root(pattern))
+            .collect::<Result<Vec<_>, _>>()?;
+        let exclude_patterns = self
+            .exclude
+            .iter()
+            .map(|pattern| under_root(pattern))
+            .collect::<Result<Vec<_>, _>>()?;
 
         let mut files = Vec::new();
-        for entry in glob(&self.root.join("**/*.md").to_string_lossy())? {
+        for entry in glob(&format!("{root}/**/*.md"))? {
             match entry {
                 Ok(path) => {
                     let path_str = path.to_string_lossy();
@@ -613,6 +624,45 @@ mod tests {
             .collect::<Vec<_>>();
         found.sort();
         assert_eq!(found, vec![".hidden.md", "notes/a.md"]);
+    }
+
+    #[test]
+    fn markdown_discovery_treats_brackets_in_the_vault_path_literally() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().join("Notes [Work]");
+        fs::create_dir_all(root.join("daily")).unwrap();
+        fs::write(root.join("daily/a.md"), "# x").unwrap();
+        let workspace = Workspace {
+            root: root.clone(),
+            code_path: root.clone(),
+            include: vec!["**/*.md".to_string()],
+            exclude: vec![],
+            code_index_mode: CodeIndexMode::Off,
+            code_languages: vec![],
+        };
+        assert_eq!(
+            workspace.find_markdown_files().unwrap(),
+            vec![root.join("daily/a.md")]
+        );
+    }
+
+    #[test]
+    fn writes_are_refused_inside_or_around_a_read_only_vault() {
+        let dir = tempfile::tempdir().unwrap();
+        let obsidian = dir.path().join("Obsidian");
+        fs::create_dir_all(obsidian.join("repo")).unwrap();
+        let mut registry = Registry::default();
+        registry.projects.insert(
+            "notes".into(),
+            ProjectConfig {
+                read_only: true,
+                ..ProjectConfig::new(&obsidian, &obsidian)
+            },
+        );
+        assert!(ensure_vault_writable_in(&registry, &obsidian).is_err());
+        assert!(ensure_vault_writable_in(&registry, &obsidian.join("repo")).is_err());
+        assert!(ensure_vault_writable_in(&registry, dir.path()).is_err());
+        assert!(ensure_vault_writable_in(&registry, &dir.path().join("Obsidian2")).is_ok());
     }
 
     #[test]

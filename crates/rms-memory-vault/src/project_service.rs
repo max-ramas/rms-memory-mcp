@@ -112,10 +112,11 @@ impl ProjectService {
             bail!("Refusing to attach the filesystem root");
         }
         let snapshot = self.manager.snapshot();
-        if snapshot.registry.projects.contains_key(key) {
-            bail!("Project key '{key}' is already registered");
+        // Lookups ignore case and follow migrations, so `Notes` would shadow `notes`.
+        if let Some(existing) = snapshot.registry.resolve_project_key(key) {
+            bail!("Project key '{key}' is already taken by project '{existing}'");
         }
-        let canonical = |p: &str| std::fs::canonicalize(p).unwrap_or_else(|_| PathBuf::from(p));
+        let canonical = |p: &str| rms_memory_core::workspace::canonical_or_given(Path::new(p));
         for (other, project) in &snapshot.registry.projects {
             let vault = canonical(&project.vault_path);
             let code = canonical(&project.code_path);
@@ -133,16 +134,10 @@ impl ProjectService {
                 );
             }
         }
-        let path = folder.to_string_lossy().to_string();
         let config = ProjectConfig {
-            code_path: path.clone(),
-            vault_path: path,
             include: vec!["**/*.md".to_string()],
-            exclude: rms_memory_core::workspace::default_exclude(),
-            code_index_mode: Default::default(),
-            code_languages: vec!["auto".to_string()],
-            cross_project_vault: false,
             read_only: true,
+            ..ProjectConfig::new(&folder, &folder)
         };
         let mut registry = snapshot.registry;
         registry.projects.insert(key.to_string(), config.clone());
@@ -190,10 +185,11 @@ impl ProjectService {
             .global_vault_path
             .as_deref()
             .ok_or_else(|| anyhow!("Master vault path is not configured; unregister the project and delete its data manually"))?;
-        let master = canonical_or_original(Path::new(master));
-        let vault = canonical_or_original(&configured_vault);
-        let code = canonical_or_original(Path::new(&project.code_path));
-        let home = dirs::home_dir().map(|path| canonical_or_original(&path));
+        let master = rms_memory_core::workspace::canonical_or_given(Path::new(master));
+        let vault = rms_memory_core::workspace::canonical_or_given(&configured_vault);
+        let code = rms_memory_core::workspace::canonical_or_given(Path::new(&project.code_path));
+        let home =
+            dirs::home_dir().map(|path| rms_memory_core::workspace::canonical_or_given(&path));
 
         if vault == Path::new("/")
             || vault == master
@@ -222,10 +218,6 @@ impl ProjectService {
 struct DeletionPaths {
     vault: PathBuf,
     index: PathBuf,
-}
-
-fn canonical_or_original(path: &Path) -> PathBuf {
-    std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf())
 }
 
 fn remove_directory(path: &Path, label: &str, warnings: &mut Vec<String>) -> bool {
@@ -339,7 +331,7 @@ mod tests {
                 .contains_key("demo")
         );
 
-        let canonical_vault = canonical_or_original(&vault);
+        let canonical_vault = rms_memory_core::workspace::canonical_or_given(&vault);
         let hash = blake3::hash(canonical_vault.to_string_lossy().as_bytes())
             .to_hex()
             .to_string();

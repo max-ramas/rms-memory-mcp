@@ -169,6 +169,7 @@ pub async fn evaluate_model(
             .join(workspace.project_hash()?),
     );
     let reused_index = project_dir.join("metadata.json").exists();
+    remove_abandoned_scratch(scratch_root);
     let storage: PathBuf = if reused_index {
         project_dir
     } else {
@@ -236,6 +237,25 @@ async fn run_model(
         hybrid: metrics(&hybrid_ranks, k),
         ranks: vector_ranks.into_iter().zip(hybrid_ranks).collect(),
     })
+}
+
+/// Removes throwaway indexes that an interrupted run (Ctrl+C) left behind.
+fn remove_abandoned_scratch(scratch_root: &Path) {
+    const ABANDONED_AFTER: std::time::Duration = std::time::Duration::from_secs(24 * 60 * 60);
+    let Ok(entries) = std::fs::read_dir(scratch_root) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let abandoned = entry
+            .metadata()
+            .and_then(|meta| meta.modified())
+            .ok()
+            .and_then(|modified| modified.elapsed().ok())
+            .is_some_and(|age| age > ABANDONED_AFTER);
+        if abandoned {
+            let _ = std::fs::remove_dir_all(entry.path());
+        }
+    }
 }
 
 fn slug_for_dir(id: &str) -> String {

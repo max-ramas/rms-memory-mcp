@@ -1,5 +1,7 @@
 //! Leading YAML frontmatter block handling shared by parsing, auditing, and writes.
-use anyhow::{Context, Result};
+use anyhow::{Context, Result, bail};
+use std::io::Write;
+use std::path::Path;
 
 /// A Markdown document split at its leading `---` YAML block.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -46,6 +48,43 @@ pub fn compose(mapping: &serde_yaml::Mapping, body: &str) -> Result<String> {
     Ok(format!("---\n{}\n---\n{}", yaml.trim_end(), body))
 }
 
+/// Runs `change` on the frontmatter mapping of the Markdown file at `path`
+/// (an empty mapping when the file has none). When `change` reports a change
+/// and `write` is set, the file is replaced atomically; unknown keys and the
+/// body are kept. Returns whether `change` changed anything.
+pub fn update_file(
+    path: &Path,
+    write: bool,
+    change: impl FnOnce(&mut serde_yaml::Mapping) -> bool,
+) -> Result<bool> {
+    let text = std::fs::read_to_string(path)
+        .with_context(|| format!("Failed to read {}", path.display()))?;
+    let (mut mapping, body) = match split(&text) {
+        Some(split) => (
+            parse_mapping(split.yaml)
+                .with_context(|| format!("Invalid YAML frontmatter in {}", path.display()))?,
+            split.body,
+        ),
+        None if text.starts_with("---\n") || text.starts_with("---\r\n") => {
+            bail!("Unclosed YAML frontmatter in {}", path.display())
+        }
+        None => (serde_yaml::Mapping::new(), text.as_str()),
+    };
+    if !change(&mut mapping) {
+        return Ok(false);
+    }
+    if write {
+        let parent = path.parent().context("Note path has no parent")?;
+        let mut temporary = tempfile::NamedTempFile::new_in(parent)?;
+        temporary.write_all(compose(&mapping, body)?.as_bytes())?;
+        temporary
+            .persist(path)
+            .map_err(|error| error.error)
+            .with_context(|| format!("Failed to update frontmatter in {}", path.display()))?;
+    }
+    Ok(true)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -78,6 +117,39 @@ mod tests {
         assert!(split("---\nid: a\n").is_none());
         assert!(split("# no frontmatter\n---\n").is_none());
         assert!(split("----\nid: a\n---\n").is_none());
+    }
+
+    #[test]
+    fn update_file_keeps_unknown_keys_and_refuses_unclosed_blocks() {
+        let dir = tempfile::tempdir().unwrap();
+        let note = dir.path().join("note.md");
+        std::fs::write(&note, "---\nid: a\ntags:\n- x\n---\n# Body\n").unwrap();
+        let set_project = |mapping: &mut serde_yaml::Mapping| {
+            mapping.insert("project".into(), "demo".into());
+            true
+        };
+        assert!(update_file(&note, false, set_project).unwrap());
+        assert!(!std::fs::read_to_string(&note).unwrap().contains("project"));
+        assert!(update_file(&note, true, set_project).unwrap());
+        let text = std::fs::read_to_string(&note).unwrap();
+        assert!(text.contains("project: demo") && text.contains("- x"));
+        assert!(text.ends_with("---\n# Body\n"));
+
+        let plain = dir.path().join("plain.md");
+        std::fs::write(&plain, "# Plain\n").unwrap();
+        assert!(update_file(&plain, true, set_project).unwrap());
+        assert_eq!(
+            std::fs::read_to_string(&plain).unwrap(),
+            "---\nproject: demo\n---\n# Plain\n"
+        );
+
+        let unclosed = dir.path().join("unclosed.md");
+        std::fs::write(&unclosed, "---\nid: a\n# Body\n").unwrap();
+        assert!(update_file(&unclosed, true, set_project).is_err());
+        assert_eq!(
+            std::fs::read_to_string(&unclosed).unwrap(),
+            "---\nid: a\n# Body\n"
+        );
     }
 
     #[test]

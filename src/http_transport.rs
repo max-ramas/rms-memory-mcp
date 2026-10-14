@@ -27,6 +27,9 @@ const SESSION_HEADER: &str = "mcp-session-id";
 const MAX_BODY_BYTES: usize = 1_048_576;
 const MAX_SESSIONS: usize = 8;
 const SESSION_IDLE: Duration = Duration::from_secs(60 * 60);
+const MAX_CONNECTIONS: usize = 64;
+const MAX_BATCH_MESSAGES: usize = 32;
+const HEADER_READ_TIMEOUT: Duration = Duration::from_secs(10);
 
 pub fn token_path() -> PathBuf {
     crate::workspace::base_dir().join("http-token")
@@ -106,10 +109,12 @@ struct State {
 
 pub async fn serve(port: u16, max_backups: usize, scope: Option<String>) -> Result<()> {
     crate::update_check::record_startup_fingerprint();
-    let token = load_or_create_token()?;
+    // Bound first: a second server that fails on the busy port must not
+    // replace the token the running one checks.
     let listener = tokio::net::TcpListener::bind(("127.0.0.1", port))
         .await
         .with_context(|| format!("cannot listen on 127.0.0.1:{port}"))?;
+    let token = load_or_create_token()?;
     let port = listener.local_addr()?.port();
     let state = Arc::new(State {
         token,
@@ -125,18 +130,34 @@ pub async fn serve(port: u16, max_backups: usize, scope: Option<String>) -> Resu
         token_path().display()
     );
 
+    let connections = Arc::new(tokio::sync::Semaphore::new(MAX_CONNECTIONS));
     loop {
-        let (stream, _) = tokio::select! {
-            accepted = listener.accept() => accepted?,
+        let accepted = tokio::select! {
+            accepted = listener.accept() => accepted,
             _ = tokio::signal::ctrl_c() => break,
+        };
+        let stream = match accepted {
+            Ok((stream, _)) => stream,
+            // For example out of file descriptors: keep serving once it passes.
+            Err(error) => {
+                tracing::warn!("HTTP accept failed: {error}");
+                tokio::time::sleep(Duration::from_millis(100)).await;
+                continue;
+            }
+        };
+        let Ok(permit) = connections.clone().try_acquire_owned() else {
+            continue;
         };
         let state = state.clone();
         tokio::spawn(async move {
+            let _permit = permit;
             let service = hyper::service::service_fn(move |request| {
                 let state = state.clone();
                 async move { Ok::<_, Infallible>(handle(&state, request).await) }
             });
             if let Err(error) = hyper::server::conn::http1::Builder::new()
+                .timer(hyper_util::rt::TokioTimer::new())
+                .header_read_timeout(HEADER_READ_TIMEOUT)
                 .serve_connection(hyper_util::rt::TokioIo::new(stream), service)
                 .await
             {
@@ -209,7 +230,8 @@ fn authorized(headers: &HeaderMap, token: &str) -> bool {
     let Some(presented) = headers
         .get(hyper::header::AUTHORIZATION)
         .and_then(|value| value.to_str().ok())
-        .and_then(|value| value.strip_prefix("Bearer "))
+        .and_then(|value| value.split_once(' '))
+        .and_then(|(scheme, token)| scheme.eq_ignore_ascii_case("bearer").then_some(token))
     else {
         return false;
     };
@@ -304,6 +326,14 @@ async fn post(
         Value::Array(messages) => messages,
         message => vec![message],
     };
+    if messages.len() > MAX_BATCH_MESSAGES {
+        return json_response(
+            StatusCode::BAD_REQUEST,
+            &McpServer::parse_error(format!(
+                "Batch too large (max {MAX_BATCH_MESSAGES} messages)"
+            )),
+        );
+    }
 
     let (session, created) = match session_id {
         Some(id) => match state.sessions.lock().await.get(&id) {
@@ -323,7 +353,12 @@ async fn post(
                 )),
                 last_used: std::sync::Mutex::new(Instant::now()),
             });
-            admit(state, id.clone(), session.clone()).await;
+            if !admit(state, id.clone(), session.clone()).await {
+                return respond(
+                    StatusCode::SERVICE_UNAVAILABLE,
+                    "Too many sessions are busy; retry later",
+                );
+            }
             (session, Some(id))
         }
         None => {
@@ -352,7 +387,7 @@ async fn post(
                 Err(error) => responses.push(serde_json::json!({
                     "jsonrpc": "2.0",
                     "id": Value::Null,
-                    "error": { "code": -32600, "message": format!("Invalid request: {error}") }
+                    "error": { "code": -32603, "message": format!("Internal error: {error:#}") }
                 })),
             }
         }
@@ -374,8 +409,8 @@ async fn post(
 }
 
 /// Register a session, dropping idle ones and then the least recently used
-/// when the cap is reached.
-async fn admit(state: &State, id: String, session: Arc<Session>) {
+/// one that is not handling a request. `false` when every session is busy.
+async fn admit(state: &State, id: String, session: Arc<Session>) -> bool {
     let mut sessions = state.sessions.lock().await;
     let idle_since = |session: &Session| {
         session
@@ -395,6 +430,7 @@ async fn admit(state: &State, id: String, session: Arc<Session>) {
     while sessions.len() >= MAX_SESSIONS {
         let Some(oldest) = sessions
             .iter()
+            .filter(|(_, session)| session.server.try_lock().is_ok())
             .min_by_key(|(_, session)| idle_since(session))
             .map(|(id, _)| id.clone())
         else {
@@ -404,11 +440,15 @@ async fn admit(state: &State, id: String, session: Arc<Session>) {
             evicted.push(session);
         }
     }
-    sessions.insert(id, session);
+    let admitted = sessions.len() < MAX_SESSIONS;
+    if admitted {
+        sessions.insert(id, session);
+    }
     drop(sessions);
     for session in evicted {
-        session.server.lock().await.shutdown();
+        tokio::spawn(async move { session.server.lock().await.shutdown() });
     }
+    admitted
 }
 
 #[cfg(test)]
@@ -476,6 +516,10 @@ mod tests {
         let token = "a".repeat(64);
         assert!(authorized(
             &headers(&[("authorization", &format!("Bearer {token}"))]),
+            &token
+        ));
+        assert!(authorized(
+            &headers(&[("authorization", &format!("bearer {token}"))]),
             &token
         ));
         assert!(!authorized(&headers(&[]), &token));

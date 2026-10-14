@@ -54,6 +54,7 @@ pub mod commands;
 pub mod http_transport;
 #[doc(hidden)]
 pub mod installer;
+#[doc(hidden)]
 pub mod mcp_server;
 #[doc(hidden)]
 pub mod rules_injector;

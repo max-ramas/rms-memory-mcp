@@ -130,11 +130,20 @@ impl HookArgs {
         use crate::tools::continuity;
         let vault_root = workspace.root.as_path();
         let git = || rms_memory_core::git_context::git_context(&workspace.code_path);
-        if self.apply && !matches!(self.event, HookEvent::SessionStart) {
-            workspace.ensure_writable()?;
-        }
         let caller = "rms-memory-hook";
         let event = self.event.as_str();
+        // IDE hook runners report a failure on every event; skip quietly instead.
+        if self.apply
+            && !matches!(self.event, HookEvent::SessionStart)
+            && workspace.is_read_only()?
+        {
+            return Ok(serde_json::json!({
+                "event": event,
+                "project": project_key,
+                "applied": false,
+                "skipped": "read-only vault",
+            }));
+        }
 
         match self.event {
             HookEvent::SessionStart => {

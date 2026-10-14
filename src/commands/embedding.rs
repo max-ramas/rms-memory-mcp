@@ -1,4 +1,4 @@
-use crate::embedding::{self, Backend, CATALOG, EmbeddingProfile, OLLAMA_PREFIX};
+use crate::embedding::{self, Backend, CATALOG, OLLAMA_PREFIX};
 use crate::workspace::Workspace;
 use anyhow::{Result, bail};
 use clap::{Args, Subcommand};
@@ -36,9 +36,9 @@ pub struct EvalArgs {
     /// Save the generated heading queries as JSONL to edit and reuse
     #[arg(long, conflicts_with = "queries")]
     pub write_queries: Option<PathBuf>,
-    /// Cut-off for hit@k
-    #[arg(long, default_value_t = 5)]
-    pub k: usize,
+    /// Cut-off for hit@k (1-10; ranks beyond the top 10 are not kept)
+    #[arg(long, default_value_t = 5, value_parser = clap::value_parser!(u8).range(1..=10))]
+    pub k: u8,
     /// Maximum number of generated queries (0 = one per note)
     #[arg(long, default_value_t = 200)]
     pub max_queries: usize,
@@ -121,6 +121,12 @@ fn use_model(args: &UseArgs) -> Result<()> {
         "Embedding model set to `{}` ({} dimensions).",
         profile.id, profile.dimension
     );
+    if std::env::var(embedding::MODEL_ENV).is_ok_and(|id| !id.trim().is_empty()) {
+        println!(
+            "Note: {} is set in this shell and overrides this choice for programs started from it.",
+            embedding::MODEL_ENV
+        );
+    }
     println!(
         "Restart the MCP server in your IDE and the RMS Memory app. Each project then builds a\n\
          separate index for this model on its next sync; the previous model's index is kept,\n\
@@ -138,7 +144,8 @@ async fn eval(args: &EvalArgs, scope: Option<String>) -> Result<()> {
     } else {
         args.models
             .iter()
-            .map(|id| EmbeddingProfile::resolve(id, &global))
+            // Probes Ollama models for their vector size; the config is not saved.
+            .map(|id| embedding::configure(&mut global.clone(), id, None))
             .collect::<Result<Vec<_>>>()?
     };
 
@@ -168,7 +175,8 @@ async fn eval(args: &EvalArgs, scope: Option<String>) -> Result<()> {
     for profile in &profiles {
         eprintln!("Evaluating {} on {} queries...", profile.id, cases.len());
         results.push(
-            crate::eval::evaluate_model(&workspace, profile, &cases, args.k, &scratch).await?,
+            crate::eval::evaluate_model(&workspace, profile, &cases, usize::from(args.k), &scratch)
+                .await?,
         );
     }
 

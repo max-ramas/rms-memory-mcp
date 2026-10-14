@@ -39,6 +39,7 @@ impl InjectRulesArgs {
             let mut paths = registry
                 .projects
                 .values()
+                .filter(|project| !project.read_only)
                 .map(|project| std::path::PathBuf::from(&project.code_path))
                 .collect::<Vec<_>>();
             paths.sort();

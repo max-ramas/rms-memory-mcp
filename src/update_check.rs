@@ -168,10 +168,14 @@ impl BinaryFingerprint {
 
     /// Notice when the binary on disk was replaced after this process started
     /// (e.g. by an upgrade), so the running server is outdated.
+    /// A deleted binary counts as replaced: upgrades may remove the old file.
     pub fn stale_notice(&self) -> Option<String> {
-        let meta = std::fs::metadata(&self.path).ok()?;
-        if meta.len() == self.len && meta.modified().ok() == self.modified {
-            return None;
+        match std::fs::metadata(&self.path) {
+            Ok(meta) if meta.len() == self.len && meta.modified().ok() == self.modified => {
+                return None;
+            }
+            Err(error) if error.kind() != std::io::ErrorKind::NotFound => return None,
+            _ => {}
         }
         Some(format!(
             "This MCP server is still running rms-memory {CURRENT_VERSION}, but {} was replaced on disk after it started. Restart the MCP server (or the IDE) to load the new binary.",
@@ -242,6 +246,8 @@ mod tests {
         };
         assert!(fingerprint.stale_notice().is_none());
         std::fs::write(&path, b"replaced binary").unwrap();
+        assert!(fingerprint.stale_notice().is_some());
+        std::fs::remove_file(&path).unwrap();
         assert!(fingerprint.stale_notice().is_some());
     }
 }

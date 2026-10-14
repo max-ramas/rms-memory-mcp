@@ -360,12 +360,9 @@ async fn execute_inner(
         .indexer
         .as_ref()
         .ok_or_else(|| anyhow!("Indexer not initialized"))?;
-    let query_vector = {
-        let mut indexer = indexer.lock().await;
-        indexer
-            .embed_query(query)
-            .map_err(|error| anyhow!("Embed failed: {error}"))?
-    };
+    let query_vector = crate::indexer::Indexer::embed_query_shared(indexer, query)
+        .await
+        .map_err(|error| anyhow!("Embed failed: {error}"))?;
 
     let (results, retrieval_mode) = if let Some(keys) = project_keys {
         // Federated path: open each project's store independently. Does NOT

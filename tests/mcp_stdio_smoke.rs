@@ -134,6 +134,21 @@ fn mcp_stdio_initialize_and_tools_list() {
         }
     }
 
+    // A malformed request is answered with an error; the session goes on.
+    writeln!(stdin, "{}", json!({ "id": 6, "method": "ping" })).unwrap();
+    stdin.flush().unwrap();
+    let invalid = read_rpc(&mut reader);
+    assert_eq!(invalid["id"], 6);
+    assert_eq!(invalid["error"]["code"], -32600, "{invalid}");
+    writeln!(
+        stdin,
+        "{}",
+        json!({ "jsonrpc": "2.0", "id": 7, "method": "tools/list", "params": {} })
+    )
+    .unwrap();
+    stdin.flush().unwrap();
+    assert_eq!(read_rpc(&mut reader)["id"], 7);
+
     drop(stdin);
     let _ = child.wait_timeout(Duration::from_secs(5));
     let _ = child.kill();

@@ -71,37 +71,18 @@ impl Store {
         ]))
     }
 
-    async fn open_or_create_named_table(
-        &self,
-        name: &str,
-        schema: Arc<ArrowSchema>,
-    ) -> Result<Table> {
-        match self.db.open_table(name).execute().await {
-            Ok(table) => Ok(table),
-            Err(open_error) => match self.db.create_empty_table(name, schema).execute().await {
-                Ok(table) => Ok(table),
-                Err(create_error) => self.db.open_table(name).execute().await.with_context(|| {
-                    format!(
-                        "could not open table {name} after create race; open={open_error}; create={create_error}"
-                    )
-                }),
-            },
-        }
-    }
-
     pub async fn open_or_create_file_history_tables(&self) -> Result<(Table, Table)> {
         let history = self
-            .open_or_create_named_table(
-                &self.file_history_table_name(),
-                Self::file_history_schema(),
-            )
-            .await?;
+            .open_or_create(&self.file_history_table_name(), Self::file_history_schema())
+            .await?
+            .0;
         let meta = self
-            .open_or_create_named_table(
+            .open_or_create(
                 &self.file_history_meta_table_name(),
                 Self::file_history_meta_schema(),
             )
-            .await?;
+            .await?
+            .0;
         Ok((history, meta))
     }
 
@@ -117,9 +98,6 @@ impl Store {
             .await?;
         while let Some(batch) = stream.next().await {
             let batch = batch?;
-            if batch.num_rows() == 0 {
-                continue;
-            }
             if batch.num_rows() == 0 {
                 continue;
             }

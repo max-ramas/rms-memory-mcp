@@ -62,6 +62,7 @@ fn percent_decode(text: &str) -> Result<String> {
         if bytes[index] == b'%' {
             let hex = text
                 .get(index + 1..index + 3)
+                .filter(|hex| hex.bytes().all(|byte| byte.is_ascii_hexdigit()))
                 .and_then(|hex| u8::from_str_radix(hex, 16).ok())
                 .ok_or_else(|| anyhow!("Invalid percent-encoding in {text:?}"))?;
             out.push(hex);
@@ -101,15 +102,16 @@ pub fn list(ctx: &AppContext) -> Result<Value> {
     else {
         return Ok(json!({ "resources": [] }));
     };
+    let base = format!("{SCHEME}{}", percent_encode_path(project));
     let mut resources = vec![
         resource(
-            format!("{SCHEME}{project}/overview"),
+            format!("{base}/overview"),
             format!("{project} overview"),
             "Document counts, recent notes, active checkpoints and git state",
             "application/json",
         ),
         resource(
-            format!("{SCHEME}{project}/instructions"),
+            format!("{base}/instructions"),
             format!("{project} memory protocol"),
             "How agents should search, read and persist memory in this project",
             "text/markdown",
@@ -118,7 +120,7 @@ pub fn list(ctx: &AppContext) -> Result<Value> {
     for checkpoint in super::continuity::checkpoint_query(root, Some("active"))? {
         resources.push(resource(
             format!(
-                "{SCHEME}{project}/checkpoint/{}",
+                "{base}/checkpoint/{}",
                 percent_encode_path(&checkpoint.name)
             ),
             format!("Checkpoint: {}", checkpoint.name),
@@ -337,6 +339,7 @@ mod tests {
             "rms://proj/note/",
             "rms://proj/unknown",
             "rms://proj/note/%zz",
+            "rms://proj/note/%+1",
         ] {
             assert!(ResourceUri::parse(bad).is_err(), "{bad}");
         }
