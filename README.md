@@ -65,6 +65,7 @@ You're developing a single project but switching between different agents — Cu
 | 🧊 **Concurrent bind cache (v1.0.9)** | Up to 4 warm Store+watcher pairs (LRU); multi-root IDE sessions stop thrashing open/close. |
 | 🧱 **Cargo workspace (v1.0.9+)** | `rms-memory-{core,index,vault,cli}` path crates under `crates/`; public umbrella `rms-memory-mcp` keeps stable module paths for the GUI. `cli` hosts cycle-free `gc`/`prune` (1.1.1). See [docs/crate-split.md](./docs/crate-split.md). |
 | 📦 **Unified Releases** | Public assets use `rms_memory_mcp_<version>_<target>.*` / `rms_memory_gui_<version>_*` on the **same** `vX.Y.Z` tag (MCP + GUI share numbering). Unversioned names are no longer published. |
+| 🪶 **Small idle footprint (v1.3.0)** | Each `serve` process loads the embedding model only when it needs to embed and releases it after 5 idle minutes (`RMS_MEMORY_MODEL_IDLE_SECS`), so many IDEs with an idle server cost about 50 MB each instead of a model copy each. |
 | ⚙️ **Dynamic Auto-Installer** | `rms-memory install` scans your system and wires itself into every supported IDE. |
 | 📜 **Rules-as-Code Patching** | Non-destructive AST patching of `.cursorrules`, `.zed/assistant.md`, etc. Opt-in by default. |
 | 🧪 **Durable Vault Writes** | `rms_write` creates rolling `.bak` backups and atomically replaces `create`/`replace` targets after fsync, so interrupted writes never expose a truncated Markdown file. Optional `dry_run` previews create/update/noop without touching disk or the index (fingerprint ignores volatile audit stamps). |

@@ -28,6 +28,17 @@ struct RpcError {
     message: String,
 }
 
+/// How long an unused embedding model stays loaded in a server process.
+/// `RMS_MEMORY_MODEL_IDLE_SECS` overrides the default of five minutes.
+fn model_idle_timeout() -> std::time::Duration {
+    std::env::var("RMS_MEMORY_MODEL_IDLE_SECS")
+        .ok()
+        .and_then(|value| value.parse::<u64>().ok())
+        .filter(|secs| *secs > 0)
+        .map(std::time::Duration::from_secs)
+        .unwrap_or(std::time::Duration::from_secs(300))
+}
+
 fn write_json_line(writer: &mut impl Write, value: &impl Serialize) -> Result<()> {
     serde_json::to_writer(&mut *writer, value)?;
     writer.write_all(b"\n")?;
@@ -499,11 +510,34 @@ impl McpServer {
         Ok(crate::wiki::WikiService::new(retrieval, root, scope))
     }
 
+    /// The embedding model is loaded on first use and released after
+    /// [`model_idle_timeout`] without embedding calls, so idle IDE servers do
+    /// not each hold a model in memory.
     pub(crate) fn shared_indexer() -> Result<Arc<Mutex<Indexer>>> {
-        Ok(Arc::new(Mutex::new(
-            crate::indexer::Indexer::new()
+        let indexer = Arc::new(Mutex::new(
+            crate::indexer::Indexer::new_lazy()
                 .map_err(|e| anyhow::anyhow!("Failed to initialize embedding model: {e}"))?,
-        )))
+        ));
+        let weak = Arc::downgrade(&indexer);
+        let idle = model_idle_timeout();
+        tokio::spawn(async move {
+            let mut tick = tokio::time::interval(idle.min(std::time::Duration::from_secs(30)));
+            loop {
+                tick.tick().await;
+                let Some(indexer) = weak.upgrade() else {
+                    break;
+                };
+                if let Ok(mut guard) = indexer.try_lock()
+                    && guard.release_if_idle(idle)
+                {
+                    tracing::info!(
+                        "Released the embedding model after {}s idle",
+                        idle.as_secs()
+                    );
+                }
+            }
+        });
+        Ok(indexer)
     }
 
     pub(crate) fn new(

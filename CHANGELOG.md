@@ -23,6 +23,7 @@ All notable changes to this project will be documented in this file.
 - **`projects migrate` dropped frontmatter keys:** rewriting `project` / `link` re-serialized only the known fields, losing `tags`, `aliases` and other keys and writing `null`s. It now edits the YAML mapping in place.
 - **Vault full-text search ignored most notes:** a full reindex built the full-text index on an empty table and sync never added new rows to it, so keyword search scanned unindexed rows, missed terms and returned hits without BM25 order. The index is now built after the insert and new rows are folded in on every sync; existing vaults are repaired on their next sync. On test vaults hybrid search MRR rose from 0.31–0.42 to 0.45–0.73.
 - CLI errors are printed to stderr instead of only to `rms.log`.
+- **Idle MCP servers held the embedding model in memory:** every `rms-memory serve` process loaded the model at start-up and kept it for its whole life (about 1.4 GB each for the default model, multiplied by every IDE and agent that runs a server). The model is now loaded on the first embedding call and released after five minutes without one (`RMS_MEMORY_MODEL_IDLE_SECS` overrides this); an idle server stays around 50 MB and reloads in about a second. Embedding batches are smaller (8 texts), which caps the ONNX runtime's memory peak.
 
 ### Changed
 - Keyword-only search is used only for single tokens and identifier-like queries (digits, `-_./:#@`, ALL-CAPS, camelCase); other short queries go through hybrid search.

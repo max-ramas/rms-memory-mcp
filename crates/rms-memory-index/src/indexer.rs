@@ -4,16 +4,29 @@ use fastembed::{EmbeddingModel, InitOptions, TextEmbedding};
 use pulldown_cmark::{Event, Options, Parser, Tag};
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
-use std::time::Duration;
+use std::time::{Duration, Instant};
+
+/// Texts per ONNX run. The runtime keeps its arena at the peak batch size, so
+/// larger batches permanently grow every long-lived server process.
+const EMBED_BATCH_SIZE: usize = 8;
 
 pub struct Indexer {
     engine: Engine,
     profile: EmbeddingProfile,
+    last_used: Instant,
 }
 
 enum Engine {
-    Fastembed(Box<TextEmbedding>),
-    Ollama { url: String, model: String },
+    /// The ONNX session takes ~1.4 GB for the default model; it is loaded on
+    /// first use and can be released while idle.
+    Fastembed {
+        model: EmbeddingModel,
+        session: Option<Box<TextEmbedding>>,
+    },
+    Ollama {
+        url: String,
+        model: String,
+    },
 }
 
 #[derive(Debug, Clone)]
@@ -51,25 +64,69 @@ fn system_temp_is_writable() -> bool {
 }
 
 impl Indexer {
-    /// Indexer for the process-wide model (`embedding::active`).
+    /// Indexer for the process-wide model (`embedding::active`), loaded now.
     pub fn new() -> Result<Self> {
         Self::for_profile(crate::embedding::active().clone())
     }
 
+    /// Like [`Indexer::new`], but the model is loaded by the first embedding
+    /// call. Long-lived servers use this so idle processes stay small.
+    pub fn new_lazy() -> Result<Self> {
+        Self::unloaded(crate::embedding::active().clone())
+    }
+
     pub fn for_profile(profile: EmbeddingProfile) -> Result<Self> {
+        let mut indexer = Self::unloaded(profile)?;
+        indexer.ensure_loaded()?;
+        Ok(indexer)
+    }
+
+    fn unloaded(profile: EmbeddingProfile) -> Result<Self> {
         let engine = match &profile.backend {
             Backend::Ollama { url, model } => Engine::Ollama {
                 url: url.clone(),
                 model: model.clone(),
             },
-            Backend::Fastembed => {
-                let model = crate::embedding::fastembed_model(&profile.id).with_context(|| {
+            Backend::Fastembed => Engine::Fastembed {
+                model: crate::embedding::fastembed_model(&profile.id).with_context(|| {
                     format!("No bundled embedding model named `{}`", profile.id)
-                })?;
-                Engine::Fastembed(Box::new(Self::load_fastembed(model)?))
-            }
+                })?,
+                session: None,
+            },
         };
-        Ok(Self { engine, profile })
+        Ok(Self {
+            engine,
+            profile,
+            last_used: Instant::now(),
+        })
+    }
+
+    fn ensure_loaded(&mut self) -> Result<()> {
+        if let Engine::Fastembed { model, session } = &mut self.engine
+            && session.is_none()
+        {
+            *session = Some(Box::new(Self::load_fastembed(model.clone())?));
+        }
+        Ok(())
+    }
+
+    pub fn is_loaded(&self) -> bool {
+        match &self.engine {
+            Engine::Fastembed { session, .. } => session.is_some(),
+            Engine::Ollama { .. } => true,
+        }
+    }
+
+    /// Drops the local model when it has not been used for `idle`; the next
+    /// embedding call loads it again. Returns whether memory was released.
+    pub fn release_if_idle(&mut self, idle: Duration) -> bool {
+        if self.last_used.elapsed() < idle {
+            return false;
+        }
+        match &mut self.engine {
+            Engine::Fastembed { session, .. } => session.take().is_some(),
+            Engine::Ollama { .. } => false,
+        }
     }
 
     pub fn profile(&self) -> &EmbeddingProfile {
@@ -301,10 +358,16 @@ impl Indexer {
                 .collect::<Vec<_>>();
             &prefixed
         };
+        self.ensure_loaded()?;
+        self.last_used = Instant::now();
         let vectors = match &mut self.engine {
-            Engine::Fastembed(model) => model.embed(texts, None)?,
+            Engine::Fastembed { session, .. } => session
+                .as_mut()
+                .context("embedding model is not loaded")?
+                .embed(texts, Some(EMBED_BATCH_SIZE))?,
             Engine::Ollama { url, model } => crate::embedding::ollama_embed(url, model, texts)?,
         };
+        self.last_used = Instant::now();
         if let Some(vector) = vectors.iter().find(|v| v.len() != self.profile.dimension) {
             anyhow::bail!(
                 "Embedding model `{}` returned {}-dimensional vectors, expected {}",
