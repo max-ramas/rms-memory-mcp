@@ -38,6 +38,8 @@ pub fn load_or_create_token() -> Result<String> {
     if let Ok(existing) = std::fs::read_to_string(&path) {
         let token = existing.trim().to_string();
         if token.len() >= 32 {
+            restrict_to_owner(&path)
+                .with_context(|| format!("failed to restrict {}", path.display()))?;
             return Ok(token);
         }
     }
@@ -63,7 +65,24 @@ fn write_private(path: &std::path::Path, contents: &str) -> std::io::Result<()> 
         .truncate(true)
         .mode(0o600)
         .open(path)?;
+    restrict_to_owner(path)?;
     file.write_all(contents.as_bytes())
+}
+
+/// `mode` above only applies when the file is created; a token file that
+/// already exists may have been written group- or world-readable.
+#[cfg(unix)]
+fn restrict_to_owner(path: &std::path::Path) -> std::io::Result<()> {
+    use std::os::unix::fs::PermissionsExt;
+    if std::fs::metadata(path)?.permissions().mode() & 0o077 != 0 {
+        std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600))?;
+    }
+    Ok(())
+}
+
+#[cfg(not(unix))]
+fn restrict_to_owner(_path: &std::path::Path) -> std::io::Result<()> {
+    Ok(())
 }
 
 #[cfg(not(unix))]
@@ -195,7 +214,12 @@ fn authorized(headers: &HeaderMap, token: &str) -> bool {
         return false;
     };
     let (a, b) = (presented.trim().as_bytes(), token.as_bytes());
-    a.len() == b.len() && a.iter().zip(b).fold(0u8, |acc, (x, y)| acc | (x ^ y)) == 0
+    // Every byte is compared so the time does not reveal the matching prefix.
+    let diff = a
+        .iter()
+        .zip(b)
+        .fold(0u8, |acc, (x, y)| acc | std::hint::black_box(x ^ y));
+    a.len() == b.len() && std::hint::black_box(diff) == 0
 }
 
 fn is_initialize(message: &Value) -> bool {
@@ -427,6 +451,24 @@ mod tests {
         ] {
             assert!(check_headers(&bad, 7337).is_err(), "{bad:?}");
         }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn an_existing_world_readable_token_file_is_restricted_to_the_owner() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("http-token");
+        std::fs::write(&path, "t".repeat(64)).unwrap();
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o644)).unwrap();
+
+        restrict_to_owner(&path).unwrap();
+        let mode = std::fs::metadata(&path).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode, 0o600);
+
+        write_private(&path, &"u".repeat(64)).unwrap();
+        let mode = std::fs::metadata(&path).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode, 0o600);
     }
 
     #[test]

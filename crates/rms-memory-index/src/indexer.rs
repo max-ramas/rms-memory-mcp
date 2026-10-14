@@ -41,6 +41,48 @@ pub enum SyncStatus {
     Busy,
 }
 
+/// Model access for long index runs. A shared indexer is locked per batch,
+/// so searches embed their query between batches instead of waiting for the
+/// whole run.
+pub enum EmbedderRef<'a> {
+    Exclusive(&'a mut Indexer),
+    Shared(&'a tokio::sync::Mutex<Indexer>),
+}
+
+impl EmbedderRef<'_> {
+    pub async fn embed(&mut self, texts: &[String]) -> Result<Vec<Vec<f32>>> {
+        match self {
+            Self::Exclusive(indexer) => indexer.embed(texts),
+            Self::Shared(indexer) => indexer.lock().await.embed(texts),
+        }
+    }
+
+    pub fn reborrow(&mut self) -> EmbedderRef<'_> {
+        match self {
+            Self::Exclusive(indexer) => EmbedderRef::Exclusive(indexer),
+            Self::Shared(indexer) => EmbedderRef::Shared(indexer),
+        }
+    }
+}
+
+impl<'a> From<&'a mut Indexer> for EmbedderRef<'a> {
+    fn from(indexer: &'a mut Indexer) -> Self {
+        Self::Exclusive(indexer)
+    }
+}
+
+impl<'a> From<&'a mut tokio::sync::MutexGuard<'_, Indexer>> for EmbedderRef<'a> {
+    fn from(guard: &'a mut tokio::sync::MutexGuard<'_, Indexer>) -> Self {
+        Self::Exclusive(guard)
+    }
+}
+
+impl<'a> From<&'a tokio::sync::Mutex<Indexer>> for EmbedderRef<'a> {
+    fn from(indexer: &'a tokio::sync::Mutex<Indexer>) -> Self {
+        Self::Shared(indexer)
+    }
+}
+
 /// How long an unused embedding model stays loaded in a long-lived process.
 /// `RMS_MEMORY_MODEL_IDLE_SECS` overrides the default of five minutes.
 pub fn model_idle_timeout() -> Duration {
@@ -549,31 +591,31 @@ pub async fn vault_freshness(
     Ok(freshness)
 }
 
-pub async fn sync_vault(
+pub async fn sync_vault<'a>(
     workspace: &rms_memory_core::workspace::Workspace,
     store: &crate::store::Store,
-    indexer: &mut Indexer,
+    indexer: impl Into<EmbedderRef<'a>>,
 ) -> Result<()> {
     let _lock = crate::index_lock::acquire(&store.storage_path).await?;
-    sync_vault_inner(workspace, store, indexer).await
+    sync_vault_inner(workspace, store, indexer.into()).await
 }
 
-pub async fn try_sync_vault(
+pub async fn try_sync_vault<'a>(
     workspace: &rms_memory_core::workspace::Workspace,
     store: &crate::store::Store,
-    indexer: &mut Indexer,
+    indexer: impl Into<EmbedderRef<'a>>,
 ) -> Result<SyncStatus> {
     let Some(_lock) = crate::index_lock::try_acquire(&store.storage_path)? else {
         return Ok(SyncStatus::Busy);
     };
-    sync_vault_inner(workspace, store, indexer).await?;
+    sync_vault_inner(workspace, store, indexer.into()).await?;
     Ok(SyncStatus::Completed)
 }
 
 async fn sync_vault_inner(
     workspace: &rms_memory_core::workspace::Workspace,
     store: &crate::store::Store,
-    indexer: &mut Indexer,
+    mut indexer: EmbedderRef<'_>,
 ) -> Result<()> {
     // Try to open existing table
     let table = match store.open_table().await {
@@ -715,16 +757,7 @@ async fn sync_vault_inner(
     let graph_needs_reconcile =
         purged_excluded || purged_graph_nodes > 0 || !to_delete.is_empty() || !to_index.is_empty();
 
-    // 1. Delete old vectors
-    for doc_id in &to_delete {
-        tracing::info!("Sync: Deleting outdated/orphaned document_id: {}", doc_id);
-        if let Err(e) = store.delete_document(&table, doc_id).await {
-            tracing::warn!("Failed to delete document {doc_id}: {e}");
-        }
-    }
-
-    // 2. Insert new vectors
-    if to_index.is_empty() {
+    if to_index.is_empty() && to_delete.is_empty() {
         tracing::info!("Sync: No changes detected. Vault is up to date.");
         if let Err(error) = store.index_new_rows(&table).await {
             tracing::warn!("Failed to add new rows to the vault search index: {error:#}");
@@ -735,6 +768,8 @@ async fn sync_vault_inner(
         return Ok(());
     }
 
+    // Embed first and swap rows at the end: searches during a long sync still
+    // find the previous version of changed notes.
     tracing::info!("Sync: Indexing {} modified/new files...", to_index.len());
     let mut records = Vec::new();
     for (file_path, doc, mtime, doc_id) in to_index {
@@ -790,7 +825,7 @@ async fn sync_vault_inner(
         let mut failed = false;
 
         for batch in chunk_texts.chunks(batch_size) {
-            match indexer.embed(batch) {
+            match indexer.embed(batch).await {
                 Ok(mut e) => embeddings.append(&mut e),
                 Err(err) => {
                     tracing::error!("Failed to embed batch for {}: {}", title, err);
@@ -829,6 +864,12 @@ async fn sync_vault_inner(
         }
     }
 
+    for doc_id in &to_delete {
+        tracing::info!("Sync: Deleting outdated/orphaned document_id: {}", doc_id);
+        if let Err(e) = store.delete_document(&table, doc_id).await {
+            tracing::warn!("Failed to delete document {doc_id}: {e}");
+        }
+    }
     if !records.is_empty() {
         store.insert_batch(&table, records).await?;
         tracing::info!("Sync: Upsert complete.");
@@ -843,19 +884,19 @@ async fn sync_vault_inner(
     Ok(())
 }
 
-pub async fn index_vault_full(
+pub async fn index_vault_full<'a>(
     workspace: &rms_memory_core::workspace::Workspace,
     store: &crate::store::Store,
-    indexer: &mut Indexer,
+    indexer: impl Into<EmbedderRef<'a>>,
 ) -> Result<()> {
     let _lock = crate::index_lock::acquire(&store.storage_path).await?;
-    index_vault_full_inner(workspace, store, indexer).await
+    index_vault_full_inner(workspace, store, indexer.into()).await
 }
 
 async fn index_vault_full_inner(
     workspace: &rms_memory_core::workspace::Workspace,
     store: &crate::store::Store,
-    indexer: &mut Indexer,
+    mut indexer: EmbedderRef<'_>,
 ) -> Result<()> {
     if let Err(e) = store.db.drop_table(&store.table_name, &[]).await {
         tracing::warn!("Failed to drop memory table: {e}");
@@ -962,7 +1003,7 @@ async fn index_vault_full_inner(
         let mut failed = false;
 
         for batch in chunk_texts.chunks(batch_size) {
-            match indexer.embed(batch) {
+            match indexer.embed(batch).await {
                 Ok(mut e) => embeddings.append(&mut e),
                 Err(err) => {
                     tracing::error!("Failed to embed batch for {}: {}", title, err);

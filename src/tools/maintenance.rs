@@ -59,23 +59,23 @@ pub async fn execute_reindex(
         .and_then(|v| v.as_str())
         .unwrap_or("vault");
 
-    let mut indexer = indexer.lock().await;
+    let indexer = &**indexer;
     let mut vault_done = false;
     let mut code_stats = None;
     match corpus {
         "vault" => {
-            crate::indexer::index_vault_full(&workspace, store, &mut indexer).await?;
+            crate::indexer::index_vault_full(&workspace, store, indexer).await?;
             vault_done = true;
         }
         "code" => {
             code_stats =
-                Some(crate::code_indexer::index_code_full(&workspace, store, &mut indexer).await?);
+                Some(crate::code_indexer::index_code_full(&workspace, store, indexer).await?);
         }
         "all" => {
-            crate::indexer::index_vault_full(&workspace, store, &mut indexer).await?;
+            crate::indexer::index_vault_full(&workspace, store, indexer).await?;
             vault_done = true;
             code_stats =
-                Some(crate::code_indexer::index_code_full(&workspace, store, &mut indexer).await?);
+                Some(crate::code_indexer::index_code_full(&workspace, store, indexer).await?);
         }
         other => {
             return Err(anyhow!(
@@ -115,8 +115,8 @@ pub async fn execute_sync(
         .indexer
         .as_ref()
         .ok_or_else(|| anyhow!("Indexer not initialized"))?;
-    let mut indexer = indexer.lock().await;
-    crate::indexer::sync_vault(&workspace, store, &mut indexer).await?;
+    let indexer = &**indexer;
+    crate::indexer::sync_vault(&workspace, store, indexer).await?;
     let payload = serde_json::json!({
         "action": "sync",
         "project": args.get("project").and_then(|v| v.as_str()),

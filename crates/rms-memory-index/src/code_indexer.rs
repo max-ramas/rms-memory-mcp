@@ -1,3 +1,4 @@
+use crate::indexer::EmbedderRef;
 use anyhow::{Context, Result};
 use ignore::WalkBuilder;
 use std::collections::{HashMap, HashSet};
@@ -63,26 +64,26 @@ pub async fn purge_wiki_code_records(
     Ok(stale.len())
 }
 
-pub async fn index_code_full(
+pub async fn index_code_full<'a>(
     workspace: &rms_memory_core::workspace::Workspace,
     store: &crate::store::Store,
-    indexer: &mut crate::indexer::Indexer,
+    indexer: impl Into<EmbedderRef<'a>>,
 ) -> Result<CodeIndexStats> {
     let _lock = crate::index_lock::acquire(&store.storage_path).await?;
-    let stats = index_code_full_inner(workspace, store, indexer).await?;
+    let stats = index_code_full_inner(workspace, store, indexer.into()).await?;
     mark_code_index_completed(&store.storage_path)?;
     Ok(stats)
 }
 
-pub async fn try_index_code(
+pub async fn try_index_code<'a>(
     workspace: &rms_memory_core::workspace::Workspace,
     store: &crate::store::Store,
-    indexer: &mut crate::indexer::Indexer,
+    indexer: impl Into<EmbedderRef<'a>>,
 ) -> Result<CodeIndexStatus> {
     let Some(_lock) = crate::index_lock::try_acquire(&store.storage_path)? else {
         return Ok(CodeIndexStatus::Busy);
     };
-    index_code_full_inner(workspace, store, indexer).await?;
+    index_code_full_inner(workspace, store, indexer.into()).await?;
     mark_code_index_completed(&store.storage_path)?;
     Ok(CodeIndexStatus::Completed)
 }
@@ -90,12 +91,13 @@ pub async fn try_index_code(
 /// Path-scoped reindex for the code watcher. Falls back to a full walk when the
 /// code index is uninitialized, the dirty set is empty, or it exceeds
 /// [`PATH_SCOPED_FALLBACK_THRESHOLD`].
-pub async fn try_index_code_paths(
+pub async fn try_index_code_paths<'a>(
     workspace: &rms_memory_core::workspace::Workspace,
     store: &crate::store::Store,
-    indexer: &mut crate::indexer::Indexer,
+    indexer: impl Into<EmbedderRef<'a>>,
     paths: &[std::path::PathBuf],
 ) -> Result<CodeIndexStatus> {
+    let indexer = indexer.into();
     if !code_index_is_initialized(&store.storage_path)
         || paths.is_empty()
         || paths.len() > PATH_SCOPED_FALLBACK_THRESHOLD
@@ -144,7 +146,7 @@ fn completed_marker_time(storage_path: &str) -> Result<std::time::SystemTime> {
 async fn index_code_full_inner(
     workspace: &rms_memory_core::workspace::Workspace,
     store: &crate::store::Store,
-    indexer: &mut crate::indexer::Indexer,
+    indexer: EmbedderRef<'_>,
 ) -> Result<CodeIndexStats> {
     let root = &workspace.code_path;
     let mut stats = CodeIndexStats::default();
@@ -243,7 +245,7 @@ async fn index_code_full_inner(
 async fn index_code_paths_inner(
     workspace: &rms_memory_core::workspace::Workspace,
     store: &crate::store::Store,
-    indexer: &mut crate::indexer::Indexer,
+    indexer: EmbedderRef<'_>,
     paths: &[std::path::PathBuf],
 ) -> Result<CodeIndexStats> {
     let root = &workspace.code_path;
@@ -696,7 +698,7 @@ fn dedupe_pending_chunks(pending: Vec<PendingCodeChunk>) -> Vec<PendingCodeChunk
 
 async fn embed_upsert_and_delete_stale(
     store: &crate::store::Store,
-    indexer: &mut crate::indexer::Indexer,
+    mut indexer: EmbedderRef<'_>,
     table: &lancedb::table::Table,
     previous: &HashMap<String, crate::store::StoredCodeSegment>,
     pending: &[PendingCodeChunk],
@@ -718,12 +720,14 @@ async fn embed_upsert_and_delete_stale(
         let embedded = if changed.is_empty() {
             Vec::new()
         } else {
-            indexer.embed(
-                &changed
-                    .iter()
-                    .map(|index| batch[*index].content.clone())
-                    .collect::<Vec<_>>(),
-            )?
+            indexer
+                .embed(
+                    &changed
+                        .iter()
+                        .map(|index| batch[*index].content.clone())
+                        .collect::<Vec<_>>(),
+                )
+                .await?
         };
         let mut embedded = embedded.into_iter();
         let records = batch

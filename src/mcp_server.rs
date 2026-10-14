@@ -219,8 +219,7 @@ fn spawn_sync_watcher(
     tokio::spawn(async move {
         // Initial sync
         {
-            let mut idx = indexer.lock().await;
-            match crate::indexer::try_sync_vault(&workspace, &store, &mut idx).await {
+            match crate::indexer::try_sync_vault(&workspace, &store, &*indexer).await {
                 Ok(crate::indexer::SyncStatus::Completed) => {}
                 Ok(crate::indexer::SyncStatus::Busy) => {
                     tracing::info!("Initial sync skipped: another process is indexing this vault.");
@@ -315,8 +314,7 @@ fn spawn_sync_watcher(
                 }
                 _ = &mut debounce_timer, if pending_sync => {
                     pending_sync = false;
-                    let mut idx = indexer.lock().await;
-                    match crate::indexer::try_sync_vault(&workspace, &store, &mut idx).await {
+                    match crate::indexer::try_sync_vault(&workspace, &store, &*indexer).await {
                         Ok(crate::indexer::SyncStatus::Completed) => {}
                         Ok(crate::indexer::SyncStatus::Busy) => {
                             pending_sync = true;
@@ -432,16 +430,15 @@ fn spawn_code_watcher(
                         force_full.store(false, std::sync::atomic::Ordering::Relaxed);
                         continue;
                     }
-                    let mut indexer = indexer.lock().await;
                     let overflow = force_full.swap(false, std::sync::atomic::Ordering::Relaxed);
                     let paths = dirty_paths.drain().collect::<Vec<_>>();
                     let result = if overflow {
-                        crate::code_indexer::try_index_code(&workspace, &store, &mut indexer).await
+                        crate::code_indexer::try_index_code(&workspace, &store, &*indexer).await
                     } else {
                         crate::code_indexer::try_index_code_paths(
                             &workspace,
                             &store,
-                            &mut indexer,
+                            &*indexer,
                             &paths,
                         )
                         .await

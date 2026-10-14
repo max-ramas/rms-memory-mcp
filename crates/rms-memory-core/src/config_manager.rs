@@ -131,6 +131,7 @@ impl ConfigManager {
         registry.schema_version = crate::workspace::REGISTRY_SCHEMA_VERSION;
         registry.config_revision = current.revision + 1;
         write_atomic(&self.path, &registry)?;
+        write_read_only_list(&self.path, &registry)?;
         lock.release()?;
 
         let snapshot = ConfigSnapshot {
@@ -180,13 +181,62 @@ fn read_snapshot(path: &Path) -> Result<ConfigSnapshot> {
     }
     let content = std::fs::read_to_string(path)
         .with_context(|| format!("Cannot read configuration {}", path.display()))?;
-    let registry = toml::from_str::<crate::workspace::Registry>(&content)
+    let mut registry = toml::from_str::<crate::workspace::Registry>(&content)
         .with_context(|| format!("Invalid configuration {}", path.display()))?;
     validate(&registry)?;
+    apply_read_only_list(path, &mut registry);
     Ok(ConfigSnapshot {
         revision: registry.config_revision,
         registry,
     })
+}
+
+/// Read-only vaults are also listed beside `registry.toml`: releases before
+/// 1.3.0 rewrite the registry without fields they do not know, which would
+/// silently make an attached Obsidian vault writable again.
+fn read_only_list_path(config_path: &Path) -> PathBuf {
+    config_path.with_file_name("read-only-vaults")
+}
+
+fn canonical_vault(vault_path: &str) -> String {
+    std::fs::canonicalize(vault_path)
+        .map(|path| path.to_string_lossy().into_owned())
+        .unwrap_or_else(|_| vault_path.to_string())
+}
+
+fn apply_read_only_list(config_path: &Path, registry: &mut crate::workspace::Registry) {
+    let Ok(list) = std::fs::read_to_string(read_only_list_path(config_path)) else {
+        return;
+    };
+    let listed: std::collections::HashSet<&str> = list.lines().map(str::trim).collect();
+    for project in registry.projects.values_mut() {
+        if !project.read_only && listed.contains(canonical_vault(&project.vault_path).as_str()) {
+            project.read_only = true;
+        }
+    }
+}
+
+fn write_read_only_list(config_path: &Path, registry: &crate::workspace::Registry) -> Result<()> {
+    let path = read_only_list_path(config_path);
+    let mut vaults: Vec<String> = registry
+        .projects
+        .values()
+        .filter(|project| project.read_only)
+        .map(|project| canonical_vault(&project.vault_path))
+        .collect();
+    if vaults.is_empty() {
+        match std::fs::remove_file(&path) {
+            Err(error) if error.kind() != std::io::ErrorKind::NotFound => return Err(error.into()),
+            _ => return Ok(()),
+        }
+    }
+    vaults.sort();
+    vaults.dedup();
+    let parent = path.parent().context("Configuration path has no parent")?;
+    let mut temporary = tempfile::NamedTempFile::new_in(parent)?;
+    temporary.write_all(format!("{}\n", vaults.join("\n")).as_bytes())?;
+    temporary.persist(&path).map_err(|error| error.error)?;
+    Ok(())
 }
 
 fn validate(registry: &crate::workspace::Registry) -> Result<()> {
@@ -268,6 +318,37 @@ mod tests {
         assert_eq!(updated.revision, 1);
         assert_eq!(subscriber.borrow_and_update().revision, 1);
         assert!(manager.replace(0, updated.registry).is_err());
+    }
+
+    #[test]
+    fn read_only_survives_a_registry_rewrite_by_an_older_release() {
+        let directory = tempfile::tempdir().unwrap();
+        let vault = directory.path().join("obsidian");
+        std::fs::create_dir_all(&vault).unwrap();
+        let path = directory.path().join("registry.toml");
+        let project = |read_only: bool, revision: u64| {
+            format!(
+                "schema_version = 1\nconfig_revision = {revision}\n\n[global]\n\n[projects.notes]\ncode_path = \"/tmp/code\"\nvault_path = {:?}\n{}",
+                vault.to_string_lossy(),
+                if read_only { "read_only = true\n" } else { "" }
+            )
+        };
+        std::fs::write(&path, project(false, 1)).unwrap();
+        let manager = ConfigManager::at(&path).unwrap();
+        let mut registry = manager.snapshot().registry;
+        registry.projects.get_mut("notes").unwrap().read_only = true;
+        manager.replace(1, registry).unwrap();
+
+        // A pre-1.3.0 writer drops the field it does not know.
+        std::fs::write(&path, project(false, 3)).unwrap();
+        let reloaded = manager.reload().unwrap();
+        assert!(reloaded.registry.projects["notes"].read_only);
+
+        let mut registry = reloaded.registry;
+        registry.projects.get_mut("notes").unwrap().read_only = false;
+        manager.replace(3, registry).unwrap();
+        assert!(!read_only_list_path(&path).exists());
+        assert!(!manager.reload().unwrap().registry.projects["notes"].read_only);
     }
 
     #[test]

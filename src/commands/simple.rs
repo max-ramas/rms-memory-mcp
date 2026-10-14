@@ -595,15 +595,12 @@ impl DoctorArgs {
                 }
             }
         }
-        let vault_paths: std::collections::HashSet<String> = files
-            .iter()
-            .map(|f| {
-                f.strip_prefix(&workspace.root)
-                    .unwrap_or(f)
-                    .to_string_lossy()
-                    .replace('\\', "/")
-            })
-            .collect();
+        let vault_paths = crate::doctor::supersession_paths(files.iter().map(|f| {
+            f.strip_prefix(&workspace.root)
+                .unwrap_or(f)
+                .to_string_lossy()
+                .replace('\\', "/")
+        }));
         for f in &files {
             if let Ok(doc) = crate::document::Document::parse(f) {
                 let Some(fm) = &doc.frontmatter else {

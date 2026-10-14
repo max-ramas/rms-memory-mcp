@@ -4,7 +4,7 @@ use anyhow::Result;
 use chrono::{DateTime, Utc};
 use rms_memory_core::workspace::Workspace;
 use serde::Serialize;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::Path;
 
 #[derive(Debug, Clone, Serialize)]
@@ -360,8 +360,7 @@ pub async fn diagnose(workspace: &Workspace, options: DiagnoseOptions) -> Result
                 }
             }
         }
-        let vault_paths: std::collections::HashSet<String> =
-            files.iter().map(|f| rel(workspace, f)).collect();
+        let vault_paths = supersession_paths(files.iter().map(|f| rel(workspace, f)));
         for f in &files {
             if let Ok(doc) = rms_memory_core::document::Document::parse(f) {
                 let Some(fm) = &doc.frontmatter else {
@@ -448,6 +447,25 @@ pub fn secrets_in_vault(
             })
         })
         .collect()
+}
+
+/// Vault-relative note paths a `supersedes` path may name, including the
+/// original paths of notes archived under `artifacts/pruned/<date>/`.
+pub(crate) fn supersession_paths(
+    relative_paths: impl IntoIterator<Item = String>,
+) -> HashSet<String> {
+    let mut known = HashSet::new();
+    for path in relative_paths {
+        if let Some(original) = path
+            .strip_prefix("artifacts/pruned/")
+            .and_then(|rest| rest.split_once('/'))
+            .map(|(_, original)| original.to_string())
+        {
+            known.insert(original);
+        }
+        known.insert(path);
+    }
+    known
 }
 
 /// `rms_write` stores the predecessor's id; hand-written notes often name
@@ -578,7 +596,7 @@ pub fn parse_fm_datetime(raw: &str) -> Option<DateTime<Utc>> {
 
 #[cfg(test)]
 mod tests {
-    use super::{parse_fm_datetime, supersession_target_exists};
+    use super::{parse_fm_datetime, supersession_paths, supersession_target_exists};
 
     #[test]
     fn supersedes_accepts_an_id_or_an_existing_vault_path() {
@@ -593,6 +611,19 @@ mod tests {
         assert!(check("./decisions/old.md"));
         assert!(!check("decisions/missing.md"));
         assert!(!check("missing-id"));
+    }
+
+    #[test]
+    fn supersedes_may_name_a_note_that_was_archived_by_prune() {
+        let known = supersession_paths([
+            "decisions/new.md".to_string(),
+            "artifacts/pruned/2026-10-14/decisions/old.md".to_string(),
+            "artifacts/pruned/manifest-only.md".to_string(),
+        ]);
+        assert!(known.contains("decisions/new.md"));
+        assert!(known.contains("decisions/old.md"));
+        assert!(known.contains("artifacts/pruned/2026-10-14/decisions/old.md"));
+        assert!(!known.contains("manifest-only.md"));
     }
 
     #[test]
