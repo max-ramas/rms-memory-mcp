@@ -864,10 +864,13 @@ async fn sync_vault_inner(
         }
     }
 
-    for doc_id in &to_delete {
-        tracing::info!("Sync: Deleting outdated/orphaned document_id: {}", doc_id);
-        if let Err(e) = store.delete_document(&table, doc_id).await {
-            tracing::warn!("Failed to delete document {doc_id}: {e}");
+    if !to_delete.is_empty() {
+        tracing::info!(
+            "Sync: replacing {} outdated/orphaned document(s)",
+            to_delete.len()
+        );
+        if let Err(e) = store.delete_documents(&table, &to_delete).await {
+            tracing::warn!("Failed to delete outdated documents: {e}");
         }
     }
     if !records.is_empty() {
@@ -1173,6 +1176,118 @@ mod sync_tests {
         std::fs::remove_file(vault.join("notes/copy.md")).unwrap();
         let stale = super::vault_freshness(&workspace, &store).await.unwrap();
         assert_eq!((stale.added, stale.removed, stale.modified), (1, 1, 0));
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn searches_run_between_sync_batches_without_deadlock_or_lost_rows() {
+        use std::sync::Arc;
+        use std::time::Duration;
+        const NOTES: usize = 8;
+        let note = |index: usize, edit: &str| {
+            let paragraphs = (0..4)
+                .map(|p| format!("## Part {p}\n\nkeyword{index} paragraph {p} {edit} explains how the service handles retries, caching and backoff for request {index}."))
+                .collect::<Vec<_>>()
+                .join("\n\n");
+            format!("---\nid: note-{index}\n---\n# Note {index}\n\n{paragraphs}\n")
+        };
+        let directory = tempfile::tempdir().unwrap();
+        let vault = directory.path().join("vault");
+        std::fs::create_dir_all(vault.join("notes")).unwrap();
+        for index in 0..NOTES {
+            std::fs::write(
+                vault.join(format!("notes/note-{index}.md")),
+                note(index, ""),
+            )
+            .unwrap();
+        }
+        let workspace = rms_memory_core::workspace::Workspace {
+            root: vault.clone(),
+            code_path: directory.path().join("code"),
+            include: vec!["**/*.md".to_string()],
+            exclude: vec![],
+            code_index_mode: rms_memory_core::workspace::CodeIndexMode::Manual,
+            code_languages: vec![],
+        };
+        let store =
+            crate::store::Store::init(&directory.path().join("db").to_string_lossy(), "memory")
+                .await
+                .unwrap();
+        let indexer = Arc::new(tokio::sync::Mutex::new(
+            crate::indexer::Indexer::new().unwrap(),
+        ));
+        super::sync_vault(&workspace, &store, &*indexer)
+            .await
+            .unwrap();
+        let rows = store
+            .open_table()
+            .await
+            .unwrap()
+            .count_rows(None)
+            .await
+            .unwrap();
+
+        tokio::time::sleep(Duration::from_millis(1100)).await;
+        for index in 0..NOTES {
+            std::fs::write(
+                vault.join(format!("notes/note-{index}.md")),
+                note(index, &format!("edited{index}")),
+            )
+            .unwrap();
+        }
+        let sync = {
+            let (workspace, store, indexer) = (workspace.clone(), store.clone(), indexer.clone());
+            tokio::spawn(async move { super::try_sync_vault(&workspace, &store, &*indexer).await })
+        };
+
+        let (mut searches_during_sync, mut found_old_rows_during_sync) = (0, false);
+        while !sync.is_finished() {
+            let vector = tokio::time::timeout(Duration::from_secs(60), async {
+                indexer.lock().await.embed_query("keyword7")
+            })
+            .await
+            .expect("query embedding waited for the whole sync")
+            .unwrap();
+            let (results, _) = store
+                .search_with_mode(vector, "keyword7".to_string(), 5, None)
+                .await
+                .unwrap();
+            if !sync.is_finished() {
+                searches_during_sync += 1;
+                found_old_rows_during_sync |= results
+                    .iter()
+                    .any(|hit| hit.path == "notes/note-7.md" && !hit.text.contains("edited7"));
+            }
+        }
+        let status = tokio::time::timeout(Duration::from_secs(300), sync)
+            .await
+            .expect("sync did not finish")
+            .unwrap()
+            .unwrap();
+        assert_eq!(status, super::SyncStatus::Completed);
+        assert!(
+            searches_during_sync >= 2,
+            "searches did not interleave with sync batches ({searches_during_sync})"
+        );
+        assert!(
+            found_old_rows_during_sync,
+            "changed notes vanished from search while they were re-embedded"
+        );
+
+        let table = store.open_table().await.unwrap();
+        assert_eq!(
+            table.count_rows(None).await.unwrap(),
+            rows,
+            "rows lost or duplicated"
+        );
+        assert_eq!(store.fts_coverage(&table).await.unwrap(), Some((rows, 0)));
+        assert_eq!(indexed_paths(&store).await.len(), NOTES);
+        for index in 0..NOTES {
+            let text = store
+                .read_document(&format!("notes/note-{index}.md"))
+                .await
+                .unwrap();
+            assert!(text.contains(&format!("edited{index} explains")), "{text}");
+        }
     }
 
     #[tokio::test]

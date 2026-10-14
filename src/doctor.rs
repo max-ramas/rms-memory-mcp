@@ -172,7 +172,12 @@ pub async fn diagnose(workspace: &Workspace, options: DiagnoseOptions) -> Result
         let mut notes = Vec::new();
         match rms_memory_index::store::Store::for_workspace(workspace).await {
             Ok(store) => {
-                match rms_memory_index::index_lock::inspect(&store.storage_path) {
+                let inspection = rms_memory_index::index_lock::inspect(&store.storage_path);
+                let writer_active = matches!(
+                    inspection,
+                    Ok(rms_memory_index::index_lock::LockInspection::Active(_))
+                );
+                match inspection {
                     Ok(rms_memory_index::index_lock::LockInspection::Active(Some(owner))) => {
                         notes.push(format!(
                             "index writer active: PID {} (since {})",
@@ -201,6 +206,11 @@ pub async fn diagnose(workspace: &Workspace, options: DiagnoseOptions) -> Result
                     match rms_memory_index::indexer::vault_freshness(workspace, &store).await {
                         Ok(freshness) => notes.push(freshness.describe()),
                         Err(e) => notes.push(format!("index freshness unavailable: {e:#}")),
+                    }
+                    match fts_coverage_finding(&store, writer_active).await {
+                        Some((true, message)) => issues.push(message),
+                        Some((false, message)) => notes.push(message),
+                        None => {}
                     }
                 }
             }
@@ -447,6 +457,44 @@ pub fn secrets_in_vault(
             })
         })
         .collect()
+}
+
+/// Whether keyword search covers every vault row. Syncs by 1.3.0 always fold
+/// new rows in; uncovered rows mean a running or interrupted sync, or a sync
+/// or reindex by a release before 1.3.0 (which built the index on an empty
+/// table). Returns `(is_issue, message)`.
+pub(crate) async fn fts_coverage_finding(
+    store: &rms_memory_index::store::Store,
+    writer_active: bool,
+) -> Option<(bool, String)> {
+    let table = store.open_table().await.ok()?;
+    let rows = table.count_rows(None).await.ok()?;
+    match store.fts_coverage(&table).await {
+        Ok(Some((_, 0))) => None,
+        Ok(Some((indexed, unindexed))) if writer_active => Some((
+            false,
+            format!(
+                "full-text index covers {indexed} of {} rows; the running sync adds the rest",
+                indexed + unindexed
+            ),
+        )),
+        Ok(Some((indexed, unindexed))) => Some((
+            true,
+            format!(
+                "full-text index covers {indexed} of {} rows, so keyword search misses relevance order; run `rms-memory sync` (an older release or an interrupted sync left it behind)",
+                indexed + unindexed
+            ),
+        )),
+        Ok(None) if rows > 0 && !writer_active => Some((
+            true,
+            "vault table has no full-text index; run `rms-memory reindex`".to_string(),
+        )),
+        Ok(None) => None,
+        Err(error) => Some((
+            false,
+            format!("full-text index stats unavailable: {error:#}"),
+        )),
+    }
 }
 
 /// Vault-relative note paths a `supersedes` path may name, including the

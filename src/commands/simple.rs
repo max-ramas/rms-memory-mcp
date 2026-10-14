@@ -394,7 +394,10 @@ impl DoctorArgs {
         println!("\n[4/8] LanceDB store...");
         match crate::store::Store::for_workspace(&workspace).await {
             Ok(store) => {
-                match crate::index_lock::inspect(&store.storage_path) {
+                let inspection = crate::index_lock::inspect(&store.storage_path);
+                let writer_active =
+                    matches!(inspection, Ok(crate::index_lock::LockInspection::Active(_)));
+                match inspection {
                     Ok(crate::index_lock::LockInspection::Active(Some(owner))) => println!(
                         "  ℹ️  Index writer active: PID {} (since {})",
                         owner.pid, owner.acquired_at
@@ -420,6 +423,14 @@ impl DoctorArgs {
                         match crate::indexer::vault_freshness(&workspace, &store).await {
                             Ok(freshness) => println!("  ℹ️  {}", freshness.describe()),
                             Err(e) => println!("  ℹ️  index freshness unavailable: {e:#}"),
+                        }
+                        match crate::doctor::fts_coverage_finding(&store, writer_active).await {
+                            Some((true, message)) => {
+                                println!("  ⚠️  {message}");
+                                issues += 1;
+                            }
+                            Some((false, message)) => println!("  ℹ️  {message}"),
+                            None => {}
                         }
                     }
                     Err(e) => {

@@ -120,6 +120,9 @@ impl Store {
             if batch.num_rows() == 0 {
                 continue;
             }
+            if batch.num_rows() == 0 {
+                continue;
+            }
             let col = batch
                 .column_by_name("last_indexed_sha")
                 .context("missing last_indexed_sha")?
@@ -191,6 +194,9 @@ impl Store {
         let mut rows = Vec::new();
         while let Some(batch) = stream.next().await {
             let batch = batch?;
+            if batch.num_rows() == 0 {
+                continue;
+            }
             rows.extend(records_from_batch(&batch)?);
         }
         rows.sort_by(|a, b| {

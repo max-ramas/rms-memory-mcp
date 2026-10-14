@@ -275,6 +275,19 @@ impl Store {
         Ok(())
     }
 
+    /// Indexed and unindexed row counts of the full-text index on `table`,
+    /// or `None` when the table has none.
+    pub async fn fts_coverage(&self, table: &Table) -> Result<Option<(usize, usize)>> {
+        for index in table.list_indices().await? {
+            if matches!(index.index_type, lancedb::index::IndexType::FTS)
+                && let Some(stats) = table.index_stats(&index.name).await?
+            {
+                return Ok(Some((stats.num_indexed_rows, stats.num_unindexed_rows)));
+            }
+        }
+        Ok(None)
+    }
+
     pub fn code_table_name(&self) -> String {
         format!("{}_code_chunks", self.table_name)
     }
@@ -455,6 +468,9 @@ impl Store {
         let mut segments = std::collections::HashMap::new();
         while let Some(batch) = stream.next().await {
             let batch = batch?;
+            if batch.num_rows() == 0 {
+                continue;
+            }
             let ids = batch
                 .column_by_name("id")
                 .and_then(|column| column.as_any().downcast_ref::<StringArray>())
@@ -515,6 +531,9 @@ impl Store {
         let mut paths = std::collections::BTreeSet::new();
         while let Some(batch) = stream.next().await {
             let batch = batch?;
+            if batch.num_rows() == 0 {
+                continue;
+            }
             let values = batch
                 .column_by_name("file_path")
                 .and_then(|column| column.as_any().downcast_ref::<StringArray>())
@@ -649,6 +668,20 @@ impl Store {
         Ok(())
     }
 
+    /// Delete every chunk of `document_ids` in as few commits as possible, so
+    /// readers do not see a half-emptied table while many notes are replaced.
+    pub async fn delete_documents(&self, table: &Table, document_ids: &[String]) -> Result<()> {
+        for ids in document_ids.chunks(500) {
+            let list = ids
+                .iter()
+                .map(|id| format!("'{}'", escape_filter(id)))
+                .collect::<Vec<_>>()
+                .join(", ");
+            table.delete(&format!("document_id IN ({list})")).await?;
+        }
+        Ok(())
+    }
+
     /// Remove persisted chunks by their relative Vault path.
     ///
     /// Path-based deletion is required for namespace migrations because legacy
@@ -681,6 +714,9 @@ impl Store {
         let mut paths = std::collections::BTreeSet::new();
         while let Some(batch) = stream.next().await {
             let batch = batch?;
+            if batch.num_rows() == 0 {
+                continue;
+            }
             let column = batch
                 .column_by_name("path")
                 .context("Missing 'path' column")?
@@ -764,6 +800,9 @@ impl Store {
             std::collections::BTreeMap::new();
         while let Some(batch) = stream.next().await {
             let batch = batch?;
+            if batch.num_rows() == 0 {
+                continue;
+            }
             let column = |name: &str| {
                 batch
                     .column_by_name(name)
@@ -1202,6 +1241,9 @@ impl Store {
         let mut results = Vec::new();
         while let Some(batch) = stream.next().await {
             let batch = batch?;
+            if batch.num_rows() == 0 {
+                continue;
+            }
             let text = |name: &str| -> Result<&StringArray> {
                 batch
                     .column_by_name(name)
@@ -1311,6 +1353,9 @@ impl Store {
             Ok(mut s) => {
                 while let Some(batch) = s.next().await {
                     let batch = batch?;
+                    if batch.num_rows() == 0 {
+                        continue;
+                    }
                     extract_results(&batch, &mut results)?;
                 }
             }
@@ -1324,6 +1369,9 @@ impl Store {
                 };
                 while let Some(batch) = stream.next().await {
                     let batch = batch?;
+                    if batch.num_rows() == 0 {
+                        continue;
+                    }
                     extract_results(&batch, &mut results)?;
                 }
             }
@@ -1353,6 +1401,9 @@ impl Store {
         let mut results = Vec::new();
         while let Some(batch) = stream.next().await {
             let batch = batch?;
+            if batch.num_rows() == 0 {
+                continue;
+            }
             extract_results(&batch, &mut results)?;
         }
         // Rows the full-text index does not cover yet are matched by a scan
@@ -1380,6 +1431,9 @@ impl Store {
         let mut chunks = Vec::new();
         while let Some(batch) = stream.next().await {
             let batch = batch?;
+            if batch.num_rows() == 0 {
+                continue;
+            }
             let text_array = batch
                 .column_by_name("text")
                 .context("Missing 'text' column in read_document query")?
@@ -1600,6 +1654,23 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn searches_without_hits_return_no_results_instead_of_an_error() {
+        let directory = tempfile::tempdir().unwrap();
+        let store = Store::init(&directory.path().to_string_lossy(), "memory")
+            .await
+            .unwrap();
+        let table = store.create_table().await.unwrap();
+        store.create_fts_index(&table).await.unwrap();
+        for query in ["keyword7", "how does the cache expire"] {
+            let (results, _) = store
+                .search_with_mode(vec![0.01; VECTOR_DIMENSION], query.to_string(), 5, None)
+                .await
+                .unwrap();
+            assert!(results.is_empty(), "{query}: {results:?}");
+        }
+    }
+
+    #[tokio::test]
     async fn rows_written_after_the_fts_index_are_folded_in_and_ranked() {
         let directory = tempfile::tempdir().unwrap();
         let store = Store::init(&directory.path().to_string_lossy(), "memory")
@@ -1636,10 +1707,12 @@ mod tests {
             )
             .await
             .unwrap();
+        assert_eq!(store.fts_coverage(&table).await.unwrap(), Some((0, 13)));
 
         store.index_new_rows(&table).await.unwrap();
         let stats = table.index_stats("text_idx").await.unwrap().unwrap();
         assert_eq!(stats.num_unindexed_rows, 0);
+        assert_eq!(store.fts_coverage(&table).await.unwrap(), Some((13, 0)));
 
         let (results, mode) = store
             .search_with_mode(vec![0.01; VECTOR_DIMENSION], "harlem".to_string(), 5, None)

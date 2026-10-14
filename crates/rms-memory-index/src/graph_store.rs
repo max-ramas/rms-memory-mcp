@@ -730,6 +730,9 @@ async fn max_generation(table: &Table) -> Result<Option<u64>> {
     let mut maximum = None;
     while let Some(batch) = stream.next().await {
         let batch = batch?;
+        if batch.num_rows() == 0 {
+            continue;
+        }
         let values = batch
             .column_by_name("generation")
             .and_then(|column| column.as_any().downcast_ref::<UInt64Array>())
