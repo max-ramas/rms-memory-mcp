@@ -1,6 +1,6 @@
 # RMS Memory GUI
 
-**Current version:** GUI `1.3.0` with MCP `1.3.0` (unified numbering).
+**Current version:** GUI `1.3.1` with MCP `1.3.1` (unified numbering).
 This release adds Continuity panels for index freshness, git branch, memory hygiene and closed checkpoints, an embedding-model picker in Settings, HTML/CSS/C#/PHP/Kotlin/SQL code languages, respect for read-only Obsidian vaults and doctor credential findings.
 
 RMS Memory GUI is the optional commercial desktop application for
@@ -54,18 +54,20 @@ the asset whose platform and architecture match your machine:
 | Linux x64 | `.AppImage`, `.deb`, or `.rpm` |
 
 The public release uses the same `v<version>` tag as the GUI build (unified with MCP:
-**`v1.3.0`** for this release). Installer assets are named `rms_memory_gui_<version>_*` (publish fails
+**`v1.3.1`** for this release). Installer assets are named `rms_memory_gui_<version>_*` (publish fails
 if the version is missing from the basename) and checksums live in
 `rms_memory_gui_SHA256SUMS.txt`. The GUI pipeline runs both for a pushed `v*` tag
 and for a manual dispatch that supplies the same version tag as
 `src-tauri/tauri.conf.json`. Cross-repo MCP checkout is pinned to that same tag.
-When `TAURI_SIGNING_PRIVATE_KEY` is set on the GUI repo, CI mirrors signed
-updater metadata (`latest.json`, companion `.sig`, arch-qualified macOS
-`*.app.tar.gz`) onto that public release so in-app Install can use
-`…/releases/latest/download/latest.json`.
+When `TAURI_SIGNING_PRIVATE_KEY` is set on the GUI repo, CI publishes the
+signed updater manifest `latest.json`, the installers' `.sig` files and the
+macOS `rms_memory_gui.app.tar.gz` onto that public release so in-app Install can
+use `…/releases/latest/download/latest.json`. Every signature is verified
+against the updater key built into the app before publishing.
 
 The Linux pipeline checks the finished AppImage payload and makes
-`AppRun.wrapped` executable for users other than the build owner. This fixes
+`AppRun.wrapped` executable for users other than the build owner, then signs
+the repaired AppImage again for the updater. This fixes
 the launcher permission failure reported by the AppImage catalog for 1.2.0.
 The catalog's test of the newly published installer remains an independent
 distribution check.

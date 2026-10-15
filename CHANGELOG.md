@@ -2,6 +2,15 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.3.1] - 2026-10-15
+
+### Fixed
+- **Desktop GUI in-app updates:** since 1.1.2 the release page had no updater manifest (`latest.json`), so the GUI's About → Install never offered an update. GUI releases now attach a signed manifest for macOS, Windows (NSIS and MSI) and Linux (AppImage, deb, rpm), with every signature checked against the key built into the app before publishing. Installations of GUI 1.3.0 can install 1.3.1 from About.
+- **GUI AppImage updater signature:** the AppImage was repacked to fix its launcher permissions after it had been signed, so the published `.sig` did not match it. It is now signed after the repair.
+
+### Changed
+- MCP and companion GUI release versions are aligned at **1.3.1**.
+
 ## [1.3.0] - 2026-10-13
 
 ### Added
