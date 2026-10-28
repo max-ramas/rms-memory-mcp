@@ -697,7 +697,7 @@ pub async fn execute_checkpoint_query(
         .and_then(|v| v.as_str())
         .filter(|s| *s != "all");
     let payload = checkpoint_query(root, status)?;
-    super::response::json_structured_response(&payload)
+    super::response::json_structured_response(&serde_json::json!({ "checkpoints": payload }))
 }
 
 pub async fn execute_system_instructions(
@@ -849,5 +849,43 @@ mod tests {
         assert!(!bound.contains("This connection is bound to project"));
         let unbound = system_instructions(None);
         assert!(unbound.contains("rms_projects"));
+    }
+
+    #[tokio::test]
+    async fn checkpoint_query_result_wraps_list_in_object() {
+        let dir = vault();
+        let root = std::fs::canonicalize(dir.path()).unwrap();
+        checkpoint_save(
+            &root,
+            "t",
+            Some("p"),
+            "cp1",
+            Some("g"),
+            Some("pend"),
+            None,
+            None,
+        )
+        .unwrap();
+        let ctx = AppContext {
+            store: None,
+            indexer: None,
+            workspace_root: Some(root),
+            code_path: None,
+            max_backups: 0,
+            scope: None,
+            caller_id: "test".to_string(),
+            project_key: None,
+        };
+        let result = execute_checkpoint_query(&ctx, &serde_json::Map::new())
+            .await
+            .expect("query");
+        let structured = result
+            .get("structuredContent")
+            .expect("structuredContent present");
+        assert!(
+            structured.is_object(),
+            "must be an object, got {structured}"
+        );
+        assert_eq!(structured["checkpoints"].as_array().map(Vec::len), Some(1));
     }
 }

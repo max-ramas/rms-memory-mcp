@@ -32,6 +32,17 @@ ignore = [
   # Unmaintained is not a vulnerability; replacing the YAML stack is tracked
   # separately from patch releases.
   "RUSTSEC-2024-0449",
+  # zstd chain pinned by the lancedb 0.31 / datafusion 53 / arrow 58 stack:
+  # arrow-ipc requires zstd ^0.13, which requires zstd-safe ^7 and zstd-sys ^2.0;
+  # the fixes live only in zstd 0.14.3+ / zstd-safe 8.2.0+ / zstd-sys 2.1.2+,
+  # so there is no upgrade path short of bumping the whole ML stack.
+  # Not reachable at runtime: lance files use the standard-frame bulk APIs
+  # (with_context stream reuse is not used), never the seekable format, never
+  # legacy frames, and rms-memory ships no wasm32 build (1.3.2).
+  "RUSTSEC-2026-0391",
+  "RUSTSEC-2026-0398",
+  "RUSTSEC-2026-0403",
+  "RUSTSEC-2026-0410",
 ]
 
 [bans]

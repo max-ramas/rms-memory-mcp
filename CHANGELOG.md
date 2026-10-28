@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.3.2] - 2026-10-28
+
+### Fixed
+- **`rms_checkpoint_query` rejected by strict MCP clients:** the tool's `structuredContent` was a bare JSON array of checkpoints, but the MCP specification requires an object, so clients like opencode failed with "expected record, received array". The list is now returned under a `checkpoints` key; plain-text clients see the same output.
+
 ## [1.3.1] - 2026-10-15
 
 ### Fixed
