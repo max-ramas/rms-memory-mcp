@@ -10,6 +10,7 @@ All notable changes to this project will be documented in this file.
 - **Release workflow publishes `release.json` + signature** for the update center when the `RELEASE_SIGNING_KEY` secret is set (skipped with a warning otherwise).
 - **Reminders (`rms_remind`):** tell the agent "remind me to call Viktor Petrovich tomorrow at 12"; tool responses then carry a notice about 30/20/10/5 minutes before and when due, which the agent relays. Stored in `~/.rms-memory/reminders.json`; windows are read from `reminder-settings.json` (editable in the GUI).
 - **Agent protocol:** `rms_system_instructions` now explains reminders (`rms_remind`, relaying `[RMS reminder]` blocks, listing at session start) and serving only `verified-in-runtime` patterns.
+- **Pattern status filter and staleness check:** `rms_search` accepts `pattern_status` (default `verified-in-runtime`: unproven `patterns/` notes are hidden); `rms-memory doctor` check 9 reports patterns whose `refs` point at missing files, renamed symbols or code changed since the recorded commit.
 - **Pattern notes convention (`patterns/`):** frontmatter schema and template (`docs/patterns.md`, `templates/patterns/`). No server code.
 
 ### Security

@@ -1019,7 +1019,8 @@ impl McpServer {
                                 "max_chars": { "type": "integer", "description": "Maximum total characters of injected content across results (default 2000). Truncates/drops weaker hits to stay within budget." },
                                 "min_score": { "type": "number", "description": "Optional minimum relevance in 0..1 (distance and RRF normalized). If the best hit is weaker, rms_search abstains with an empty results list (fail-closed)." },
                                 "include_file_history": { "type": "boolean", "description": "When true, attach the last 3 commits from the derived code_path git-history cache to each code hit (lazy catch-up). Not allowed together with projects: […] federation. Default false." },
-                                "include_graph_neighbors": { "type": "boolean", "description": "When true, attach durable graph neighbors for each hit path. Not allowed together with projects: […] federation. Default false." }
+                                "include_graph_neighbors": { "type": "boolean", "description": "When true, attach durable graph neighbors for each hit path. Not allowed together with projects: […] federation. Default false." },
+                                "pattern_status": { "type": "string", "enum": ["verified-in-runtime", "implemented", "proposed", "all"], "description": "Minimum status for hits from patterns/ notes. Default verified-in-runtime: unproven patterns are hidden. `implemented` also returns implemented ones; `proposed`/`all` returns everything (hits carry their pattern_status). Other notes are never filtered." }
                             },
                             "required": ["query"]
                         }
@@ -1124,7 +1125,7 @@ impl McpServer {
                     },
                     {
                         "name": "rms_doctor",
-                        "description": "Run the eight-point vault health diagnostics (structure, IDs, links, LanceDB, wiki isolation, registry, freshness, credentials). Also reports a newer release (checked at most daily; RMS_MEMORY_NO_UPDATE_CHECK=1 disables) or a server binary replaced since start. Returns structured JSON. Set repair_frontmatter=true only with an explicit project (refuses sticky-bind repair).",
+                        "description": "Run the vault health diagnostics (structure, IDs, links, LanceDB, wiki isolation, registry, freshness, credentials; plus pattern staleness when the vault has patterns/). Also reports a newer release (checked at most daily; RMS_MEMORY_NO_UPDATE_CHECK=1 disables) or a server binary replaced since start. Returns structured JSON. Set repair_frontmatter=true only with an explicit project (refuses sticky-bind repair).",
                         "inputSchema": {
                             "type": "object",
                             "properties": {

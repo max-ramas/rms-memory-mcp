@@ -459,6 +459,62 @@ pub async fn diagnose(workspace: &Workspace, options: DiagnoseOptions) -> Result
         });
     }
 
+    // 9. Pattern notes still point at real code (only when the vault has patterns/)
+    if workspace.root.join("patterns").is_dir() {
+        let root = workspace.root.clone();
+        let code_path = workspace.code_path.clone();
+        let note_files: Vec<std::path::PathBuf> = files.clone();
+        let (issues, checked) = tokio::task::spawn_blocking(move || {
+            let current_repo = crate::patterns::remote_repo_of(&code_path);
+            let mut others = HashMap::new();
+            if let Ok(registry) = rms_memory_core::workspace::Registry::load() {
+                for config in registry.projects.values() {
+                    let path = std::path::PathBuf::from(&config.code_path);
+                    if let Some(repo) = crate::patterns::remote_repo_of(&path) {
+                        others.entry(repo).or_insert(path);
+                    }
+                }
+            }
+            let resolver = crate::patterns::RepoResolver {
+                current: code_path,
+                current_repo,
+                others,
+            };
+            let mut issues = Vec::new();
+            let mut checked = 0usize;
+            for file in &note_files {
+                let Ok(relative) = file.strip_prefix(&root) else {
+                    continue;
+                };
+                let relative = relative.to_string_lossy().replace('\\', "/");
+                if !crate::patterns::is_pattern_path(&relative) {
+                    continue;
+                }
+                let Ok(text) = std::fs::read_to_string(file) else {
+                    continue;
+                };
+                checked += 1;
+                issues.extend(crate::patterns::check_note(&relative, &text, &resolver));
+            }
+            (issues, checked)
+        })
+        .await
+        .unwrap_or_default();
+        issue_count += issues.len() as u32;
+        let notes = if issues.is_empty() {
+            vec![format!("{checked} pattern note(s) checked")]
+        } else {
+            vec!["stale refs mean the pattern may no longer describe the code: update the note or lower its pattern_status".into()]
+        };
+        checks.push(DoctorCheck {
+            id: 9,
+            name: "patterns".into(),
+            ok: issues.is_empty(),
+            issues,
+            notes,
+        });
+    }
+
     let notices = tokio::task::spawn_blocking(crate::update_check::doctor_notices)
         .await
         .unwrap_or_default();

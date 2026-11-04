@@ -580,7 +580,7 @@ pub fn system_instructions(project: Option<&str>) -> String {
 - A `[RMS reminder]` block in any tool response is a due reminder: tell the user in your reply, in their language. At session start and after long pauses call `rms_remind` with `action: "list"` so nothing is missed. Mark finished ones with `done`.
 
 ## Patterns
-- Reusable solutions live in `patterns/` notes (frontmatter `type: pattern`, `pattern_status`). Recommend only `verified-in-runtime` patterns; mention `implemented` or `proposed` ones only with their status. A pattern points to code (`refs`), it does not contain it.
+- Reusable solutions live in `patterns/` notes (frontmatter `type: pattern`, `pattern_status`). `rms_search` returns only `verified-in-runtime` patterns unless you pass `pattern_status` (`implemented`, `proposed`, `all`); mention lower-status ones only with their status. A pattern points to code (`refs`), it does not contain it.
 
 ## Rules
 - Each tool call targets exactly one project vault. Prefer an explicit `project` key when the IDE is multi-root or you may already be on another vault — explicit `project` always wins and rebinds.

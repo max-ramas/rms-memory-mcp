@@ -57,6 +57,7 @@ pub mod http_transport;
 pub mod installer;
 #[doc(hidden)]
 pub mod mcp_server;
+pub mod patterns;
 pub mod reminders;
 #[doc(hidden)]
 pub mod rules_injector;

@@ -64,6 +64,9 @@ pub struct UnifiedSearchResult {
     /// Graph neighbors when `include_graph_neighbors` is set.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub graph_neighbors: Option<Vec<serde_json::Value>>,
+    /// `proposed` / `implemented` / `verified-in-runtime` for hits from `patterns/` notes.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub pattern_status: Option<String>,
 }
 
 impl UnifiedSearchResult {
@@ -86,6 +89,7 @@ impl UnifiedSearchResult {
             pinned: result.pinned,
             file_history: None,
             graph_neighbors: None,
+            pattern_status: None,
         }
     }
 
@@ -108,6 +112,7 @@ impl UnifiedSearchResult {
             pinned: None,
             file_history: None,
             graph_neighbors: None,
+            pattern_status: None,
         }
     }
 
@@ -353,6 +358,9 @@ async fn execute_inner(
         args.get("corpus").and_then(|value| value.as_str()),
     )?);
 
+    let pattern_filter = crate::patterns::PatternFilter::from_arg(
+        args.get("pattern_status").and_then(|value| value.as_str()),
+    )?;
     let project_keys = parse_projects_arg(args)?;
     reject_federated_include_file_history(include_file_history, project_keys.is_some())?;
     reject_federated_include_graph_neighbors(include_graph_neighbors, project_keys.is_some())?;
@@ -364,28 +372,49 @@ async fn execute_inner(
         .await
         .map_err(|error| anyhow!("Embed failed: {error}"))?;
 
+    // Pattern notes below the requested status are dropped after retrieval, so ask the
+    // store for more hits when the vault has patterns, then cut back to `limit`.
+    let mut vault_roots: std::collections::HashMap<Option<String>, std::path::PathBuf> =
+        std::collections::HashMap::new();
     let (results, retrieval_mode) = if let Some(keys) = project_keys {
         // Federated path: open each project's store independently. Does NOT
         // mutate the active MCP bind (read-only composition).
         let registry = crate::workspace::Registry::load()?;
         let resolved = resolve_project_keys(&registry, &keys)?;
         enforce_cross_project_vault_policy(&resolved, corpus)?;
-        search_federated(
+        let mut has_patterns = false;
+        for project in &resolved {
+            if let Some(config) = registry.projects.get(&project.key) {
+                let root = std::path::PathBuf::from(&config.vault_path);
+                has_patterns |= root.join("patterns").is_dir();
+                vault_roots.insert(Some(project.key.clone()), root);
+            }
+        }
+        let fetch = overfetch(limit, has_patterns, corpus);
+        let (hits, mode) = search_federated(
             &resolved,
             query_vector,
             query,
-            limit,
+            fetch,
             min_confidence,
             corpus,
         )
-        .await?
+        .await?;
+        (hits, mode)
     } else {
         let store = ctx
             .store
             .as_ref()
             .ok_or_else(|| anyhow!("Store not initialized"))?;
-        search_single_store(store, query_vector, query, limit, min_confidence, corpus).await?
+        let mut has_patterns = false;
+        if let Some(root) = ctx.workspace_root.as_ref() {
+            has_patterns = root.join("patterns").is_dir();
+            vault_roots.insert(None, root.clone());
+        }
+        let fetch = overfetch(limit, has_patterns, corpus);
+        search_single_store(store, query_vector, query, fetch, min_confidence, corpus).await?
     };
+    let results = filter_patterns(results, pattern_filter, &vault_roots, limit);
 
     let mut envelope = apply_bounded_recall(
         results,
@@ -573,6 +602,52 @@ fn enforce_cross_project_vault_policy(projects: &[ResolvedProject], corpus: Corp
          or pass `corpus=code`. Silent degrade to code-only is forbidden.",
         denied.join(", ")
     )))
+}
+
+fn overfetch(limit: usize, has_patterns: bool, corpus: Corpus) -> usize {
+    if has_patterns && corpus != Corpus::Code {
+        (limit * 3).min(100).max(limit)
+    } else {
+        limit
+    }
+}
+
+/// Drop `patterns/` hits below the requested status and label the rest.
+fn filter_patterns(
+    results: Vec<UnifiedSearchResult>,
+    filter: crate::patterns::PatternFilter,
+    roots: &std::collections::HashMap<Option<String>, std::path::PathBuf>,
+    limit: usize,
+) -> Vec<UnifiedSearchResult> {
+    let mut cache: std::collections::HashMap<
+        (Option<String>, String),
+        Option<crate::patterns::PatternStatus>,
+    > = std::collections::HashMap::new();
+    let mut kept = Vec::with_capacity(results.len().min(limit));
+    for mut hit in results {
+        if hit.source == "vault"
+            && crate::patterns::is_pattern_path(&hit.path)
+            && let Some(root) = roots.get(&hit.project)
+        {
+            let key = (hit.project.clone(), hit.path.clone());
+            let status = *cache
+                .entry(key)
+                .or_insert_with(|| crate::patterns::status_of(root, &hit.path));
+            let shown = match status {
+                Some(s) => s >= filter.min,
+                None => filter.min == crate::patterns::PatternStatus::Proposed,
+            };
+            if !shown {
+                continue;
+            }
+            hit.pattern_status = status.map(|s| s.as_str().to_string());
+        }
+        kept.push(hit);
+        if kept.len() >= limit {
+            break;
+        }
+    }
+    kept
 }
 
 async fn search_single_store(
@@ -824,6 +899,69 @@ fn accumulate_rrf(
 mod tests {
     use super::*;
 
+    #[test]
+    fn pattern_filter_hides_unproven_patterns_labels_the_rest_and_respects_limit() {
+        let dir = tempfile::tempdir().unwrap();
+        let write = |rel: &str, status: &str| {
+            let p = dir.path().join(rel);
+            std::fs::create_dir_all(p.parent().unwrap()).unwrap();
+            std::fs::write(
+                p,
+                format!("---\ntype: pattern\npattern_status: {status}\n---\n"),
+            )
+            .unwrap();
+        };
+        write("patterns/ok.md", "verified-in-runtime");
+        write("patterns/impl.md", "implemented");
+        write("patterns/idea.md", "proposed");
+        let mut roots = HashMap::new();
+        roots.insert(None, dir.path().to_path_buf());
+        let hits = || {
+            vec![
+                result("vault", "patterns/idea.md"),
+                result("vault", "patterns/impl.md"),
+                result("vault", "rules/other.md"),
+                result("vault", "patterns/ok.md"),
+                result("code", "patterns/idea.md"),
+            ]
+        };
+        let paths = |v: &[UnifiedSearchResult]| {
+            v.iter()
+                .map(|r| format!("{}:{}", r.source, r.path))
+                .collect::<Vec<_>>()
+        };
+
+        let def = filter_patterns(
+            hits(),
+            crate::patterns::PatternFilter::default(),
+            &roots,
+            10,
+        );
+        assert_eq!(
+            paths(&def),
+            [
+                "vault:rules/other.md",
+                "vault:patterns/ok.md",
+                "code:patterns/idea.md"
+            ]
+        );
+        assert_eq!(
+            def[1].pattern_status.as_deref(),
+            Some("verified-in-runtime")
+        );
+        assert!(def[0].pattern_status.is_none());
+
+        let level = crate::patterns::PatternFilter::from_arg(Some("implemented")).unwrap();
+        assert_eq!(filter_patterns(hits(), level, &roots, 10).len(), 4);
+        let all = crate::patterns::PatternFilter::from_arg(Some("all")).unwrap();
+        assert_eq!(filter_patterns(hits(), all, &roots, 10).len(), 5);
+        assert_eq!(filter_patterns(hits(), all, &roots, 2).len(), 2);
+        assert_eq!(overfetch(10, true, Corpus::Vault), 30);
+        assert_eq!(overfetch(10, false, Corpus::Vault), 10);
+        assert_eq!(overfetch(10, true, Corpus::Code), 10);
+        assert_eq!(overfetch(60, true, Corpus::All), 100);
+    }
+
     fn result(source: &str, path: &str) -> UnifiedSearchResult {
         UnifiedSearchResult {
             source: source.to_string(),
@@ -843,6 +981,7 @@ mod tests {
             pinned: None,
             file_history: None,
             graph_neighbors: None,
+            pattern_status: None,
         }
     }
 
