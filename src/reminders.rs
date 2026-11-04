@@ -200,6 +200,39 @@ impl Store {
         })
     }
 
+    /// `due_at` as RFC3339 (with offset); `now` is the system clock. For hosts without chrono.
+    pub fn add_rfc3339(&self, text: &str, due_at: &str) -> Result<Reminder> {
+        let now = Utc::now();
+        self.add(text, resolve_due(Some(due_at), None, now)?, now)
+    }
+
+    pub fn snooze_rfc3339(&self, id: &str, due_at: &str) -> Result<Reminder> {
+        let now = Utc::now();
+        self.reschedule(id, resolve_due(Some(due_at), None, now)?, now)
+    }
+
+    /// Validate and store settings edited in the GUI.
+    pub fn update_settings(&self, enabled: bool, offsets_minutes: Vec<u32>) -> Result<Settings> {
+        if offsets_minutes.len() > 8 {
+            bail!("at most 8 reminder windows");
+        }
+        if offsets_minutes
+            .iter()
+            .any(|m| !(1..=7 * 24 * 60).contains(m))
+        {
+            bail!("each window must be between 1 minute and 7 days");
+        }
+        let mut offsets = offsets_minutes;
+        offsets.sort_unstable_by(|a, b| b.cmp(a));
+        offsets.dedup();
+        let settings = Settings {
+            enabled,
+            offsets_minutes: offsets,
+        };
+        self.save_settings(&settings)?;
+        Ok(settings)
+    }
+
     pub fn pending(&self) -> Vec<Reminder> {
         let mut v: Vec<Reminder> = self
             .load()
@@ -430,6 +463,20 @@ mod tests {
         let (_d2, s2) = store();
         s2.add("old", t("2026-11-05T08:10:00Z"), now).unwrap();
         assert!(s2.take_notices(t("2026-11-05T20:00:00Z")).is_empty()); // beyond grace
+    }
+
+    #[test]
+    fn settings_update_validates_and_normalizes() {
+        let (_d, s) = store();
+        let saved = s.update_settings(true, vec![5, 30, 5, 10]).unwrap();
+        assert_eq!(saved.offsets_minutes, vec![30, 10, 5]);
+        assert_eq!(s.settings(), saved);
+        assert!(s.update_settings(true, vec![0]).is_err());
+        assert!(s.update_settings(true, vec![99999999]).is_err());
+        assert!(s.update_settings(true, vec![1; 9]).is_err());
+        let r = s.add_rfc3339("x", "2099-01-01T00:00:00+00:00").unwrap();
+        assert!(s.snooze_rfc3339(&r.id, "2099-01-02T00:00:00+00:00").is_ok());
+        assert!(s.add_rfc3339("x", "2001-01-01T00:00:00+00:00").is_err());
     }
 
     #[test]

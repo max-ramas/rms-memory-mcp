@@ -575,6 +575,13 @@ pub fn system_instructions(project: Option<&str>) -> String {
 - Resuming: `rms_checkpoint_query` (status=active), then `rms_checkpoint_load` for the full state and linked note previews.
 - Finished: `rms_checkpoint_done` with a summary of what was done; this closes the checkpoint and writes a durable session summary.
 
+## Reminders
+- When the user asks to be reminded ("remind me to call Viktor Petrovich tomorrow at 12"), call `rms_remind` with `action: "add"`, the `text`, and `due_at` as RFC3339 WITH the user's UTC offset (or `in_minutes`). Ask if the date, time or timezone is unclear.
+- A `[RMS reminder]` block in any tool response is a due reminder: tell the user in your reply, in their language. At session start and after long pauses call `rms_remind` with `action: "list"` so nothing is missed. Mark finished ones with `done`.
+
+## Patterns
+- Reusable solutions live in `patterns/` notes (frontmatter `type: pattern`, `pattern_status`). Recommend only `verified-in-runtime` patterns; mention `implemented` or `proposed` ones only with their status. A pattern points to code (`refs`), it does not contain it.
+
 ## Rules
 - Each tool call targets exactly one project vault. Prefer an explicit `project` key when the IDE is multi-root or you may already be on another vault — explicit `project` always wins and rebinds.
 - Never invent a vault or write across projects in one call.
@@ -846,6 +853,8 @@ mod tests {
         assert!(bound.contains("explicit `project` always wins"));
         assert!(bound.contains("rms_graph"));
         assert!(bound.contains("include_graph_neighbors"));
+        assert!(bound.contains("rms_remind"));
+        assert!(bound.contains("verified-in-runtime"));
         assert!(!bound.contains("This connection is bound to project"));
         let unbound = system_instructions(None);
         assert!(unbound.contains("rms_projects"));
