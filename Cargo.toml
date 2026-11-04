@@ -64,6 +64,11 @@ tempfile = "3.27.0"
 uuid = { version = "1.23.4", features = ["v4", "v5"] }
 walkdir = "2.5.0"
 ignore = "0.4.28"
+minisign-verify = "0.3.0"
+sha2 = "0.11.1"
+flate2 = "1.1.10"
+tar = "0.4.46"
+zip = { version = "9.3.0", default-features = false, features = ["deflate"] }
 [[bin]]
 name = "rms-memory"
 path = "src/main.rs"
@@ -75,3 +80,4 @@ codegen-units = 1
 panic = "abort"
 
 [dev-dependencies]
+minisign = "0.10.0"

@@ -10,4 +10,5 @@ pub mod inject_rules;
 pub mod projects;
 pub mod prune;
 pub mod simple;
+pub mod update;
 pub mod wiki;

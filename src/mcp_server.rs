@@ -1261,6 +1261,20 @@ impl McpServer {
                         }
                     },
                     {
+                        "name": "rms_remind",
+                        "description": "Personal reminders that you pass on to the user. When the user says e.g. \"remind me to call Viktor Petrovich tomorrow at 12\", call action=add with `text` and `due_at` (RFC3339 WITH the user's UTC offset, e.g. 2026-11-06T12:00:00+03:00; use `in_minutes` for relative times; if you do not know the date, time or timezone, ask first). Afterwards, tool responses carry a `[RMS reminder]` block about 30/20/10/5 minutes before the time and once when it is due: relay it to the user in your reply. Other actions: list, done, cancel, snooze (new `due_at`/`in_minutes`). Global, not per project.",
+                        "inputSchema": {
+                            "type": "object",
+                            "properties": {
+                                "action": { "type": "string", "enum": ["add", "list", "done", "cancel", "snooze"], "description": "Default list." },
+                                "text": { "type": "string", "description": "What to remind about (add)." },
+                                "due_at": { "type": "string", "description": "RFC3339 timestamp with UTC offset." },
+                                "in_minutes": { "type": "integer", "description": "Relative alternative to due_at, minutes from now." },
+                                "id": { "type": "string", "description": "Reminder id (done, cancel, snooze)." }
+                            }
+                        }
+                    },
+                    {
                         "name": "rms_system_instructions",
                         "description": "Return the canonical RMS Memory usage protocol (search-first, persist, session continuity). Lets an agent self-bootstrap without injected rule files.",
                         "inputSchema": {
@@ -1276,6 +1290,10 @@ impl McpServer {
                 let params = params.unwrap_or(json!({}));
                 let name = params["name"].as_str().unwrap_or("");
                 let args = params["arguments"].as_object().cloned().unwrap_or_default();
+
+                if name == "rms_remind" {
+                    return crate::tools::remind::execute(&args);
+                }
 
                 if name == "rms_projects" {
                     let registry = crate::workspace::Registry::load()?;
@@ -1373,6 +1391,7 @@ impl McpServer {
                     _ => anyhow::bail!("Unknown tool"),
                 }
                 .inspect(|_| self.touch_active_bind())
+                .map(crate::tools::remind::attach_notices)
             }
             "resources/list" => crate::tools::resources::list(&self.ctx),
             "resources/templates/list" => Ok(crate::tools::resources::templates()),

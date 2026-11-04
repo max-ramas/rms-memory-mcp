@@ -5,6 +5,7 @@ pub mod hygiene;
 pub mod maintenance;
 pub mod prune;
 pub mod read;
+pub mod remind;
 pub mod resources;
 pub mod response;
 pub mod search;

@@ -2,6 +2,21 @@
 
 All notable changes to this project will be documented in this file.
 
+## [Unreleased]
+
+### Added
+- **`rms-memory update`:** checks the RMS update center (`update.rms-ds.com`) and installs a newer binary. The release manifest signature (minisign) and the archive checksum are verified before anything runs; the new binary must report the expected version before it replaces the old one; the previous binary is kept (`--rollback`). Package-manager installs (brew, cargo, .deb) are left to their package manager unless `--force`. Also `--check`, `--yes`, `--json`.
+- **Install scripts use the update center:** `install.sh` / `install.ps1` download from `update.rms-ds.com` (sha256 from the signed manifest, signature checked when `minisign` is installed) and fall back to GitHub Releases.
+- **Release workflow publishes `release.json` + signature** for the update center when the `RELEASE_SIGNING_KEY` secret is set (skipped with a warning otherwise).
+- **Reminders (`rms_remind`):** tell the agent "remind me to call Viktor Petrovich tomorrow at 12"; tool responses then carry a notice about 30/20/10/5 minutes before and when due, which the agent relays. Stored in `~/.rms-memory/reminders.json`; windows are read from `reminder-settings.json` (editable in the GUI).
+- **Pattern notes convention (`patterns/`):** frontmatter schema and template (`docs/patterns.md`, `templates/patterns/`). No server code.
+
+### Security
+- `pulldown-cmark` 0.13.6 (RUSTSEC-2026-0433, quadratic parsing of nested image wikilinks).
+
+### Changed
+- `rms-memory doctor` checks the update center first (signed manifest), GitHub as fallback, and recommends `rms-memory update`.
+
 ## [1.3.2] - 2026-10-28
 
 ### Fixed

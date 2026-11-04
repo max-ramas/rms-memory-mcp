@@ -61,6 +61,8 @@ pub enum Commands {
         #[command(subcommand)]
         command: crate::commands::projects::ProjectsCommands,
     },
+    /// Check for and install a newer MCP binary from the RMS update center
+    Update(crate::commands::update::UpdateArgs),
     /// Show companion GUI/AI status and capability catalog (soft labels only)
     Features(crate::commands::features::FeaturesArgs),
     /// Query/mutate the durable knowledge graph (MCP-first; same actions as rms_graph)
@@ -96,6 +98,7 @@ impl Cli {
             Commands::ExportLlms(args) => args.run(scope).await,
             Commands::Wiki { command } => command.run(scope).await,
             Commands::Projects { command } => Ok(command.run()?),
+            Commands::Update(args) => args.run(scope).await,
             Commands::Features(args) => args.run(scope).await,
             Commands::Graph(args) => args.run(scope).await,
             Commands::Embedding { command } => command.run(scope).await,
@@ -132,6 +135,7 @@ fn maybe_print_help_status_banner() {
         "wiki",
         "graph",
         "features",
+        "update",
     ];
     if args.iter().any(|a| SUBCOMMANDS.contains(&a.as_str())) {
         return;

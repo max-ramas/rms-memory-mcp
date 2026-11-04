@@ -325,6 +325,54 @@ jobs:
       - name: Display structure of downloaded files
         run: ls -R artifacts/
 
+      # RMS update center: sign release.json and attach it to the same release, so the
+      # `release` webhook finds manifest, signature and archives in one go. Skipped (with a
+      # warning) until the signing secret exists, so existing releases keep working.
+      - name: Check update-center signing secrets
+        id: uc
+        env:
+          RELEASE_KEY: ${{ secrets.RELEASE_SIGNING_KEY }}
+        run: |
+          if [[ -n "$RELEASE_KEY" ]]; then echo "enabled=true" >> "$GITHUB_OUTPUT"
+          else echo "::warning::RELEASE_SIGNING_KEY is not set: release.json for the update center is NOT published"; fi
+
+      - name: Get the release tool (rms-release)
+        if: steps.uc.outputs.enabled == 'true'
+        uses: actions/checkout@v4
+        with:
+          repository: max-ramas/rms-update-center
+          ssh-key: ${{ secrets.UPDATE_CENTER_DEPLOY_KEY }}
+          path: tools/update-center
+      - uses: actions/setup-go@v5
+        if: steps.uc.outputs.enabled == 'true'
+        with:
+          go-version-file: tools/update-center/go.mod
+          cache: false
+      - name: Build rms-release
+        if: steps.uc.outputs.enabled == 'true'
+        working-directory: tools/update-center
+        run: go build -o "$RUNNER_TEMP/rms-release" ./cmd/rms-release
+
+      - name: Write and sign release.json
+        if: steps.uc.outputs.enabled == 'true'
+        env:
+          RELEASE_KEY: ${{ secrets.RELEASE_SIGNING_KEY }}
+          RMS_RELEASE_KEY_PASSWORD: ${{ secrets.RELEASE_SIGNING_KEY_PASSWORD }}
+          VERSION: ${{ needs.plan.outputs.version }}
+        run: |
+          set -euo pipefail
+          scripts/release-notes.sh "$VERSION" > "$RUNNER_TEMP/notes.md"
+          umask 077
+          printf '%s\n' "$RELEASE_KEY" > "$RUNNER_TEMP/release.key"
+          scripts/update-center-manifest.sh "$VERSION" artifacts uc-out \
+            "$RUNNER_TEMP/rms-release" "$RUNNER_TEMP/release.key" "$RUNNER_TEMP/notes.md"
+          rm -f "$RUNNER_TEMP/release.key"
+          if [[ -f scripts/release-ci.pub ]]; then
+            "$RUNNER_TEMP/rms-release" verify --manifest uc-out/release.json \
+              --pubkey scripts/release-ci.pub --check-artifacts --base-dir uc-out
+          fi
+          cp uc-out/release.json uc-out/release.json.minisig artifacts/
+
       - name: Create or update GitHub Release
         uses: softprops/action-gh-release@v1
         with:

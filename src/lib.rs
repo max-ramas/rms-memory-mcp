@@ -1,3 +1,4 @@
+#![recursion_limit = "512"]
 /// RMS Memory MCP Server
 ///
 /// This is the umbrella library for RMS Memory. Its re-exports preserve the
@@ -56,7 +57,9 @@ pub mod http_transport;
 pub mod installer;
 #[doc(hidden)]
 pub mod mcp_server;
+pub mod reminders;
 #[doc(hidden)]
 pub mod rules_injector;
 #[doc(hidden)]
 pub mod update_check;
+pub mod updater;

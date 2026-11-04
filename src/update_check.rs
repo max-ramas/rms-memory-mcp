@@ -4,7 +4,8 @@
 //! result is cached in `~/.rms-memory/update-check.json`. Server start-up and
 //! MCP `initialize` read the cache only and never touch the network. Set
 //! `RMS_MEMORY_NO_UPDATE_CHECK=1` to disable the check (also skipped under CI).
-//! Upgrading is left to the package manager that installed the binary.
+//! The newest version comes from the RMS update center (signed manifest), with GitHub as
+//! fallback. Upgrading is `rms-memory update`, or the package manager that installed the binary.
 
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
@@ -55,7 +56,7 @@ pub fn upgrade_hint(exe: &Path) -> &'static str {
     } else if path.starts_with("/usr/bin/") {
         "your package manager (.deb/.rpm from the release page)"
     } else {
-        "the release archive or `scripts/install.sh`"
+        "`rms-memory update`"
     }
 }
 
@@ -75,7 +76,35 @@ struct LatestRelease {
     html_url: String,
 }
 
+/// Newest version according to the RMS update center (signature verified).
+fn fetch_latest_from_update_center() -> Result<UpdateCheck> {
+    let candidate = crate::updater::check(
+        &crate::updater::UpdateOptions {
+            timeout: Duration::from_secs(5),
+            ..Default::default()
+        },
+        "0.0.0",
+    )?
+    .context("update center has no release for this platform")?;
+    Ok(UpdateCheck {
+        release_url: format!(
+            "https://github.com/max-ramas/rms-memory-mcp/releases/tag/v{}",
+            candidate.version
+        ),
+        latest: candidate.version,
+        checked_at: chrono::Utc::now(),
+    })
+}
+
 fn fetch_latest() -> Result<UpdateCheck> {
+    match fetch_latest_from_update_center() {
+        Ok(check) => return Ok(check),
+        Err(error) => tracing::debug!("Update center lookup failed, trying GitHub: {error:#}"),
+    }
+    fetch_latest_from_github()
+}
+
+fn fetch_latest_from_github() -> Result<UpdateCheck> {
     let agent: ureq::Agent = ureq::Agent::config_builder()
         .timeout_global(Some(Duration::from_secs(5)))
         .user_agent(format!("rms-memory/{CURRENT_VERSION}"))
