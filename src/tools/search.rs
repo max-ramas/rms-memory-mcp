@@ -358,6 +358,10 @@ async fn execute_inner(
         args.get("corpus").and_then(|value| value.as_str()),
     )?);
 
+    let snippet_chars = args
+        .get("snippet_chars")
+        .and_then(|value| value.as_u64())
+        .map(|value| (value as usize).clamp(40, 4000));
     let pattern_filter = crate::patterns::PatternFilter::from_arg(
         args.get("pattern_status").and_then(|value| value.as_str()),
     )?;
@@ -415,6 +419,7 @@ async fn execute_inner(
         search_single_store(store, query_vector, query, fetch, min_confidence, corpus).await?
     };
     let results = filter_patterns(results, pattern_filter, &vault_roots, limit);
+    let results = trim_results(results, snippet_chars);
 
     let mut envelope = apply_bounded_recall(
         results,
@@ -602,6 +607,57 @@ fn enforce_cross_project_vault_policy(projects: &[ResolvedProject], corpus: Corp
          or pass `corpus=code`. Silent degrade to code-only is forbidden.",
         denied.join(", ")
     )))
+}
+
+/// True when a chunk carries nothing beyond its heading line(s).
+fn is_heading_only(content: &str) -> bool {
+    let mut seen_heading = false;
+    for line in content.lines().map(str::trim).filter(|l| !l.is_empty()) {
+        if line.starts_with('#') {
+            seen_heading = true;
+        } else {
+            return false;
+        }
+    }
+    seen_heading
+}
+
+/// Save context tokens without losing a pointer: heading-only chunks are dropped when the
+/// same note has a substantive hit, and otherwise keep their path/heading without repeating
+/// the heading as content. `snippet_chars` shortens every remaining content (read the winners
+/// with `rms_read` afterwards).
+fn trim_results(
+    results: Vec<UnifiedSearchResult>,
+    snippet_chars: Option<usize>,
+) -> Vec<UnifiedSearchResult> {
+    let substantive: std::collections::HashSet<(Option<String>, String)> = results
+        .iter()
+        .filter(|r| {
+            r.source == "vault" && r.content.as_deref().is_some_and(|c| !is_heading_only(c))
+        })
+        .map(|r| (r.project.clone(), r.path.clone()))
+        .collect();
+    results
+        .into_iter()
+        .filter_map(|mut r| {
+            if r.source == "vault"
+                && let Some(content) = r.content.as_deref()
+                && is_heading_only(content)
+            {
+                if substantive.contains(&(r.project.clone(), r.path.clone())) {
+                    return None;
+                }
+                r.content = None;
+            }
+            if let (Some(max), Some(content)) = (snippet_chars, r.content.as_mut())
+                && content.chars().count() > max
+            {
+                let cut: String = content.chars().take(max).collect();
+                *content = format!("{}…", cut.trim_end());
+            }
+            Some(r)
+        })
+        .collect()
 }
 
 fn overfetch(limit: usize, has_patterns: bool, corpus: Corpus) -> usize {
@@ -960,6 +1016,41 @@ mod tests {
         assert_eq!(overfetch(10, false, Corpus::Vault), 10);
         assert_eq!(overfetch(10, true, Corpus::Code), 10);
         assert_eq!(overfetch(60, true, Corpus::All), 100);
+    }
+
+    #[test]
+    fn trim_drops_redundant_heading_chunks_and_cuts_snippets() {
+        let with = |path: &str, content: &str| {
+            let mut r = result("vault", path);
+            r.content = Some(content.to_string());
+            r
+        };
+        let hits = vec![
+            with("a.md", "# Release 1.1.2"),
+            with(
+                "a.md",
+                "## Details\nThe real text of the note is long enough to cut.",
+            ),
+            with("b.md", "# Only a title\n## And a subtitle"),
+            with("c.md", "Plain body without heading"),
+        ];
+        let out = trim_results(hits.clone(), None);
+        assert_eq!(out.len(), 3, "a.md heading-only chunk dropped");
+        let b = out.iter().find(|r| r.path == "b.md").unwrap();
+        assert!(
+            b.content.is_none(),
+            "kept as a pointer without repeating the heading"
+        );
+        let cut = trim_results(hits, Some(40));
+        let a = cut.iter().find(|r| r.path == "a.md").unwrap();
+        assert!(a.content.as_deref().unwrap().ends_with('…'));
+        assert!(a.content.as_deref().unwrap().chars().count() <= 41);
+        assert!(!is_heading_only("text # not heading"));
+        assert!(!is_heading_only(""));
+        // Code hits are never touched.
+        let mut code = result("code", "src/x.rs");
+        code.content = Some("# comment".into());
+        assert!(trim_results(vec![code], None)[0].content.is_some());
     }
 
     fn result(source: &str, path: &str) -> UnifiedSearchResult {

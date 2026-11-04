@@ -9,6 +9,11 @@ All notable changes to this project will be documented in this file.
 - **Install scripts use the update center:** `install.sh` / `install.ps1` download from `update.rms-ds.com` (sha256 from the signed manifest, signature checked when `minisign` is installed) and fall back to GitHub Releases.
 - **Release workflow publishes `release.json` + signature** for the update center when the `RELEASE_SIGNING_KEY` secret is set (skipped with a warning otherwise).
 - **Reminders (`rms_remind`):** tell the agent "remind me to call Viktor Petrovich tomorrow at 12"; tool responses then carry a notice about 30/20/10/5 minutes before and when due, which the agent relays. Stored in `~/.rms-memory/reminders.json`; windows are read from `reminder-settings.json` (editable in the GUI).
+- **Token economy:**
+  - `rms-memory stats [--days N] [--json] [--reset]` shows how many characters each tool and `tools/list` returned to agents. Recorded locally in `~/.rms-memory/tool-stats.jsonl` (tool name, project key, size; never queries, paths or content); `RMS_MEMORY_NO_STATS=1` turns it off.
+  - `rms_read` accepts `outline` (headings with sizes), `heading` (one section), `max_chars`/`offset` (window) and `if_hash` (short "unchanged" reply when the note is the version you already read). The reply carries `content_hash` in `structuredContent`. Without options the whole note is returned as before.
+  - `rms_search` drops heading-only chunks when the same note has a substantive hit (otherwise keeps the pointer without repeating the heading) and accepts `snippet_chars` for a cheap first pass.
+  - Slightly shorter tool descriptions (`tools/list` ~19.5k -> ~18.9k characters, which also absorbs the new `rms_remind` tool and parameters).
 - **Agent protocol:** `rms_system_instructions` now explains reminders (`rms_remind`, relaying `[RMS reminder]` blocks, listing at session start) and serving only `verified-in-runtime` patterns.
 - **Pattern status filter and staleness check:** `rms_search` accepts `pattern_status` (default `verified-in-runtime`: unproven `patterns/` notes are hidden); `rms-memory doctor` check 9 reports patterns whose `refs` point at missing files, renamed symbols or code changed since the recorded commit.
 - **Pattern notes convention (`patterns/`):** frontmatter schema and template (`docs/patterns.md`, `templates/patterns/`). No server code.

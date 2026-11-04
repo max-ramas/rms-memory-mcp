@@ -61,6 +61,7 @@ pub mod patterns;
 pub mod reminders;
 #[doc(hidden)]
 pub mod rules_injector;
+pub mod tool_stats;
 #[doc(hidden)]
 pub mod update_check;
 pub mod updater;

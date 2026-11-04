@@ -562,7 +562,42 @@ impl McpServer {
                     .handle_notification(&request.method, request.params)
                     .await;
             };
-            let response = match self.handle_request(&request.method, request.params).await {
+            let tool = (request.method == "tools/call")
+                .then(|| {
+                    request
+                        .params
+                        .as_ref()
+                        .and_then(|p| p.get("name"))
+                        .and_then(Value::as_str)
+                        .map(str::to_string)
+                })
+                .flatten();
+            let project = request
+                .params
+                .as_ref()
+                .and_then(|p| p.pointer("/arguments/project"))
+                .and_then(Value::as_str)
+                .map(str::to_string)
+                .or_else(|| self.ctx.project_key.clone());
+            let method = request.method.clone();
+            let outcome = self.handle_request(&request.method, request.params).await;
+            if !crate::tool_stats::disabled() {
+                crate::tool_stats::record(
+                    &crate::tool_stats::default_path(),
+                    &crate::tool_stats::Entry {
+                        ts: chrono::Utc::now(),
+                        method,
+                        tool,
+                        project,
+                        ok: outcome.is_ok(),
+                        chars: match &outcome {
+                            Ok(v) => serde_json::to_string(v).map(|s| s.len()).unwrap_or(0),
+                            Err(e) => e.to_string().len(),
+                        },
+                    },
+                );
+            }
+            let response = match outcome {
                 Ok(result) => RpcResponse {
                     jsonrpc: "2.0".to_string(),
                     id,
@@ -1005,7 +1040,7 @@ impl McpServer {
                 "tools": [
                     {
                         "name": "rms_search",
-                        "description": "Search RMS Memory. Returns a decision envelope: {decision: inject|abstain, reason, injected_ids, results}. `corpus=vault` (default) searches human Markdown memory; `code` searches derived semantic code; `all` ranks each corpus independently and combines them with Reciprocal Rank Fusion, never raw vector distances. Pass `projects: [key, …]` for read-only cross-project federation (when both `project` and `projects` are set, `projects` wins so injected rules stay compatible); vault/all across multiple projects requires every listed key to have `cross_project_vault=true` (hard error otherwise — no silent degrade). Weak matches abstain when min_score is set; content is bounded by max_chars.",
+                        "description": "Search RMS Memory. Returns {decision: inject|abstain, reason, injected_ids, results}; trust an abstain. corpus: vault (default, Markdown notes), code (derived semantic code), all (rank-fused). `projects: [keys]` = read-only cross-project search (wins over `project`; vault/all needs cross_project_vault=true on every key, else an error). Content is bounded by max_chars; use snippet_chars + rms_read to save tokens",
                         "inputSchema": {
                             "type": "object",
                             "properties": {
@@ -1020,6 +1055,7 @@ impl McpServer {
                                 "min_score": { "type": "number", "description": "Optional minimum relevance in 0..1 (distance and RRF normalized). If the best hit is weaker, rms_search abstains with an empty results list (fail-closed)." },
                                 "include_file_history": { "type": "boolean", "description": "When true, attach the last 3 commits from the derived code_path git-history cache to each code hit (lazy catch-up). Not allowed together with projects: […] federation. Default false." },
                                 "include_graph_neighbors": { "type": "boolean", "description": "When true, attach durable graph neighbors for each hit path. Not allowed together with projects: […] federation. Default false." },
+                                "snippet_chars": { "type": "integer", "minimum": 40, "maximum": 4000, "description": "Cut each result's content to this many characters (token-saving first pass); then rms_read the winners with `heading` or `outline`." },
                                 "pattern_status": { "type": "string", "enum": ["verified-in-runtime", "implemented", "proposed", "all"], "description": "Minimum status for hits from patterns/ notes. Default verified-in-runtime: unproven patterns are hidden. `implemented` also returns implemented ones; `proposed`/`all` returns everything (hits carry their pattern_status). Other notes are never filtered." }
                             },
                             "required": ["query"]
@@ -1044,14 +1080,19 @@ impl McpServer {
                     },
                     {
                         "name": "rms_read",
-                        "description": "Read the full contents of a markdown document from the RMS Memory vault. Provide the relative path (e.g., 'rules/api.md'). Use this to retrieve the full context of a document found via rms_search.",
+                        "description": "Read a markdown document from the RMS Memory vault by relative path (e.g. 'rules/api.md'). Whole note by default. For long notes save tokens: `outline` (headings with sizes), `heading` (one section), `max_chars`/`offset` (window), `if_hash` (hash from an earlier read; returns a short 'unchanged' stub if the note has not changed).",
                         "inputSchema": {
                             "type": "object",
                             "properties": {
                                 "id": { "type": "string" },
-                                "project": { "type": "string", "description": "Registered project key, used when the MCP client did not provide a workspace root." },
+                                "project": { "type": "string", "description": "Project key (when the client sends no workspace root)." },
                                 "path": { "type": "string", "description": "Relative path to the markdown document in the vault." },
-                                "noPromote": { "type": "boolean", "description": "Read without side effects. Vault reads are already side-effect free; accepted for explicit forward-compatible contracts." }
+                                "noPromote": { "type": "boolean", "description": "Read without side effects. Vault reads are already side-effect free; accepted for explicit forward-compatible contracts." },
+                                "outline": { "type": "boolean", "description": "Return only a table of contents (headings with character sizes, frontmatter summary, content hash)." },
+                                "heading": { "type": "string", "description": "Return only the section under this heading (with its sub-sections). Exact title first, then substring." },
+                                "max_chars": { "type": "integer", "minimum": 1, "description": "Return at most this many characters; the reply says which offset continues." },
+                                "offset": { "type": "integer", "minimum": 0, "description": "Start at this character offset (with max_chars)." },
+                                "if_hash": { "type": "string", "description": "content_hash from an earlier read of this note. If unchanged, a short stub is returned instead of the text." }
                             },
                             "required": ["path"]
                         }
@@ -1063,7 +1104,7 @@ impl McpServer {
                             "type": "object",
                             "properties": {
                                 "id": { "type": "string" },
-                                "project": { "type": "string", "description": "Registered project key, used when the MCP client did not provide a workspace root." },
+                                "project": { "type": "string", "description": "Project key (when the client sends no workspace root)." },
                                 "path": { "type": "string", "description": "Relative path to save the document (e.g., 'decisions/001-db.md')." },
                                 "content": { "type": "string", "description": "The markdown content to write." },
                                 "mode": { "type": "string", "enum": ["create", "append", "replace"], "description": "Write mode." },
@@ -1152,7 +1193,7 @@ impl McpServer {
                         "inputSchema": {
                             "type": "object",
                             "properties": {
-                                "project": { "type": "string", "description": "Registered project key, used when the MCP client did not provide a workspace root." }
+                                "project": { "type": "string", "description": "Project key (when the client sends no workspace root)." }
                             }
                         }
                     },
@@ -1163,7 +1204,7 @@ impl McpServer {
                             "type": "object",
                             "properties": {
                                 "manifest": { "type": "string", "description": "Optional YAML manifest path for custom sections." },
-                                "project": { "type": "string", "description": "Registered project key, used when the MCP client did not provide a workspace root." },
+                                "project": { "type": "string", "description": "Project key (when the client sends no workspace root)." },
                                 "refresh_code": { "type": "boolean", "description": "Force code reindex before generating." }
                             }
                         }
@@ -1182,7 +1223,7 @@ impl McpServer {
                         "inputSchema": {
                             "type": "object",
                             "properties": {
-                                "project": { "type": "string", "description": "Registered project key, used when the MCP client did not provide a workspace root." },
+                                "project": { "type": "string", "description": "Project key (when the client sends no workspace root)." },
                                 "recent_limit": { "type": "integer", "description": "Maximum recent notes to return (default 10, max 50)." }
                             }
                         }
@@ -1195,7 +1236,7 @@ impl McpServer {
                             "properties": {
                                 "older_than_days": { "type": "integer", "minimum": 1, "maximum": 4294967295_u64, "default": 30, "description": "Minimum age in days for a superseded note to be eligible." },
                                 "apply": { "type": "boolean", "default": false, "description": "When true, archive eligible notes. Defaults to false (dry run)." },
-                                "project": { "type": "string", "description": "Registered project key, used when the MCP client did not provide a workspace root." }
+                                "project": { "type": "string", "description": "Project key (when the client sends no workspace root)." }
                             }
                         }
                     },
@@ -1206,7 +1247,7 @@ impl McpServer {
                             "type": "object",
                             "properties": {
                                 "min_similarity": { "type": "number", "minimum": 0.5, "maximum": 1.0, "default": 0.9, "description": "Cosine similarity at which two notes count as near duplicate candidates; candidates must also share half of their word 3-grams." },
-                                "project": { "type": "string", "description": "Registered project key, used when the MCP client did not provide a workspace root." }
+                                "project": { "type": "string", "description": "Project key (when the client sends no workspace root)." }
                             }
                         }
                     },
@@ -1217,7 +1258,7 @@ impl McpServer {
                             "type": "object",
                             "properties": {
                                 "name": { "type": "string", "description": "Checkpoint name (letters, digits, '-', '_', '.')." },
-                                "project": { "type": "string", "description": "Registered project key, used when the MCP client did not provide a workspace root." },
+                                "project": { "type": "string", "description": "Project key (when the client sends no workspace root)." },
                                 "goal": { "type": "string", "description": "What this work is trying to achieve." },
                                 "pending": { "type": "string", "description": "What remains to be done." },
                                 "links": { "type": "array", "items": { "type": "string" }, "description": "Vault-relative paths of related notes." }
@@ -1232,7 +1273,7 @@ impl McpServer {
                             "type": "object",
                             "properties": {
                                 "name": { "type": "string", "description": "Checkpoint name to close." },
-                                "project": { "type": "string", "description": "Registered project key, used when the MCP client did not provide a workspace root." },
+                                "project": { "type": "string", "description": "Project key (when the client sends no workspace root)." },
                                 "summary": { "type": "string", "description": "What was accomplished." }
                             },
                             "required": ["name", "summary"]
@@ -1245,7 +1286,7 @@ impl McpServer {
                             "type": "object",
                             "properties": {
                                 "name": { "type": "string", "description": "Checkpoint name to load." },
-                                "project": { "type": "string", "description": "Registered project key, used when the MCP client did not provide a workspace root." }
+                                "project": { "type": "string", "description": "Project key (when the client sends no workspace root)." }
                             },
                             "required": ["name"]
                         }
@@ -1257,7 +1298,7 @@ impl McpServer {
                             "type": "object",
                             "properties": {
                                 "status": { "type": "string", "enum": ["active", "done", "all"], "description": "Status filter; default all." },
-                                "project": { "type": "string", "description": "Registered project key, used when the MCP client did not provide a workspace root." }
+                                "project": { "type": "string", "description": "Project key (when the client sends no workspace root)." }
                             }
                         }
                     },
@@ -1281,7 +1322,7 @@ impl McpServer {
                         "inputSchema": {
                             "type": "object",
                             "properties": {
-                                "project": { "type": "string", "description": "Registered project key, used when the MCP client did not provide a workspace root." }
+                                "project": { "type": "string", "description": "Project key (when the client sends no workspace root)." }
                             }
                         }
                     }

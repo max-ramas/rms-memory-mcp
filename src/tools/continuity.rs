@@ -563,7 +563,7 @@ pub fn system_instructions(project: Option<&str>) -> String {
 
 ## Core loop
 1. SEARCH FIRST: call `rms_search` before substantial changes. It returns a decision envelope (inject/abstain); trust an abstain instead of forcing weak context.
-2. READ CONTEXT: call `rms_read` on relevant hits (ADRs, rules) to ingest full documents.
+2. READ CONTEXT: call `rms_read` on relevant hits (ADRs, rules). Long notes: first `outline: true`, then `heading` for the part you need; pass `if_hash` (the `content_hash` of an earlier read) to avoid re-reading an unchanged note. `rms_search` accepts `snippet_chars` for a cheap first pass.
 3. ORIENT: call `rms_overview` at session start for counts, recent notes, active checkpoints, index lag, and the git branch and changed files of the current project.
 4. PERSIST: at task end, save new conventions, tricky fixes, and decisions with `rms_write`. Folders: architecture/, rules/, decisions/, artifacts/, docs/, api/. Prefer `rms_write` with `dry_run: true` first when unsure whether a note would create, update, or be a no-op.
 5. FILE HISTORY: for when a source file changed in git, call `rms_file_history` (do not shell `git log`). Optional `include_file_history` on search attaches the last 3 commits per hit.

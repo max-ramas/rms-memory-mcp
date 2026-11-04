@@ -1,4 +1,5 @@
 pub mod continuity;
+pub mod doc_sections;
 pub mod file_history;
 pub mod graph;
 pub mod hygiene;
