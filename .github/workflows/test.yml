@@ -65,6 +65,13 @@ jobs:
       # Fails if workflows/installers regress to unversioned templates.
       run: ./scripts/check-release-asset-names.sh
 
+    - name: crates.io flatten keeps crate-level attributes
+      run: |
+        python3 scripts/flatten-for-crates-io.py . "$RUNNER_TEMP/flat"
+        grep -E '^#!\[' src/lib.rs | while IFS= read -r line; do
+          grep -qxF "$line" "$RUNNER_TEMP/flat/src/lib.rs" || { echo "flatten dropped: $line"; exit 1; }
+        done
+
     - name: Run Clippy
       run: cargo clippy --workspace --all-targets -- -D warnings
 

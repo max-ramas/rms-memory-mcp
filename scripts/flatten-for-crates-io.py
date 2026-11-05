@@ -143,8 +143,17 @@ def write_root_lib(root: Path, stage: Path) -> None:
         raise SystemExit("src/lib.rs: expected `pub use rms_memory_core::{...};` re-exports")
     # Rewrite any remaining rms_memory_* crate paths in the umbrella sources.
     # (umbrella lib itself mostly uses re-exports; other src/ files may use crates.)
+    # Crate-level inner attributes (e.g. `#![recursion_limit = "512"]`) must survive the
+    # rewrite, or the published crate stops compiling where the workspace build works. They
+    # have to stay first in the file, before any item or doc comment.
+    inner_attrs = "".join(
+        line + "\n"
+        for line in re.findall(
+            r"^#!\[[^\n]*\]$", original[: rest_match.start()], flags=re.MULTILINE
+        )
+    )
     (stage / "src" / "lib.rs").write_text(
-        header + mods + "\n" + reexports + "\n" + rest,
+        inner_attrs + header + mods + "\n" + reexports + "\n" + rest,
         encoding="utf-8",
     )
 
