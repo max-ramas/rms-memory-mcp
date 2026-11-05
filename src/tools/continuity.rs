@@ -580,7 +580,7 @@ pub fn system_instructions(project: Option<&str>) -> String {
 - A `[RMS reminder]` block in any tool response is a due reminder: tell the user in your reply, in their language. At session start and after long pauses call `rms_remind` with `action: "list"` so nothing is missed. Mark finished ones with `done`.
 
 ## Code
-- `rms_code_search` (or `rms_search` with `corpus: "code"|"all"`) finds code by meaning; use grep for exact strings. Every code search reports `code_index`: `fresh` is trustworthy, `stale` means re-read the listed files, `not_indexed` means the index is off or unbuilt (then use grep/read, and tell the user how to enable it from the `hint`).
+- `rms_code_search` (or `rms_search` with `corpus: "code"|"all"`) finds code by meaning; use grep for exact strings. To scan many hits cheaply pass `include_content: false` (a map of file, symbol, lines), then read what matters. Every code search reports `code_index`: `fresh` is trustworthy, `stale` means re-read the listed files, `not_indexed` means the index is off or unbuilt (then use grep/read, and tell the user how to enable it from the `hint`).
 - A code hit may carry `related_notes`: decisions and patterns that mention that file or symbol. Read them with `rms_read` before changing the code. `code_changed_since_note: true` means the code was edited after the note, so verify the note against the code instead of trusting it.
 - Call-graph edges (`calls_symbol`) are name-based hints. `rms_graph` neighbors show each edge's `resolution` and `confidence`; treat anything not `resolved` as a lead to verify, not a fact.
 

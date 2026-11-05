@@ -26,6 +26,7 @@ All notable changes to this project will be documented in this file.
 - `pulldown-cmark` 0.13.6 (RUSTSEC-2026-0433, quadratic parsing of nested image wikilinks).
 
 ### Changed
+- Structured tool responses (`rms_graph`, `rms_doctor`, `rms_overview`, checkpoints) send compact JSON text instead of pretty-printed: 25-35% fewer characters, same content (`structuredContent` is unchanged).
 - `rms-memory doctor` checks the update center first (signed manifest), GitHub as fallback, and recommends `rms-memory update`.
 
 ## [1.3.2] - 2026-10-28

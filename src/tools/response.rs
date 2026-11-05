@@ -7,12 +7,12 @@ pub fn json_text_response(text: &str) -> Value {
 }
 
 /// MCP result carrying the same payload twice: as `structuredContent` for
-/// structured consumers (GUI, typed agents) and as pretty JSON text for
-/// plain-text LLM clients.
+/// structured consumers (GUI, typed agents) and as compact JSON text for
+/// plain-text LLM clients (pretty-printing costs 25-35% more tokens for no information).
 pub fn json_structured_response<T: serde::Serialize>(payload: &T) -> anyhow::Result<Value> {
     let value = serde_json::to_value(payload)?;
     Ok(json!({
-        "content": [{"type": "text", "text": serde_json::to_string_pretty(&value)?}],
+        "content": [{"type": "text", "text": serde_json::to_string(&value)?}],
         "structuredContent": value
     }))
 }
