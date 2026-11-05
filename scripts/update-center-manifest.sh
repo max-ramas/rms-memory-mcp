@@ -26,6 +26,8 @@ addpkg() { # addpkg <platform/arch/format> <file glob>   (deb / rpm packages)
     cp "$f" "$OUT/"
     args+=(--artifact "$1=$OUT/$(basename "$f")")
 }
+addpkg darwin/arm64/pkg "rms_memory_mcp_${VERSION}_aarch64-apple-darwin.pkg"
+addpkg windows/amd64/msi "rms_memory_mcp_${VERSION}_x86_64-pc-windows-msvc.msi"
 addpkg linux/amd64/deb "rms_memory_mcp_${VERSION}-1_amd64.deb"
 addpkg linux/arm64/deb "rms_memory_mcp_${VERSION}-1_arm64.deb"
 addpkg linux/amd64/rpm "rms_memory_mcp_${VERSION}-1.x86_64.rpm"
