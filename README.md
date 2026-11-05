@@ -79,34 +79,47 @@ You're developing a single project but switching between different agents — Cu
 
 ## 📥 Download
 
-Permanent "latest" links served by the RMS update server, so you do not have to browse GitHub
-releases. Each link always points at the newest stable release.
+<div align="center">
 
-| Platform | Download |
-| --- | --- |
-| macOS · Apple Silicon | [rms-memory · tar.gz](https://update.rms-ds.com/get/rms-memory-mcp/tar.gz?platform=darwin&arch=arm64&src=readme) |
-| Linux · x86_64 | [rms-memory · tar.gz](https://update.rms-ds.com/get/rms-memory-mcp/tar.gz?platform=linux&arch=amd64&src=readme) |
-| Linux · ARM64 | [rms-memory · tar.gz](https://update.rms-ds.com/get/rms-memory-mcp/tar.gz?platform=linux&arch=arm64&src=readme) |
-| Windows · x64 | [rms-memory · zip](https://update.rms-ds.com/get/rms-memory-mcp/zip?platform=windows&arch=amd64&src=readme) |
+**RMS Memory MCP** (command-line server, free)
 
-Unpack, put `rms-memory` (`rms-memory.exe` on Windows) on your `PATH` and run `rms-memory install`
-to register it in your IDEs. Already installed? `rms-memory update` fetches the release from the
-same server, verifies its signature and checksum, and keeps the previous binary for
-`rms-memory update --rollback`. The signed manifest of the latest release is at
-[`/v1/rms-memory-mcp/latest`](https://update.rms-ds.com/v1/rms-memory-mcp/latest).
-Downloads through this server are counted per release; no IP addresses or user agents are stored.
+[![macOS Apple Silicon](https://img.shields.io/badge/macOS-Apple%20Silicon-2ea44f?style=for-the-badge&logo=apple&logoColor=white)](https://update.rms-ds.com/get/rms-memory-mcp/tar.gz?platform=darwin&arch=arm64&src=readme)
+[![Linux x64](https://img.shields.io/badge/Linux-x64-2ea44f?style=for-the-badge&logo=linux&logoColor=white)](https://update.rms-ds.com/get/rms-memory-mcp/tar.gz?platform=linux&arch=amd64&src=readme)
+[![Linux ARM64](https://img.shields.io/badge/Linux-ARM64-2ea44f?style=for-the-badge&logo=linux&logoColor=white)](https://update.rms-ds.com/get/rms-memory-mcp/tar.gz?platform=linux&arch=arm64&src=readme)
+[![Windows x64](https://img.shields.io/badge/Windows-x64-2ea44f?style=for-the-badge&logo=windows&logoColor=white)](https://update.rms-ds.com/get/rms-memory-mcp/zip?platform=windows&arch=amd64&src=readme)
 
-**Optional desktop app (RMS Memory GUI):** installers for every platform, also served by the update
-server. The app is licensed inside (it starts with a trial); the MCP server above never needs it.
+Each download is a small archive with one binary, `rms-memory`. Always the newest stable release.
 
-| Platform | Installer |
-| --- | --- |
-| macOS · Apple Silicon | [.dmg](https://update.rms-ds.com/get/rms-memory-gui/dmg?platform=darwin&arch=arm64&src=readme) |
-| Windows · x64 | [.exe (setup)](https://update.rms-ds.com/get/rms-memory-gui/exe?platform=windows&arch=amd64&src=readme) · [.msi](https://update.rms-ds.com/get/rms-memory-gui/msi?platform=windows&arch=amd64&src=readme) |
-| Linux · x64 | [.AppImage](https://update.rms-ds.com/get/rms-memory-gui/appimage?platform=linux&arch=amd64&src=readme) · [.deb](https://update.rms-ds.com/get/rms-memory-gui/deb?platform=linux&arch=amd64&src=readme) · [.rpm](https://update.rms-ds.com/get/rms-memory-gui/rpm?platform=linux&arch=amd64&src=readme) |
+</div>
 
-Older versions and other formats (such as the MCP `.deb` and `.rpm` packages) stay on
-[GitHub Releases](https://github.com/max-ramas/rms-memory-mcp/releases).
+**Prefer a one-line installer?** It picks the right build, verifies the signature and puts the binary on your `PATH`:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/max-ramas/rms-memory-mcp/master/scripts/install.sh | bash
+```
+
+```powershell
+irm https://raw.githubusercontent.com/max-ramas/rms-memory-mcp/master/scripts/install.ps1 | iex
+```
+
+With an archive: unpack, put `rms-memory` (`rms-memory.exe` on Windows) on your `PATH` and run `rms-memory install` to register it in your IDEs. Already installed? `rms-memory update` fetches the release from the same server, verifies its signature and checksum, and keeps the previous binary for `rms-memory update --rollback`. The signed manifest of the latest release is at [`/v1/rms-memory-mcp/latest`](https://update.rms-ds.com/v1/rms-memory-mcp/latest). Downloads through this server are counted per release; no IP addresses or user agents are stored.
+
+<div align="center">
+
+**RMS Memory GUI** (optional desktop app, trial included)
+
+[![GUI macOS .dmg](https://img.shields.io/badge/macOS-.dmg-0969da?style=for-the-badge&logo=apple&logoColor=white)](https://update.rms-ds.com/get/rms-memory-gui/dmg?platform=darwin&arch=arm64&src=readme)
+[![GUI Windows .exe setup](https://img.shields.io/badge/Windows-.exe%20setup-0969da?style=for-the-badge&logo=windows&logoColor=white)](https://update.rms-ds.com/get/rms-memory-gui/exe?platform=windows&arch=amd64&src=readme)
+[![GUI Windows .msi](https://img.shields.io/badge/Windows-.msi-0969da?style=for-the-badge&logo=windows&logoColor=white)](https://update.rms-ds.com/get/rms-memory-gui/msi?platform=windows&arch=amd64&src=readme)
+[![GUI Linux .AppImage](https://img.shields.io/badge/Linux-.AppImage-0969da?style=for-the-badge&logo=linux&logoColor=white)](https://update.rms-ds.com/get/rms-memory-gui/appimage?platform=linux&arch=amd64&src=readme)
+[![GUI Linux .deb](https://img.shields.io/badge/Linux-.deb-0969da?style=for-the-badge&logo=debian&logoColor=white)](https://update.rms-ds.com/get/rms-memory-gui/deb?platform=linux&arch=amd64&src=readme)
+[![GUI Linux .rpm](https://img.shields.io/badge/Linux-.rpm-0969da?style=for-the-badge&logo=redhat&logoColor=white)](https://update.rms-ds.com/get/rms-memory-gui/rpm?platform=linux&arch=amd64&src=readme)
+
+The MCP server never needs the GUI.
+
+</div>
+
+Homebrew, `.deb`/`.rpm` packages of the MCP and older versions: [GitHub Releases](https://github.com/max-ramas/rms-memory-mcp/releases).
 
 ## 📦 Installation
 
