@@ -4,7 +4,10 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [1.4.0] - 2026-11-05
+
 ### Added
+- **Download section in the README** with permanent "latest" links to the RMS update server for every platform (MCP and the optional GUI). Downloads from the built-in updater and the install scripts are labelled (`src=app`, `src=installer`) so the update server can count them apart from README links.
 - Code layer: `rms_code_search` / `rms_search` (`corpus: code|all`) report `code_index` (`fresh`, `stale` with the number of changed files, or `not_indexed` with the exact command to enable it), and attach `related_notes` per file: the decisions and patterns that mention that file or symbol, flagged `code_changed_since_note` when the code is newer than the note. `include_notes: false` turns it off. `rms_file_history` returns the same `related_notes`. See `docs/code-layer.md`.
 - `rms_graph` neighbors show how many edges are unconfirmed name-based hints; neighbors attached to search hits now carry `resolution` and `confidence`.
 - Pattern staleness check says where a missing symbol went (`git grep`), so a move or rename is told apart from a deletion.
