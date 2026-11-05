@@ -10,7 +10,7 @@ This release adds Continuity panels for index freshness, git branch, memory hygi
 > and whether a license exists: about once a day the app sends that to `license.rms-ds.com` (with a
 > license, also a hash and signature of your key, never the key itself; no hardware data, names or
 > file paths).
-> Features you switch on yourself (your own AI provider key, GitHub sign-in, optional spend sync) are
+> Features you switch on yourself (your own AI provider key, GitHub sign-in) are
 > off by default and send only what you choose, to the service you chose. Checking for updates asks
 > GitHub\*'s public releases and downloads signed files from GitHub\* and `update.rms-ds.com`.
 >
@@ -36,11 +36,11 @@ the same vaults and projects served by MCP.
 | Source control | Per-project Git status/diff/history plus a separate global Vault Git/GitHub sync (safe commit → pull → push); Project Git automation card in Settings |
 | Doctor & Setup | Init, MCP client installation, indexing, sync, GC, doctor and Wiki generation from one screen; Settings choose the embedding model (bundled or local Ollama) and the code languages |
 | AI & Wiki (optional) | Bring-your-own-key organizer across 12 providers; proposal-only workflow — every change is reviewed with sources and a before/after diff before it touches the vault |
-| Spend | Local token/cost ledger across your AI coding tools, with optional cloud sync (serialized `spend-sync.json` updates). Full Spend Settings live in the separate `rms-spend` app |
+| Spend | Local token/cost ledger across your AI coding tools. Full Spend Settings live in the separate `rms-spend` app |
 | About / license | Pro vs trial panel; optional in-app **Install** when signed `latest.json` is on the matching MCP release |
 | Other | Backup history with restore, `llms.txt`/Graphviz export, live log viewer, Appearance status-bar toggle, light/dark themes, 7 UI languages |
 
-AI, Spend cloud sync and Vault GitHub sync are the only features gated behind
+AI and Vault GitHub sync are the only features gated behind
 the GUI's own license after the trial period — everything above still starts
 from the same Markdown vault and index the MCP server produces, so nothing in
 this table implies a change to the MCP server itself.
