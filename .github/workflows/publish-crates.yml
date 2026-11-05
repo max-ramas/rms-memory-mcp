@@ -15,7 +15,7 @@ concurrency:
 jobs:
   publish:
     name: Publish package
-    runs-on: [self-hosted, linux, x64]
+    runs-on: ubuntu-latest
     environment: crates.io
     permissions:
       contents: read
