@@ -3,6 +3,22 @@
 **Current version:** GUI `1.4.0` with MCP `1.4.0` (unified numbering).
 This release adds Continuity panels for index freshness, git branch, memory hygiene and closed checkpoints, an embedding-model picker in Settings, HTML/CSS/C#/PHP/Kotlin/SQL code languages, respect for read-only Obsidian vaults and doctor credential findings.
 
+> ### 🔒 Privacy promise
+> RMS does **not** collect your data or usage statistics. RMS Memory GUI has no analytics of any kind,
+> and your notes, code, vaults and settings stay on your computer. What reaches RMS is only the fact
+> of an installation (a random ID created on your computer, the app version and the update channel)
+> and whether a license exists: about once a day the app sends that to `license.rms-ds.com` (with a
+> license, also a hash and signature of your key, never the key itself; no hardware data, names or
+> file paths).
+> Features you switch on yourself (your own AI provider key, GitHub sign-in) are
+> off by default and send only what you choose, to the service you chose. Checking for updates asks
+> GitHub\*'s public releases and downloads signed files from GitHub\* and `update.rms-ds.com`.
+>
+> Want full privacy for the AI features? Point them at a local Ollama (or any loopback endpoint) and
+> your notes never leave your computer for an AI provider; only the license check above remains.
+>
+> If an online service is ever introduced, we will tell you clearly beforehand.
+
 RMS Memory GUI is the optional commercial desktop application for
 [RMS Memory MCP](https://github.com/max-ramas/rms-memory-mcp). It is a Tauri
 application for macOS, Windows and Linux that provides a local control plane for
@@ -20,11 +36,11 @@ the same vaults and projects served by MCP.
 | Source control | Per-project Git status/diff/history plus a separate global Vault Git/GitHub sync (safe commit → pull → push); Project Git automation card in Settings |
 | Doctor & Setup | Init, MCP client installation, indexing, sync, GC, doctor and Wiki generation from one screen; Settings choose the embedding model (bundled or local Ollama) and the code languages |
 | AI & Wiki (optional) | Bring-your-own-key organizer across 12 providers; proposal-only workflow — every change is reviewed with sources and a before/after diff before it touches the vault |
-| Spend | Local token/cost ledger across your AI coding tools, with optional cloud sync (serialized `spend-sync.json` updates). Full Spend Settings live in the separate `rms-spend` app |
+| Spend | Local token/cost ledger across your AI coding tools. Full Spend Settings live in the separate `rms-spend` app |
 | About / license | Pro vs trial panel; optional in-app **Install** when signed `latest.json` is on the matching MCP release |
 | Other | Backup history with restore, `llms.txt`/Graphviz export, live log viewer, Appearance status-bar toggle, light/dark themes, 7 UI languages |
 
-AI, Spend cloud sync and Vault GitHub sync are the only features gated behind
+AI and Vault GitHub sync are the only features gated behind
 the GUI's own license after the trial period — everything above still starts
 from the same Markdown vault and index the MCP server produces, so nothing in
 this table implies a change to the MCP server itself.
@@ -141,3 +157,7 @@ replace the server. For a new or upgraded GUI/MCP pair, start the MCP server and
 run **Doctor & Setup → Index code** in the GUI if you want its structural code
 projection in the hybrid graph. Existing Markdown memory remains editable and
 portable without the GUI.
+
+---
+
+\* GitHub is contacted directly by the app for your convenience (update checks and downloads). RMS does not take part in that exchange.

@@ -23,6 +23,25 @@ Stop re-explaining your architecture to Cursor, Zed, and Claude Code and other I
 
 ---
 
+> ### 🔒 Privacy promise
+> RMS does **not** collect your data or usage statistics. RMS Memory MCP has no accounts, license
+> checks or analytics, and your notes, code, queries and settings stay on your machine (local-first).
+> The only requests that reach RMS carry no content and no personal identifier:
+> - **Update check:** `rms-memory doctor` (and the `rms_doctor` tool) asks `update.rms-ds.com` for the
+>   newest version, at most once a day: your OS, CPU architecture and the version, no ID. If that
+>   server is unreachable it falls back to GitHub\*. Turn it off with `RMS_MEMORY_NO_UPDATE_CHECK=1`.
+> - **Downloads you ask for:** `rms-memory update`, `rms-memory gui` and the install scripts fetch
+>   signed files from `update.rms-ds.com`, which counts downloads per release and source; its
+>   analytics store no IP addresses or user agents.
+> - **Embedding model:** on first use it is downloaded once from Hugging Face\*.
+>
+> Embeddings are computed on your machine (the bundled model, or a local Ollama), so your notes never
+> leave your computer for any AI service.
+>
+> If an online service is ever introduced, we will tell you clearly beforehand.
+
+---
+
 <div align="center">
   <a href="https://ko-fi.com/M7I020HKXX" target="_blank" rel="noopener noreferrer">
     <img src="https://ko-fi.com/img/githubbutton_sm.svg" alt="ko-fi">
@@ -556,3 +575,7 @@ MIT License — see [LICENSE](LICENSE) for details.
 <div align="center">
 <sub>Built by <a href="https://ramzaeff.com">Maksim Ramzaev</a> · <a href="https://rms-ds.com">RMS Digital Services</a></sub>
 </div>
+
+---
+
+\* Contacted directly by the tool for your convenience (a fallback update lookup on GitHub, the one-time embedding model download from Hugging Face). RMS does not take part in that exchange.
