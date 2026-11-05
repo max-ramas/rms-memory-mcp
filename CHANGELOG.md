@@ -6,6 +6,7 @@ All notable changes to this project will be documented in this file.
 
 ### Added
 - **`rms-memory gui`:** installs the optional desktop GUI from the RMS update server and opens it (or just opens it when it is installed). The installer comes through the same trust chain as `rms-memory update`: signed manifest, size and sha256 checked while streaming, nothing opened on a mismatch. macOS: the app is copied from the disk image into `/Applications` (or `~/Applications`); Windows: the verified installer is started; Linux: the AppImage goes to `~/.local/bin/rms-memory-gui`. `--download-only`, `--no-open`, `--yes`, `--json`. Downloads are labelled `src=cli` so the update server counts them apart from the README and the in-app updater.
+- **After `rms-memory init` (also `--full`) the CLI offers to install the GUI right away** ("For your convenience…", default answer No): asked at most once per 14 days, only in an interactive terminal, never when the GUI is installed; a failed install is reported and never fails `init`.
 - **A rare GUI hint** after `rms-memory install` and `rms-memory update`: at most once per 14 days, only in an interactive terminal, never in `--json` output or once the GUI is installed; `RMS_MEMORY_NO_TIPS=1` turns it off.
 
 ### Changed

@@ -98,6 +98,7 @@ impl InitArgs {
             {
                 eprintln!("Warning: Failed to import documents: {}", e);
             }
+            crate::tips::offer_gui_after_init().await;
         }
 
         Ok(())

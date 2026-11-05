@@ -61,6 +61,50 @@ pub fn maybe_show_gui_tip(json_output: bool) {
     write_last_shown(&path, now);
 }
 
+pub const GUI_OFFER: &str = "For your convenience: the optional RMS Memory GUI gives you a visual graph, an editor, reminders and an AI organizer.\nIt starts with a 14-day free trial, and the MCP works fully without it.";
+
+/// After `rms-memory init`: offer to install the GUI right now. Asked at most once per 14 days
+/// (shared with the other hints, so setting up several projects does not repeat it), only in an
+/// interactive terminal, never when the GUI is installed or `RMS_MEMORY_NO_TIPS=1`. A failed
+/// install is reported but never fails `init`.
+pub async fn offer_gui_after_init() {
+    if disabled_by_env()
+        || !std::io::stdout().is_terminal()
+        || !std::io::stdin().is_terminal()
+        || crate::companion_status::detect().gui_installed
+    {
+        return;
+    }
+    let path = state_path();
+    let now = Utc::now();
+    if !is_due(read_last_shown(&path), now) {
+        return;
+    }
+    // Count the question as shown before asking, so a decline is remembered too.
+    write_last_shown(&path, now);
+    println!("\n{GUI_OFFER}");
+    let accept = dialoguer::Confirm::new()
+        .with_prompt("Install the GUI now?")
+        .default(false)
+        .interact()
+        .unwrap_or(false);
+    if !accept {
+        println!("No problem. Whenever you want it: rms-memory gui");
+        return;
+    }
+    let args = crate::commands::gui::GuiArgs {
+        download_only: false,
+        no_open: false,
+        yes: true,
+        json: false,
+    };
+    if let Err(error) = args.run(None).await {
+        eprintln!(
+            "Could not install the GUI now: {error:#}\nYou can try later with: rms-memory gui"
+        );
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -86,6 +130,12 @@ mod tests {
         assert!((read - now).num_seconds().abs() <= 1);
         std::fs::write(&path, "not json").unwrap();
         assert_eq!(read_last_shown(&path), None);
+    }
+
+    #[test]
+    fn the_init_offer_mentions_the_trial_and_that_the_mcp_needs_no_gui() {
+        assert!(GUI_OFFER.contains("14-day"));
+        assert!(GUI_OFFER.contains("without it"));
     }
 
     #[test]
