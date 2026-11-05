@@ -289,8 +289,10 @@ pub fn check(opts: &UpdateOptions, current: &str) -> Result<Option<Candidate>> {
     // Served by the update center itself unless the manifest names an https source.
     let download_url = match artifact.source.as_deref() {
         Some(src) if src.starts_with("https://") => src.to_string(),
+        // `src=app` labels the download as coming from the built-in updater, so the update
+        // center can count it apart from README and website links.
         _ => format!(
-            "{}/dl/{}/{}/{}",
+            "{}/dl/{}/{}/{}?src=app",
             opts.base_url, opts.product, manifest.version, artifact.file
         ),
     };

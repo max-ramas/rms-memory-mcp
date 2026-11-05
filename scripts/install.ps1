@@ -28,7 +28,7 @@ function Get-FromUpdateCenter {
     $entry = $manifest.artifacts | Where-Object { $_.platform -eq "windows" -and $_.arch -eq "amd64" -and $_.format -eq "zip" } | Select-Object -First 1
     if (-not $entry -or $entry.file -match '[\\/]') { throw "no Windows build in the release" }
     Write-Host "Downloading $updateUrl/dl/$product/$($latest.version)/$($entry.file)..."
-    Invoke-WebRequest -Uri "$updateUrl/dl/$product/$($latest.version)/$($entry.file)" -OutFile $tempZip -UseBasicParsing
+    Invoke-WebRequest -Uri "$updateUrl/dl/$product/$($latest.version)/$($entry.file)?src=installer" -OutFile $tempZip -UseBasicParsing
     $hash = (Get-FileHash -Algorithm SHA256 -Path $tempZip).Hash.ToLower()
     if ($hash -ne $entry.sha256.ToLower()) { Remove-Item $tempZip -Force; throw "checksum mismatch" }
     Write-Host "Installed version: $($latest.version) (from the RMS update center)"

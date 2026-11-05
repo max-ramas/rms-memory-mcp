@@ -75,7 +75,7 @@ from_update_center() {
     file=$(printf '%s' "$entry" | sed -n 's/.*"file"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p')
     case "$file" in */*|""|..) echo "Error: unsafe file name in manifest."; exit 1;; esac
     echo "Downloading ${UPDATE_URL}/dl/${PRODUCT}/${version}/${file}..."
-    curl -fsSL "${UPDATE_URL}/dl/${PRODUCT}/${version}/${file}" -o "$ARCHIVE" || return 1
+    curl -fsSL "${UPDATE_URL}/dl/${PRODUCT}/${version}/${file}?src=installer" -o "$ARCHIVE" || return 1
     [ "$(sha256_of "$ARCHIVE")" = "$sha" ] || { echo "Error: checksum mismatch."; exit 1; }
     echo "Installed version: ${version} (from the RMS update center)"
 }

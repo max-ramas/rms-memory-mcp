@@ -17,7 +17,7 @@ Stop re-explaining your architecture to Cursor, Zed, and Claude Code and other I
 [![Platform](https://img.shields.io/badge/platform-macOS%20%7C%20Linux%20%7C%20Windows-lightgrey)]()
 [![MCP](https://img.shields.io/badge/protocol-MCP-blueviolet)](https://modelcontextprotocol.io)
 
-[Features](#-key-features) • [Download](https://github.com/max-ramas/rms-memory-mcp/releases/latest) • [Install](#-installation) • [Quick Start](#-quick-start) • [CLI](#-cli-commands) • [MCP Tools](#-mcp-tools-exposed) • [Architecture](#-architecture-highlights)
+[Features](#-key-features) • [Download](#-download) • [Install](#-installation) • [Quick Start](#-quick-start) • [CLI](#-cli-commands) • [MCP Tools](#-mcp-tools-exposed) • [Architecture](#-architecture-highlights)
 
 </div>
 
@@ -76,6 +76,27 @@ You're developing a single project but switching between different agents — Cu
 | 🧠 **Audit Metadata** | Every record auto-receives `last_modified_by`, `timestamp`, `confidence`, `source` — agents can filter by reliability. |
 | 🔀 **Multi-Scope** | `--scope` flag supports arbitrary identifiers beyond filesystem paths (thread IDs, lead IDs, etc.). |
 | 🖥️ **Optional Companion GUI** | Paid Tauri desktop app: visual Markdown/graph editor, Git & Vault sync, Doctor dashboard, AI-assisted organizer/Wiki (BYOK), and cross-tool spend tracking — layered on top of the same vault, never required. See [GUI-README.md](./GUI-README.md). |
+
+## 📥 Download
+
+Permanent "latest" links served by the RMS update server, so you do not have to browse GitHub
+releases. Each link always points at the newest stable release.
+
+| Platform | Download |
+| --- | --- |
+| macOS · Apple Silicon | [rms-memory · tar.gz](https://update.rms-ds.com/get/rms-memory-mcp/tar.gz?platform=darwin&arch=arm64&src=readme) |
+| Linux · x86_64 | [rms-memory · tar.gz](https://update.rms-ds.com/get/rms-memory-mcp/tar.gz?platform=linux&arch=amd64&src=readme) |
+| Linux · ARM64 | [rms-memory · tar.gz](https://update.rms-ds.com/get/rms-memory-mcp/tar.gz?platform=linux&arch=arm64&src=readme) |
+| Windows · x64 | [rms-memory · zip](https://update.rms-ds.com/get/rms-memory-mcp/zip?platform=windows&arch=amd64&src=readme) |
+
+Unpack, put `rms-memory` (`rms-memory.exe` on Windows) on your `PATH` and run `rms-memory install`
+to register it in your IDEs. Already installed? `rms-memory update` fetches the release from the
+same server, verifies its signature and checksum, and keeps the previous binary for
+`rms-memory update --rollback`. The signed manifest of the latest release is at
+[`/v1/rms-memory-mcp/latest`](https://update.rms-ds.com/v1/rms-memory-mcp/latest).
+Downloads through this server are counted per release; no IP addresses or user agents are stored.
+Other formats (`.deb`, `.rpm`) and older versions stay on
+[GitHub Releases](https://github.com/max-ramas/rms-memory-mcp/releases).
 
 ## 📦 Installation
 
