@@ -23,6 +23,26 @@ Stop re-explaining your architecture to Cursor, Zed, and Claude Code and other I
 
 ---
 
+> ### 🔒 Privacy promise
+> RMS Memory MCP does **not** collect your data or usage statistics: no analytics, no accounts, no
+> license checks, no device ID. Your notes, code, queries and settings stay on your machine
+> (local-first): the embedding model runs locally, and even the optional Ollama backend must listen
+> on your own computer. The only network requests it makes are:
+> - **Update check:** `rms-memory doctor` (and the `rms_doctor` tool) asks `update.rms-ds.com` for the
+>   newest version at most once a day. It sends your OS, CPU architecture and the version (in the
+>   user agent); if that server is unreachable it falls back to GitHub's public release API. Turn it
+>   off with `RMS_MEMORY_NO_UPDATE_CHECK=1`.
+> - **Downloads you ask for:** `rms-memory update`, `rms-memory gui` and the install scripts fetch
+>   signed files from `update.rms-ds.com`. The server counts downloads per release and source
+>   (README, updater, installer); its analytics store no IP addresses or user agents.
+> - **Embedding model:** on first use the model is downloaded once from Hugging Face. Nothing about
+>   you or your notes is sent.
+>
+> `rms-memory stats` is kept only on your machine and never sent. If an online service is ever
+> introduced, you will be told clearly beforehand. This is how all RMS products work.
+
+---
+
 <div align="center">
   <a href="https://ko-fi.com/M7I020HKXX" target="_blank" rel="noopener noreferrer">
     <img src="https://ko-fi.com/img/githubbutton_sm.svg" alt="ko-fi">

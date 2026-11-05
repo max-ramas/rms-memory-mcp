@@ -3,6 +3,23 @@
 **Current version:** GUI `1.4.0` with MCP `1.4.0` (unified numbering).
 This release adds Continuity panels for index freshness, git branch, memory hygiene and closed checkpoints, an embedding-model picker in Settings, HTML/CSS/C#/PHP/Kotlin/SQL code languages, respect for read-only Obsidian vaults and doctor credential findings.
 
+> ### 🔒 Privacy promise
+> RMS Memory GUI does **not** collect your data or usage statistics, and has no analytics of any
+> kind. Your notes, code, vaults and settings stay on your computer. What the app sends is limited to:
+> - **License and trial:** at start-up and then about once a day it tells `license.rms-ds.com` a random
+>   ID that was created on your computer at install time, the app version and, if you have a license,
+>   a hash and signature of your key (never the key itself). It receives the license state. No
+>   hardware data, names or file paths.
+> - **Update checks:** it asks GitHub's public release API for a newer version (user agent
+>   `rms-memory-gui/<version>`) and downloads signed files from GitHub and `update.rms-ds.com` when you
+>   install an update or the MCP binary.
+> - **Only if you use them:** GitHub (signing in, and Git push/pull to your own repositories) and the AI
+>   provider you configure with your own key (or a local Ollama / LM Studio), after you give explicit
+>   consent for each kind of content you send. Nothing goes to RMS in either case.
+>
+> If an online service is ever introduced, you will be told clearly beforehand. This is how all RMS
+> products work.
+
 RMS Memory GUI is the optional commercial desktop application for
 [RMS Memory MCP](https://github.com/max-ramas/rms-memory-mcp). It is a Tauri
 application for macOS, Windows and Linux that provides a local control plane for
