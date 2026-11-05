@@ -98,7 +98,9 @@ impl InitArgs {
             {
                 eprintln!("Warning: Failed to import documents: {}", e);
             }
+            // The install question (once per 7 days) or, otherwise, a quiet one-line reminder.
             crate::tips::offer_gui_after_init().await;
+            crate::tips::print_footer(false);
         }
 
         Ok(())
