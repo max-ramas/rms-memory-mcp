@@ -11,7 +11,7 @@ UPDATE_URL="${UPDATE_URL%/}"
 PRODUCT="rms-memory-mcp"
 REPO="max-ramas/rms-memory-mcp"
 # Production release key (rel-2026a) and the CI key; override with RMS_MEMORY_UPDATE_PUBKEY.
-PUBKEYS=("RWTzQ/pE7Yj4phFhGzE5d1fPXTUULnZzQYpeULlnjPSr/g0qrGFVrl3m")
+PUBKEYS=("RWTzQ/pE7Yj4phFhGzE5d1fPXTUULnZzQYpeULlnjPSr/g0qrGFVrl3m" "RWQMrrP84Dr0wbPBA3FAoYdqHLNc2nfuBxENI19mmBn+dENmYT7ShULQ")
 [ -n "${RMS_MEMORY_UPDATE_PUBKEY:-}" ] && PUBKEYS+=("${RMS_MEMORY_UPDATE_PUBKEY##*$'\n'}")
 
 echo "RMS Memory MCP - Installation Script"

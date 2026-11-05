@@ -32,6 +32,8 @@ const MAX_ARTIFACT_BYTES: u64 = 512 * 1024 * 1024;
 const TRUSTED_KEYS: &[&str] = &[
     // rel-2026a: offline production key of the update center.
     "untrusted comment: minisign public key: A6F888ED44FA43F3\nRWTzQ/pE7Yj4phFhGzE5d1fPXTUULnZzQYpeULlnjPSr/g0qrGFVrl3m",
+    // ci-memory-2026a: signs rms-memory-mcp release manifests in GitHub Actions.
+    "untrusted comment: minisign public key: C1F43AE0FCB3AE0C\nRWQMrrP84Dr0wbPBA3FAoYdqHLNc2nfuBxENI19mmBn+dENmYT7ShULQ",
 ];
 
 pub fn trusted_keys() -> Vec<String> {
