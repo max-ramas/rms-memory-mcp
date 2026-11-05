@@ -75,7 +75,7 @@ You're developing a single project but switching between different agents — Cu
 | 🔒 **Security Hardened** | Panic-free database layer, symlink traversal blocked, JSON-RPC error responses, request size limits. See [SECURITY.md](./SECURITY.md) and [NOTICE](./NOTICE). |
 | 🧠 **Audit Metadata** | Every record auto-receives `last_modified_by`, `timestamp`, `confidence`, `source` — agents can filter by reliability. |
 | 🔀 **Multi-Scope** | `--scope` flag supports arbitrary identifiers beyond filesystem paths (thread IDs, lead IDs, etc.). |
-| 🖥️ **Optional Companion GUI** | Paid Tauri desktop app: visual Markdown/graph editor, Git & Vault sync, Doctor dashboard, AI-assisted organizer/Wiki (BYOK), and cross-tool spend tracking — layered on top of the same vault, never required. See [GUI-README.md](./GUI-README.md). |
+| 🖥️ **Optional Companion GUI** | Paid Tauri desktop app: visual Markdown/graph editor, Git & Vault sync, Doctor dashboard, AI-assisted organizer/Wiki (BYOK), and cross-tool spend tracking — layered on top of the same vault, never required. See [GUI-README.md](./GUI-README.md). Install and open it from the terminal with `rms-memory gui`. |
 
 ## 📥 Download
 
@@ -117,7 +117,7 @@ With an archive: unpack, put `rms-memory` (`rms-memory.exe` on Windows) on your 
 [![GUI Linux .deb](https://img.shields.io/badge/Linux-.deb-0969da?style=for-the-badge&logo=debian&logoColor=white)](https://update.rms-ds.com/get/rms-memory-gui/deb?platform=linux&arch=amd64&src=readme)
 [![GUI Linux .rpm](https://img.shields.io/badge/Linux-.rpm-0969da?style=for-the-badge&logo=redhat&logoColor=white)](https://update.rms-ds.com/get/rms-memory-gui/rpm?platform=linux&arch=amd64&src=readme)
 
-The MCP server never needs the GUI.
+The MCP server never needs the GUI. From a terminal, `rms-memory gui` installs it for your OS (signature and checksum verified) and opens it.
 
 </div>
 

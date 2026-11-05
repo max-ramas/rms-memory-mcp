@@ -63,6 +63,8 @@ pub enum Commands {
     },
     /// Check for and install a newer MCP binary from the RMS update center
     Update(crate::commands::update::UpdateArgs),
+    /// Install the optional desktop GUI (14-day trial) from the update server, or open it
+    Gui(crate::commands::gui::GuiArgs),
     /// Show how many characters each tool returned to agents (local usage statistics)
     Stats(crate::commands::stats::StatsArgs),
     /// Show companion GUI/AI status and capability catalog (soft labels only)
@@ -101,6 +103,7 @@ impl Cli {
             Commands::Wiki { command } => command.run(scope).await,
             Commands::Projects { command } => Ok(command.run()?),
             Commands::Update(args) => args.run(scope).await,
+            Commands::Gui(args) => args.run(scope).await,
             Commands::Stats(args) => args.run(scope).await,
             Commands::Features(args) => args.run(scope).await,
             Commands::Graph(args) => args.run(scope).await,
@@ -139,6 +142,7 @@ fn maybe_print_help_status_banner() {
         "graph",
         "features",
         "update",
+        "gui",
         "stats",
     ];
     if args.iter().any(|a| SUBCOMMANDS.contains(&a.as_str())) {

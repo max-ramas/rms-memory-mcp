@@ -4,6 +4,7 @@ pub mod features;
 pub mod file_history;
 pub mod gc;
 pub mod graph;
+pub mod gui;
 pub mod hook;
 pub mod init;
 pub mod inject_rules;

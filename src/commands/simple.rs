@@ -348,6 +348,9 @@ pub struct InstallArgs {
 impl InstallArgs {
     pub async fn run(&self, _scope: Option<String>) -> Result<()> {
         crate::installer::run_installer(self.yes, self.dry_run).await?;
+        if !self.dry_run {
+            crate::tips::maybe_show_gui_tip(false);
+        }
         Ok(())
     }
 }

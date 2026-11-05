@@ -42,6 +42,12 @@ they are never added to MCP configuration or this repository.
 
 ## Obtain the desktop application
 
+From a terminal: `rms-memory gui` installs the GUI for your platform from the RMS update server
+(the signed manifest and the checksum are verified before anything is opened) and opens it; if it is
+already installed it just opens it. `--download-only` saves the installer to your Downloads folder.
+The GUI starts with a 14-day trial; the MCP server never needs it. Published builds: macOS on Apple
+Silicon, Windows x64, Linux x64.
+
 The GUI source repository is private. The newest installer for your platform is one click away
 through the RMS update server (permanent "latest" links; the server redirects to the public release
 asset and counts the download):

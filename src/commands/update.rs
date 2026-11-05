@@ -70,6 +70,7 @@ impl UpdateArgs {
                 json!({"status": "up_to_date", "current": installed}),
                 &format!("rms-memory {installed} is up to date."),
             );
+            crate::tips::maybe_show_gui_tip(self.json);
             return Ok(());
         };
         if self.check {
@@ -124,6 +125,7 @@ impl UpdateArgs {
                     .unwrap_or_default()
             ),
         );
+        crate::tips::maybe_show_gui_tip(self.json);
         Ok(())
     }
 

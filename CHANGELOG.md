@@ -4,6 +4,15 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Added
+- **`rms-memory gui`:** installs the optional desktop GUI from the RMS update server and opens it (or just opens it when it is installed). The installer comes through the same trust chain as `rms-memory update`: signed manifest, size and sha256 checked while streaming, nothing opened on a mismatch. macOS: the app is copied from the disk image into `/Applications` (or `~/Applications`); Windows: the verified installer is started; Linux: the AppImage goes to `~/.local/bin/rms-memory-gui`. `--download-only`, `--no-open`, `--yes`, `--json`. Downloads are labelled `src=cli` so the update server counts them apart from the README and the in-app updater.
+- **After `rms-memory init` (also `--full`) the CLI offers to install the GUI right away** ("For your convenience…", default answer No): asked at most once per 7 days, only in an interactive terminal, never when the GUI is installed; a failed install is reported and never fails `init`.
+- **A rare GUI hint** after `rms-memory install` and `rms-memory update`: at most once per 7 days, only in an interactive terminal, never in `--json` output or once the GUI is installed; `RMS_MEMORY_NO_TIPS=1` turns it off.
+- **`rms-memory init` ends with a quiet one-line reminder** when the GUI is not installed and no install question was asked in that run: "Install the GUI to use every feature (visual graph, editor, reminders, AI): rms-memory gui". Printed every time to stderr in an interactive terminal; never with the GUI installed or `RMS_MEMORY_NO_TIPS=1`.
+
+### Changed
+- `rms-memory features` and the help banner point at `rms-memory gui` instead of a releases URL, list the reminders page and the code-index view as GUI features, and say plainly that everything without a tag is the full MCP/CLI while tagged features are managed only in the GUI.
+
 ## [1.4.0] - 2026-11-05
 
 ### Added
