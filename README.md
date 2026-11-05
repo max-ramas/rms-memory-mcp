@@ -75,7 +75,7 @@ You're developing a single project but switching between different agents — Cu
 | 🔒 **Security Hardened** | Panic-free database layer, symlink traversal blocked, JSON-RPC error responses, request size limits. See [SECURITY.md](./SECURITY.md) and [NOTICE](./NOTICE). |
 | 🧠 **Audit Metadata** | Every record auto-receives `last_modified_by`, `timestamp`, `confidence`, `source` — agents can filter by reliability. |
 | 🔀 **Multi-Scope** | `--scope` flag supports arbitrary identifiers beyond filesystem paths (thread IDs, lead IDs, etc.). |
-| 🖥️ **Optional Companion GUI** | Paid Tauri desktop app: visual Markdown/graph editor, Git & Vault sync, Doctor dashboard, AI-assisted organizer/Wiki (BYOK), and cross-tool spend tracking — layered on top of the same vault, never required. See [GUI-README.md](./GUI-README.md). |
+| 🖥️ **Optional Companion GUI** | Paid Tauri desktop app: visual Markdown/graph editor, Git & Vault sync, Doctor dashboard, AI-assisted organizer/Wiki (BYOK), and cross-tool spend tracking — layered on top of the same vault, never required. See [GUI-README.md](./GUI-README.md). Install and open it from the terminal with `rms-memory gui`. |
 
 ## 📥 Download
 
@@ -97,7 +97,7 @@ same server, verifies its signature and checksum, and keeps the previous binary 
 Downloads through this server are counted per release; no IP addresses or user agents are stored.
 
 **Optional desktop app (RMS Memory GUI):** installers for every platform, also served by the update
-server. The app is licensed inside (it starts with a trial); the MCP server above never needs it.
+server. The app is licensed inside (it starts with a trial); the MCP server above never needs it. From a terminal, `rms-memory gui` installs it for your OS (signature and checksum verified) and opens it.
 
 | Platform | Installer |
 | --- | --- |

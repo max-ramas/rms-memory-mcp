@@ -52,6 +52,7 @@ pub mod cli;
 pub mod code_layer;
 #[doc(hidden)]
 pub mod commands;
+pub mod gui_install;
 #[doc(hidden)]
 pub mod http_transport;
 #[doc(hidden)]
@@ -62,6 +63,7 @@ pub mod patterns;
 pub mod reminders;
 #[doc(hidden)]
 pub mod rules_injector;
+pub mod tips;
 pub mod tool_stats;
 #[doc(hidden)]
 pub mod update_check;

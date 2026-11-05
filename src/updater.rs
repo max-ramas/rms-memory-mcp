@@ -84,6 +84,13 @@ pub struct UpdateOptions {
     pub trusted_keys: Vec<String>,
     /// Per-request budget for the lookup (the download uses a longer fixed one).
     pub timeout: Duration,
+    /// `src=` label sent with the download so the update center counts it by source
+    /// (`app` for the built-in updater, `cli` for `rms-memory gui`).
+    pub src_label: String,
+    /// Download through the update center even when the signed manifest names a direct
+    /// https source, so every download is counted. Integrity does not depend on the route:
+    /// size and sha256 come from the signed manifest.
+    pub via_server: bool,
 }
 
 impl Default for UpdateOptions {
@@ -98,6 +105,8 @@ impl Default for UpdateOptions {
             format: format.to_string(),
             trusted_keys: trusted_keys(),
             timeout: Duration::from_secs(20),
+            src_label: "app".to_string(),
+            via_server: false,
         }
     }
 }
@@ -288,12 +297,12 @@ pub fn check(opts: &UpdateOptions, current: &str) -> Result<Option<Candidate>> {
     }
     // Served by the update center itself unless the manifest names an https source.
     let download_url = match artifact.source.as_deref() {
-        Some(src) if src.starts_with("https://") => src.to_string(),
-        // `src=app` labels the download as coming from the built-in updater, so the update
-        // center can count it apart from README and website links.
+        Some(src) if src.starts_with("https://") && !opts.via_server => src.to_string(),
+        // The `src` label tells the update center where the download came from, so it can
+        // count it apart from README and website links.
         _ => format!(
-            "{}/dl/{}/{}/{}?src=app",
-            opts.base_url, opts.product, manifest.version, artifact.file
+            "{}/dl/{}/{}/{}?src={}",
+            opts.base_url, opts.product, manifest.version, artifact.file, opts.src_label
         ),
     };
     Ok(Some(Candidate {
@@ -307,6 +316,62 @@ pub fn check(opts: &UpdateOptions, current: &str) -> Result<Option<Candidate>> {
 }
 
 /// Binary name inside the release archive.
+/// Streams the candidate's artifact to `dest` (written as `dest.part` first), refusing anything
+/// that does not match the size and sha256 of the signed manifest. For installers too large to
+/// hold in memory.
+pub fn download_artifact_to(candidate: &Candidate, dest: &Path) -> Result<()> {
+    let size = candidate.artifact.size;
+    if size == 0 || size > MAX_ARTIFACT_BYTES {
+        bail!("signed manifest lists an unreasonable size ({size} bytes)");
+    }
+    let agent = agent(Duration::from_secs(30 * 60));
+    let mut response = agent
+        .get(&candidate.download_url)
+        .call()
+        .with_context(|| format!("GET {}", candidate.download_url))?;
+    let status = response.status().as_u16();
+    if status != 200 {
+        bail!("download failed: HTTP {status}");
+    }
+    let part = dest.with_extension(match dest.extension() {
+        Some(ext) => format!("{}.part", ext.to_string_lossy()),
+        None => "part".to_string(),
+    });
+    let result = (|| -> Result<()> {
+        let mut file = std::fs::File::create(&part)
+            .with_context(|| format!("cannot write {}", part.display()))?;
+        let mut hasher = Sha256::new();
+        let mut reader = response.body_mut().as_reader().take(size + 1);
+        let mut buffer = [0u8; 64 * 1024];
+        let mut total = 0u64;
+        loop {
+            let n = reader.read(&mut buffer).context("download interrupted")?;
+            if n == 0 {
+                break;
+            }
+            hasher.update(&buffer[..n]);
+            std::io::Write::write_all(&mut file, &buffer[..n])?;
+            total += n as u64;
+        }
+        if total != size {
+            bail!("downloaded {total} bytes, the signed manifest says {size}");
+        }
+        if hex(&hasher.finalize()) != candidate.artifact.sha256.to_lowercase() {
+            bail!("checksum of the download does not match the signed manifest");
+        }
+        file.sync_all()?;
+        Ok(())
+    })();
+    match result {
+        Ok(()) => std::fs::rename(&part, dest)
+            .with_context(|| format!("cannot move the download to {}", dest.display())),
+        Err(error) => {
+            let _ = std::fs::remove_file(&part);
+            Err(error)
+        }
+    }
+}
+
 pub fn binary_name() -> &'static str {
     if cfg!(windows) {
         "rms-memory.exe"
@@ -680,6 +745,92 @@ mod tests {
             }
         });
         format!("http://{addr}")
+    }
+
+    fn candidate_for(url: String, claimed_size: u64, claimed_sha: String) -> Candidate {
+        Candidate {
+            version: "1.0.0".into(),
+            notes: String::new(),
+            min_supported: None,
+            artifact: Artifact {
+                platform: "darwin".into(),
+                arch: "arm64".into(),
+                format: "dmg".into(),
+                file: "installer.dmg".into(),
+                size: claimed_size,
+                sha256: claimed_sha,
+                source: None,
+                urls: vec![],
+            },
+            download_url: url,
+            base_url: String::new(),
+        }
+    }
+
+    #[test]
+    fn streamed_download_is_verified_and_moved_into_place() {
+        let body: Vec<u8> = (0..200_000u32).map(|i| (i % 251) as u8).collect();
+        let mut routes = HashMap::new();
+        routes.insert("/dl/x/1.0.0/installer.dmg".to_string(), (200, body.clone()));
+        let base = serve(routes);
+        let c = candidate_for(
+            format!("{base}/dl/x/1.0.0/installer.dmg?src=cli"),
+            body.len() as u64,
+            sha256_hex(&body),
+        );
+        let dir = tempfile::tempdir().unwrap();
+        let dest = dir.path().join("installer.dmg");
+        download_artifact_to(&c, &dest).unwrap();
+        assert_eq!(std::fs::read(&dest).unwrap(), body);
+        assert!(!dir.path().join("installer.dmg.part").exists());
+    }
+
+    #[test]
+    fn streamed_download_rejects_a_changed_file_or_size_and_leaves_nothing() {
+        let body = vec![7u8; 5000];
+        let mut changed = body.clone();
+        changed[100] ^= 0xff;
+        let mut routes = HashMap::new();
+        routes.insert("/changed".to_string(), (200, changed));
+        routes.insert("/short".to_string(), (200, body[..4000].to_vec()));
+        routes.insert(
+            "/long".to_string(),
+            (200, [body.clone(), vec![0u8; 10]].concat()),
+        );
+        let base = serve(routes);
+        let dir = tempfile::tempdir().unwrap();
+        for path in ["/changed", "/short", "/long"] {
+            let c = candidate_for(
+                format!("{base}{path}"),
+                body.len() as u64,
+                sha256_hex(&body),
+            );
+            let dest = dir
+                .path()
+                .join(format!("out{}.dmg", path.trim_start_matches('/')));
+            assert!(
+                download_artifact_to(&c, &dest).is_err(),
+                "{path} must be rejected"
+            );
+            assert!(!dest.exists(), "{path}: nothing may be installed");
+            assert!(
+                std::fs::read_dir(dir.path()).unwrap().next().is_none(),
+                "{path}: no partial file may remain"
+            );
+        }
+    }
+
+    #[test]
+    fn download_routes_through_the_server_with_a_source_label_when_asked() {
+        let manifest_url_free = UpdateOptions {
+            src_label: "cli".into(),
+            via_server: true,
+            ..UpdateOptions::default()
+        };
+        assert_eq!(manifest_url_free.src_label, "cli");
+        assert!(manifest_url_free.via_server);
+        assert_eq!(UpdateOptions::default().src_label, "app");
+        assert!(!UpdateOptions::default().via_server);
     }
 
     struct Fixture {

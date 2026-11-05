@@ -5,7 +5,7 @@ use std::path::PathBuf;
 
 const ENV_GUI: &str = "RMS_MEMORY_GUI_INSTALLED";
 const ENV_AI: &str = "RMS_MEMORY_AI_CONFIGURED";
-const RELEASES_URL: &str = "https://github.com/max-ramas/rms-memory-mcp/releases";
+const GUI_COMMAND: &str = "rms-memory gui";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -64,7 +64,12 @@ fn env_bool(name: &str) -> Option<bool> {
 }
 
 fn detect_gui_installed() -> bool {
-    gui_candidate_paths().into_iter().any(|path| path.exists())
+    installed_gui_path().is_some()
+}
+
+/// Where the installed companion GUI lives (an app bundle, executable or desktop entry).
+pub fn installed_gui_path() -> Option<PathBuf> {
+    gui_candidate_paths().into_iter().find(|path| path.exists())
 }
 
 fn gui_candidate_paths() -> Vec<PathBuf> {
@@ -169,9 +174,9 @@ pub fn format_status_banner(status: &CompanionStatus) -> String {
     );
     if !status.gui_installed {
         out.push_str(
-            "        Companion GUI unlocks visual graph, editor, BYOK Organizer — optional.\n",
+            "        Companion GUI: visual graph, editor, reminders, AI organizer (14-day trial).\n",
         );
-        out.push_str(&format!("        {RELEASES_URL}\n"));
+        out.push_str(&format!("        Install and open it: {GUI_COMMAND}\n"));
     } else if !status.ai_configured {
         out.push_str(
             "        AI features (Organizer, AI Wiki) need a provider key in the GUI — optional.\n",
@@ -248,6 +253,13 @@ pub fn feature_catalog() -> Vec<FeatureRow> {
             cli_behavior: "command",
         },
         FeatureRow {
+            name: "rms-memory gui",
+            kind: "cli_config",
+            label: FeatureLabel::None,
+            summary: "Install the companion GUI (14-day trial) or open it",
+            cli_behavior: "command",
+        },
+        FeatureRow {
             name: "Visual GraphView",
             kind: "gui_visual",
             label: FeatureLabel::Gui,
@@ -259,6 +271,20 @@ pub fn feature_catalog() -> Vec<FeatureRow> {
             kind: "gui_visual",
             label: FeatureLabel::Gui,
             summary: "Desktop editor with link resolution",
+            cli_behavior: "catalog_only",
+        },
+        FeatureRow {
+            name: "Reminders page",
+            kind: "gui_visual",
+            label: FeatureLabel::Gui,
+            summary: "Agents add reminders through MCP; list, snooze and edit them in the GUI",
+            cli_behavior: "catalog_only",
+        },
+        FeatureRow {
+            name: "Code index view with related notes",
+            kind: "gui_visual",
+            label: FeatureLabel::Gui,
+            summary: "Search tab: index state, reindex button, notes linked to code hits",
             cli_behavior: "catalog_only",
         },
         FeatureRow {
@@ -314,7 +340,10 @@ pub fn format_features_catalog(status: &CompanionStatus, color: bool) -> String 
             row.name, tag, row.summary, row.kind
         ));
     }
-    out.push_str("\nMCP core is never paywalled. GUI/AI tags are informational only.\n");
+    out.push_str(
+        "\nEverything without a tag is the full MCP/CLI. Tagged features may run in the background \
+         but are managed only in the GUI. MCP core is never paywalled.\n",
+    );
     out
 }
 
@@ -355,14 +384,14 @@ mod tests {
             ai_configured: false,
         });
         assert!(missing.contains("not installed"));
-        assert!(missing.contains(RELEASES_URL));
+        assert!(missing.contains(GUI_COMMAND));
         let installed = format_status_banner(&CompanionStatus {
             gui_installed: true,
             ai_configured: true,
         });
         assert!(installed.contains("installed"));
         assert!(installed.contains("configured"));
-        assert!(!installed.contains(RELEASES_URL));
+        assert!(!installed.contains(GUI_COMMAND));
     }
 
     #[test]
