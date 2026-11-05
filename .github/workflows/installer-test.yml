@@ -3,9 +3,6 @@ name: Installer test
 # Builds the macOS .pkg and the Windows .msi from the binaries of a published release, installs
 # them on real runners, checks the result and removes them again. Publishes nothing.
 on:
-  push:
-    branches: [feat/native-installers]
-    paths: [".github/workflows/installer-test.yml", "scripts/package-macos-pkg.sh", "packaging/**"]
   workflow_dispatch:
     inputs:
       version:

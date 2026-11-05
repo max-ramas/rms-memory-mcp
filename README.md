@@ -83,12 +83,14 @@ You're developing a single project but switching between different agents — Cu
 
 **RMS Memory MCP** (command-line server, free)
 
-[![macOS Apple Silicon](https://img.shields.io/badge/macOS-Apple%20Silicon-2ea44f?style=for-the-badge&logo=apple&logoColor=white)](https://update.rms-ds.com/get/rms-memory-mcp/tar.gz?platform=darwin&arch=arm64&src=readme)
-[![Linux x64](https://img.shields.io/badge/Linux-x64-2ea44f?style=for-the-badge&logo=linux&logoColor=white)](https://update.rms-ds.com/get/rms-memory-mcp/tar.gz?platform=linux&arch=amd64&src=readme)
-[![Linux ARM64](https://img.shields.io/badge/Linux-ARM64-2ea44f?style=for-the-badge&logo=linux&logoColor=white)](https://update.rms-ds.com/get/rms-memory-mcp/tar.gz?platform=linux&arch=arm64&src=readme)
-[![Windows x64](https://img.shields.io/badge/Windows-x64-2ea44f?style=for-the-badge&logo=windows&logoColor=white)](https://update.rms-ds.com/get/rms-memory-mcp/zip?platform=windows&arch=amd64&src=readme)
+[![macOS Apple Silicon · .pkg](https://img.shields.io/badge/macOS-Apple%20Silicon%20·%20.pkg-2ea44f?style=for-the-badge&logo=apple&logoColor=white)](https://update.rms-ds.com/get/rms-memory-mcp/pkg?platform=darwin&arch=arm64&src=readme)
+[![Windows x64 · .msi](https://img.shields.io/badge/Windows-x64%20·%20.msi-2ea44f?style=for-the-badge&logo=windows&logoColor=white)](https://update.rms-ds.com/get/rms-memory-mcp/msi?platform=windows&arch=amd64&src=readme)
+[![Linux x64 · .deb](https://img.shields.io/badge/Linux-x64%20·%20.deb-2ea44f?style=for-the-badge&logo=debian&logoColor=white)](https://update.rms-ds.com/get/rms-memory-mcp/deb?platform=linux&arch=amd64&src=readme)
+[![Linux ARM64 · .deb](https://img.shields.io/badge/Linux-ARM64%20·%20.deb-2ea44f?style=for-the-badge&logo=debian&logoColor=white)](https://update.rms-ds.com/get/rms-memory-mcp/deb?platform=linux&arch=arm64&src=readme)
 
-Each download is a small archive with one binary, `rms-memory`. Always the newest stable release.
+Also as: [macOS .tar.gz](https://update.rms-ds.com/get/rms-memory-mcp/tar.gz?platform=darwin&arch=arm64&src=readme) · [Windows .zip](https://update.rms-ds.com/get/rms-memory-mcp/zip?platform=windows&arch=amd64&src=readme) · Linux x64 [.tar.gz](https://update.rms-ds.com/get/rms-memory-mcp/tar.gz?platform=linux&arch=amd64&src=readme) / [.rpm](https://update.rms-ds.com/get/rms-memory-mcp/rpm?platform=linux&arch=amd64&src=readme) · Linux ARM64 [.tar.gz](https://update.rms-ds.com/get/rms-memory-mcp/tar.gz?platform=linux&arch=arm64&src=readme) / [.rpm](https://update.rms-ds.com/get/rms-memory-mcp/rpm?platform=linux&arch=arm64&src=readme)
+
+The installers put `rms-memory` on your `PATH` (`/usr/local/bin` on macOS, `Program Files\RMS Memory MCP` on Windows). Always the newest stable release. The macOS and Windows installers are not code-signed yet: macOS asks to confirm a browser-downloaded `.pkg` once (right-click, Open), and Windows SmartScreen may warn before the `.msi` runs.
 
 </div>
 
