@@ -48,9 +48,9 @@ asset and counts the download):
 
 | Platform | Installer |
 | --- | --- |
-| macOS · Apple Silicon | [.dmg](https://update.rms-ds.com/get/rms-memory-gui/dmg?platform=darwin&arch=arm64&src=readme) |
-| Windows · x64 | [.exe (setup)](https://update.rms-ds.com/get/rms-memory-gui/exe?platform=windows&arch=amd64&src=readme) · [.msi](https://update.rms-ds.com/get/rms-memory-gui/msi?platform=windows&arch=amd64&src=readme) |
-| Linux · x64 | [.AppImage](https://update.rms-ds.com/get/rms-memory-gui/appimage?platform=linux&arch=amd64&src=readme) · [.deb](https://update.rms-ds.com/get/rms-memory-gui/deb?platform=linux&arch=amd64&src=readme) · [.rpm](https://update.rms-ds.com/get/rms-memory-gui/rpm?platform=linux&arch=amd64&src=readme) |
+| macOS · Apple Silicon | [⬇ Download .dmg](https://update.rms-ds.com/get/rms-memory-gui/dmg?platform=darwin&arch=arm64&src=readme) |
+| Windows · x64 | [⬇ Download .exe](https://update.rms-ds.com/get/rms-memory-gui/exe?platform=windows&arch=amd64&src=readme) · [⬇ Download .msi](https://update.rms-ds.com/get/rms-memory-gui/msi?platform=windows&arch=amd64&src=readme) |
+| Linux · x64 | [⬇ Download .AppImage](https://update.rms-ds.com/get/rms-memory-gui/appimage?platform=linux&arch=amd64&src=readme) · [⬇ Download .deb](https://update.rms-ds.com/get/rms-memory-gui/deb?platform=linux&arch=amd64&src=readme) · [⬇ Download .rpm](https://update.rms-ds.com/get/rms-memory-gui/rpm?platform=linux&arch=amd64&src=readme) |
 
 The server lists a release only after its signed manifest (`release.rms-memory-gui.json`) is attached
 to the release; older versions and every file stay on this public repository's

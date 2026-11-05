@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Windows installer for the RMS Memory MCP binary (WiX v5, built in CI).
+     Installs rms-memory.exe to Program Files and appends that folder to the system PATH.
+     Build: wix build -arch x64 -d Version=1.4.0 -d BinPath=path\to\rms-memory.exe -o out.msi rms-memory.wxs
+     The UpgradeCode must never change: it is what lets a newer MSI replace an older install. -->
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs">
+  <Package Name="RMS Memory MCP" Manufacturer="RMS" Version="$(Version)"
+           UpgradeCode="2C3CA6A1-5A0C-4F85-80AA-932E99B98F40" Scope="perMachine" Compressed="yes">
+    <MajorUpgrade DowngradeErrorMessage="A newer version of RMS Memory MCP is already installed." />
+    <MediaTemplate EmbedCab="yes" />
+    <StandardDirectory Id="ProgramFiles64Folder">
+      <Directory Id="INSTALLFOLDER" Name="RMS Memory MCP">
+        <Component Id="MainExecutable" Bitness="always64">
+          <File Id="RmsMemoryExe" Name="rms-memory.exe" Source="$(BinPath)" KeyPath="yes" />
+        </Component>
+        <Component Id="PathEntry" Guid="E500C79A-74C5-4A1E-AE0F-CD65C9170B06" Bitness="always64">
+          <CreateFolder />
+          <Environment Id="PathEnvironment" Name="PATH" Value="[INSTALLFOLDER]" Part="last"
+                       Action="set" System="yes" Permanent="no" />
+        </Component>
+      </Directory>
+    </StandardDirectory>
+    <Feature Id="Main" Title="RMS Memory MCP" Level="1">
+      <ComponentRef Id="MainExecutable" />
+      <ComponentRef Id="PathEntry" />
+    </Feature>
+  </Package>
+</Wix>

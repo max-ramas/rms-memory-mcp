@@ -292,6 +292,32 @@ jobs:
           Compress-Archive -Path rms-memory.exe -DestinationPath "..\rms_memory_mcp_${env:VERSION}_${{ matrix.target }}.${{ matrix.archive_ext }}"
         shell: pwsh
 
+      - name: Package installer (macOS .pkg)
+        if: runner.os == 'macOS'
+        env:
+          VERSION: ${{ needs.plan.outputs.version }}
+        run: |
+          set -euo pipefail
+          test -n "${VERSION}"
+          TD="${CARGO_TARGET_DIR:-target}"
+          scripts/package-macos-pkg.sh "${VERSION}" "$TD/release/rms-memory" . "${{ matrix.target }}"
+        shell: bash
+
+      - name: Package installer (Windows .msi)
+        if: runner.os == 'Windows'
+        env:
+          VERSION: ${{ needs.plan.outputs.version }}
+        run: |
+          if (-not $env:VERSION) { throw "VERSION is empty; refusing to produce an unversioned installer." }
+          # MSI versions are numeric (major.minor.patch): drop any pre-release suffix.
+          $msiVersion = ($env:VERSION -split '[-+]')[0]
+          dotnet tool install --global wix --version 5.0.2
+          $bin = (Resolve-Path target\release\rms-memory.exe).Path
+          wix build -arch x64 -d Version=$msiVersion -d BinPath=$bin `
+            -o "rms_memory_mcp_${env:VERSION}_${{ matrix.target }}.msi" packaging\windows\rms-memory.wxs
+          if ($LASTEXITCODE -ne 0) { throw "wix build failed" }
+        shell: pwsh
+
       - name: Upload Artifacts
         uses: actions/upload-artifact@v4
         with:
@@ -300,6 +326,8 @@ jobs:
             rms_memory_mcp_${{ needs.plan.outputs.version }}_${{ matrix.target }}.${{ matrix.archive_ext }}
             rms_memory_mcp_*.deb
             rms_memory_mcp_*.rpm
+            rms_memory_mcp_*.pkg
+            rms_memory_mcp_*.msi
           retention-days: 1
 
   release:

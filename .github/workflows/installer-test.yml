@@ -1,0 +1,85 @@
+name: Installer test
+
+# Builds the macOS .pkg and the Windows .msi from the binaries of a published release, installs
+# them on real runners, checks the result and removes them again. Publishes nothing.
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Published release version to test with (e.g. 1.4.0)"
+        required: true
+        default: "1.4.0"
+
+permissions:
+  contents: read
+
+jobs:
+  macos-pkg:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build the .pkg from the release binary
+        env:
+          VERSION: ${{ inputs.version || '1.4.0' }}
+        run: |
+          set -euo pipefail
+          curl -fsSL "https://github.com/max-ramas/rms-memory-mcp/releases/download/v${VERSION}/rms_memory_mcp_${VERSION}_aarch64-apple-darwin.tar.gz" -o mcp.tar.gz
+          tar xzf mcp.tar.gz rms-memory
+          scripts/package-macos-pkg.sh "$VERSION" ./rms-memory out aarch64-apple-darwin
+      - name: Install, run, check
+        env:
+          VERSION: ${{ inputs.version || '1.4.0' }}
+        run: |
+          set -euo pipefail
+          sudo installer -pkg "out/rms_memory_mcp_${VERSION}_aarch64-apple-darwin.pkg" -target /
+          test -x /usr/local/bin/rms-memory
+          /usr/local/bin/rms-memory --version | grep -F "$VERSION"
+          pkgutil --pkgs | grep -F com.rms-ds.rms-memory-mcp
+      - uses: actions/upload-artifact@v4
+        with:
+          name: test-pkg
+          path: out/*.pkg
+          retention-days: 3
+
+  windows-msi:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build the .msi from the release binary
+        shell: pwsh
+        env:
+          VERSION: ${{ inputs.version || '1.4.0' }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          Invoke-WebRequest -Uri "https://github.com/max-ramas/rms-memory-mcp/releases/download/v$env:VERSION/rms_memory_mcp_${env:VERSION}_x86_64-pc-windows-msvc.zip" -OutFile mcp.zip
+          Expand-Archive mcp.zip -DestinationPath bin
+          dotnet tool install --global wix --version 5.0.2
+          $msiVersion = ($env:VERSION -split '[-+]')[0]
+          $bin = (Resolve-Path bin\rms-memory.exe).Path
+          wix build -arch x64 -d Version=$msiVersion -d BinPath=$bin -o "rms_memory_mcp_${env:VERSION}_x86_64-pc-windows-msvc.msi" packaging\windows\rms-memory.wxs
+          if ($LASTEXITCODE -ne 0) { throw "wix build failed" }
+      - name: Install, run, check PATH, uninstall
+        shell: pwsh
+        env:
+          VERSION: ${{ inputs.version || '1.4.0' }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $msi = (Resolve-Path "rms_memory_mcp_${env:VERSION}_x86_64-pc-windows-msvc.msi").Path
+          $p = Start-Process msiexec.exe -ArgumentList "/i `"$msi`" /qn /l*v install.log" -Wait -PassThru
+          if ($p.ExitCode -ne 0) { Get-Content install.log -Tail 40; throw "install failed: $($p.ExitCode)" }
+          $exe = "C:\Program Files\RMS Memory MCP\rms-memory.exe"
+          if (-not (Test-Path $exe)) { throw "binary not installed" }
+          & $exe --version
+          $machinePath = [Environment]::GetEnvironmentVariable('Path', 'Machine')
+          if ($machinePath -notlike '*RMS Memory MCP*') { throw "install folder is not on the machine PATH" }
+          $p = Start-Process msiexec.exe -ArgumentList "/x `"$msi`" /qn /l*v uninstall.log" -Wait -PassThru
+          if ($p.ExitCode -ne 0) { Get-Content uninstall.log -Tail 40; throw "uninstall failed: $($p.ExitCode)" }
+          if (Test-Path $exe) { throw "binary still present after uninstall" }
+          $machinePath = [Environment]::GetEnvironmentVariable('Path', 'Machine')
+          if ($machinePath -like '*RMS Memory MCP*') { throw "PATH entry left behind after uninstall" }
+          Write-Host "install, PATH entry and uninstall OK"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: test-msi
+          path: "*.msi"
+          retention-days: 3
