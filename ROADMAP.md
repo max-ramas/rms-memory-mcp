@@ -2,7 +2,7 @@
 
 This document outlines the strategic direction and upcoming milestones for RMS Memory.
 
-**Current (2026-10-13):** MCP **`1.3.0`** · companion GUI **`1.3.0`** (unified numbering). Read-only Obsidian vaults, continuity context (index freshness, git), six more code languages, MCP resources/prompts, memory hygiene, local HTTP transport, embedding model choice with retrieval eval, and the vault full-text index fix.
+**Current (2026-11-05):** MCP **`1.4.1`** · companion GUI **`1.4.1`** (unified numbering). 1.4 adds a signed self-update (`rms-memory update`), the RMS update server as the download source, reminders, pattern notes with a status filter and staleness check, token economy (`stats`, `rms_read` outline/heading/window), a code layer with index freshness and related notes, `rms-memory gui`, native installers and a privacy promise. Earlier: **1.3.0** — Read-only Obsidian vaults, continuity context (index freshness, git), six more code languages, MCP resources/prompts, memory hygiene, local HTTP transport, embedding model choice with retrieval eval, and the vault full-text index fix.
 
 ## v1.0 — Foundation & Open Source ✅ (Released)
 
@@ -244,6 +244,17 @@ The companion GUI already consumes the umbrella through Tauri commands. MCP rema
 - [x] Mixed-language resource gate and four-IDE idle verification; packaging remains covered by the existing release matrix.
 
 The detailed production contract and delivery slices are maintained privately in RMS Memory.
+
+## v1.4 — update server, code layer, GUI funnel (2026-11-05)
+
+- [x] Signed self-update: `rms-memory update` (minisign-verified manifest, sha256, atomic swap, `--rollback`); the RMS update server is the download source for the MCP and the GUI (`/get` permanent links, release workflow signs `release.json`).
+- [x] Reminders: `rms_remind` and due-reminder notices in tool responses (management page in the GUI).
+- [x] Pattern notes (`patterns/`) with a status filter in search and a staleness check in `doctor`.
+- [x] Token economy: `rms-memory stats`, `rms_read` outline / heading / window / `if_hash`, `snippet_chars`, compact JSON responses.
+- [x] Code layer: index freshness in every code search, `related_notes` for code hits, honest call-graph confidence.
+- [x] `rms-memory gui` (install or open the GUI with signature and checksum verification), a rare GUI hint and an offer after `init`.
+- [x] Native installers: macOS `.pkg`, Windows `.msi`, `.deb`/`.rpm` in the manifest (not code-signed yet).
+- [x] Privacy promise in the READMEs, backed by an audit of what is sent over the network.
 
 ## Post-1.0.9 / former v2.0 — Agentic pruning & remote backends (Future)
 
