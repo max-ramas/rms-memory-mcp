@@ -42,8 +42,18 @@ they are never added to MCP configuration or this repository.
 
 ## Obtain the desktop application
 
-The GUI source repository is private. Release installers are intentionally
-distributed as binary assets from this public repository's
+The GUI source repository is private. The newest installer for your platform is one click away
+through the RMS update server (permanent "latest" links; the server redirects to the public release
+asset and counts the download):
+
+| Platform | Installer |
+| --- | --- |
+| macOS · Apple Silicon | [.dmg](https://update.rms-ds.com/get/rms-memory-gui/dmg?platform=darwin&arch=arm64&src=readme) |
+| Windows · x64 | [.exe (setup)](https://update.rms-ds.com/get/rms-memory-gui/exe?platform=windows&arch=amd64&src=readme) · [.msi](https://update.rms-ds.com/get/rms-memory-gui/msi?platform=windows&arch=amd64&src=readme) |
+| Linux · x64 | [.AppImage](https://update.rms-ds.com/get/rms-memory-gui/appimage?platform=linux&arch=amd64&src=readme) · [.deb](https://update.rms-ds.com/get/rms-memory-gui/deb?platform=linux&arch=amd64&src=readme) · [.rpm](https://update.rms-ds.com/get/rms-memory-gui/rpm?platform=linux&arch=amd64&src=readme) |
+
+The server lists a release only after its signed manifest (`release.rms-memory-gui.json`) is attached
+to the release; older versions and every file stay on this public repository's
 [Releases](https://github.com/max-ramas/rms-memory-mcp/releases) page. Choose
 the asset whose platform and architecture match your machine:
 

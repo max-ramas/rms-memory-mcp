@@ -95,7 +95,17 @@ same server, verifies its signature and checksum, and keeps the previous binary 
 `rms-memory update --rollback`. The signed manifest of the latest release is at
 [`/v1/rms-memory-mcp/latest`](https://update.rms-ds.com/v1/rms-memory-mcp/latest).
 Downloads through this server are counted per release; no IP addresses or user agents are stored.
-Other formats (`.deb`, `.rpm`) and older versions stay on
+
+**Optional desktop app (RMS Memory GUI):** installers for every platform, also served by the update
+server. The app is licensed inside (it starts with a trial); the MCP server above never needs it.
+
+| Platform | Installer |
+| --- | --- |
+| macOS · Apple Silicon | [.dmg](https://update.rms-ds.com/get/rms-memory-gui/dmg?platform=darwin&arch=arm64&src=readme) |
+| Windows · x64 | [.exe (setup)](https://update.rms-ds.com/get/rms-memory-gui/exe?platform=windows&arch=amd64&src=readme) · [.msi](https://update.rms-ds.com/get/rms-memory-gui/msi?platform=windows&arch=amd64&src=readme) |
+| Linux · x64 | [.AppImage](https://update.rms-ds.com/get/rms-memory-gui/appimage?platform=linux&arch=amd64&src=readme) · [.deb](https://update.rms-ds.com/get/rms-memory-gui/deb?platform=linux&arch=amd64&src=readme) · [.rpm](https://update.rms-ds.com/get/rms-memory-gui/rpm?platform=linux&arch=amd64&src=readme) |
+
+Older versions and other formats (such as the MCP `.deb` and `.rpm` packages) stay on
 [GitHub Releases](https://github.com/max-ramas/rms-memory-mcp/releases).
 
 ## 📦 Installation
