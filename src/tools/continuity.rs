@@ -579,6 +579,11 @@ pub fn system_instructions(project: Option<&str>) -> String {
 - When the user asks to be reminded ("remind me to call Viktor Petrovich tomorrow at 12"), call `rms_remind` with `action: "add"`, the `text`, and `due_at` as RFC3339 WITH the user's UTC offset (or `in_minutes`). Ask if the date, time or timezone is unclear.
 - A `[RMS reminder]` block in any tool response is a due reminder: tell the user in your reply, in their language. At session start and after long pauses call `rms_remind` with `action: "list"` so nothing is missed. Mark finished ones with `done`.
 
+## Code
+- `rms_code_search` (or `rms_search` with `corpus: "code"|"all"`) finds code by meaning; use grep for exact strings. Every code search reports `code_index`: `fresh` is trustworthy, `stale` means re-read the listed files, `not_indexed` means the index is off or unbuilt (then use grep/read, and tell the user how to enable it from the `hint`).
+- A code hit may carry `related_notes`: decisions and patterns that mention that file or symbol. Read them with `rms_read` before changing the code. `code_changed_since_note: true` means the code was edited after the note, so verify the note against the code instead of trusting it.
+- Call-graph edges (`calls_symbol`) are name-based hints. `rms_graph` neighbors show each edge's `resolution` and `confidence`; treat anything not `resolved` as a lead to verify, not a fact.
+
 ## Patterns
 - Reusable solutions live in `patterns/` notes (frontmatter `type: pattern`, `pattern_status`). `rms_search` returns only `verified-in-runtime` patterns unless you pass `pattern_status` (`implemented`, `proposed`, `all`); mention lower-status ones only with their status. A pattern points to code (`refs`), it does not contain it.
 
@@ -854,6 +859,8 @@ mod tests {
         assert!(bound.contains("rms_graph"));
         assert!(bound.contains("include_graph_neighbors"));
         assert!(bound.contains("rms_remind"));
+        assert!(bound.contains("related_notes"));
+        assert!(bound.contains("code_changed_since_note"));
         assert!(bound.contains("verified-in-runtime"));
         assert!(!bound.contains("This connection is bound to project"));
         let unbound = system_instructions(None);

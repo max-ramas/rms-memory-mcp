@@ -222,12 +222,35 @@ pub fn remote_repo_of(root: &Path) -> Option<String> {
     repo_from_remote(&git(root, &["remote", "get-url", "origin"])?)
 }
 
-/// Whole-word occurrence of `symbol` (the last `::`/`.` segment) in `text`.
-fn contains_symbol(text: &str, symbol: &str) -> bool {
-    let name = symbol
+/// The last `::`/`.` segment of a symbol, which is what gets matched in text.
+fn symbol_name(symbol: &str) -> &str {
+    symbol
         .rsplit(|c: char| !(c.is_alphanumeric() || c == '_'))
         .find(|part| !part.is_empty())
-        .unwrap_or(symbol);
+        .unwrap_or(symbol)
+}
+
+/// Where else in the repository `symbol` appears (up to 3 files), to tell a rename or move
+/// from a deletion. Uses `git grep`, so it needs no code index.
+fn symbol_elsewhere(root: &Path, symbol: &str, not_in: &str) -> Vec<String> {
+    let name = symbol_name(symbol);
+    if name.chars().count() < 4 {
+        return Vec::new();
+    }
+    git(root, &["grep", "-l", "-w", "-F", "-e", name])
+        .map(|out| {
+            out.lines()
+                .filter(|l| *l != not_in)
+                .take(3)
+                .map(str::to_string)
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+/// Whole-word occurrence of `symbol` (the last `::`/`.` segment) in `text`.
+fn contains_symbol(text: &str, symbol: &str) -> bool {
+    let name = symbol_name(symbol);
     if name.is_empty() {
         return false;
     }
@@ -273,7 +296,15 @@ pub fn check_note(note_path: &str, text: &str, resolver: &RepoResolver) -> Vec<S
                 .map(|t| contains_symbol(&t, symbol))
                 .unwrap_or(true); // binary/unreadable: cannot judge
             if !found {
-                issues.push(format!("{label}: symbol `{symbol}` not found"));
+                let elsewhere = symbol_elsewhere(root, symbol, &r.path);
+                if elsewhere.is_empty() {
+                    issues.push(format!("{label}: symbol `{symbol}` not found"));
+                } else {
+                    issues.push(format!(
+                        "{label}: symbol `{symbol}` not found in this file; it now appears in {} (moved or renamed? update the ref)",
+                        elsewhere.join(", ")
+                    ));
+                }
             }
         }
         if let Some(commit) = &r.commit {
@@ -449,6 +480,34 @@ mod tests {
         format!(
             "---\ntype: pattern\npattern_status: verified-in-runtime\nrefs:\n  - path: {path}\n    symbol: {symbol}\n    commit: {commit}\nverified:\n  date: 2026-11-05\n  how: ran it\n---\n"
         )
+    }
+
+    #[test]
+    fn moved_symbol_is_reported_with_its_new_location() {
+        let (dir, head) = git_repo();
+        std::fs::write(
+            dir.path().join("src/other.rs"),
+            "pub fn moved_helper() {}\n",
+        )
+        .unwrap();
+        let add = std::process::Command::new("git")
+            .arg("-C")
+            .arg(dir.path())
+            .args(["add", "."])
+            .output()
+            .unwrap();
+        assert!(add.status.success());
+        let issues = check_note(
+            "patterns/p.md",
+            &note("src/lib.rs", "moved_helper", &head),
+            &resolver(dir.path()),
+        );
+        assert!(
+            issues.iter().any(|i| i.contains("moved_helper")
+                && i.contains("src/other.rs")
+                && i.contains("moved or renamed")),
+            "{issues:?}"
+        );
     }
 
     #[test]

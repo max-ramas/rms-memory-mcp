@@ -355,11 +355,24 @@ async fn action_neighbors(store: &Store, needle: &str, limit: usize) -> Result<s
             "neighbor": neighbor,
         }));
     }
-    super::response::json_structured_response(&serde_json::json!({
+    // Code edges are syntactic hints, not type-resolved facts: say how many are not
+    // confirmed so the caller knows when to double-check with a text search.
+    let unconfirmed = neighbors
+        .iter()
+        .filter(|n| n["edge"]["resolution"] != "resolved")
+        .count();
+    let mut payload = serde_json::json!({
         "action": "neighbors",
         "node_key": node_key,
         "neighbors": neighbors,
-    }))
+    });
+    if unconfirmed > 0 {
+        payload["unconfirmed_edges"] = serde_json::json!(unconfirmed);
+        payload["note"] = serde_json::json!(
+            "edges with resolution other than `resolved` are name-based hints; verify them (grep / read the code) before relying on them"
+        );
+    }
+    super::response::json_structured_response(&payload)
 }
 
 async fn action_path(
@@ -666,14 +679,19 @@ fn neighbors_from_loaded(
         } else {
             continue;
         };
-        out.push(serde_json::json!({
+        let mut item = serde_json::json!({
             "direction": direction,
             "relation": edge.relation.as_str(),
             "edge_key": edge.edge_key,
+            "resolution": edge.resolution,
             "neighbor": by_key.get(neighbor_key).map(node_json).unwrap_or_else(|| {
                 serde_json::json!({ "node_key": neighbor_key })
             }),
-        }));
+        });
+        if let Some(confidence) = edge.confidence {
+            item["confidence"] = serde_json::json!(confidence);
+        }
+        out.push(item);
     }
     Ok(out)
 }

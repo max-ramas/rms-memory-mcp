@@ -116,6 +116,11 @@ pub fn code_index_is_fresh_since(storage_path: &str, observed_at: std::time::Sys
     completed_marker_time(storage_path).is_ok_and(|completed_at| completed_at >= observed_at)
 }
 
+/// When the last completed code index generation finished, if there ever was one.
+pub fn code_index_completed_at(storage_path: &str) -> Option<std::time::SystemTime> {
+    completed_marker_time(storage_path).ok()
+}
+
 pub fn code_index_is_initialized(storage_path: &str) -> bool {
     std::path::Path::new(storage_path)
         .join(CODE_INDEX_MARKER)

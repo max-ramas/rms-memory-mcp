@@ -1073,7 +1073,8 @@ impl McpServer {
                                 "limit": { "type": "integer", "description": "Maximum results; default 10, maximum 100." },
                                 "include_content": { "type": "boolean", "description": "Whether to include indexed code content; default true." },
                                 "include_file_history": { "type": "boolean", "description": "When true, attach the last 3 commits from the derived code_path git-history cache to each code hit. Not allowed together with projects: […] federation. Default false." },
-                                "include_graph_neighbors": { "type": "boolean", "description": "When true, attach durable graph neighbors for each hit path. Not allowed together with projects: […] federation. Default false." }
+                                "include_graph_neighbors": { "type": "boolean", "description": "When true, attach durable graph neighbors for each hit path. Not allowed together with projects: […] federation. Default false." },
+                                "include_notes": { "type": "boolean", "description": "Attach vault notes (decisions, patterns) that mention the hit's file or symbol, with `code_changed_since_note` when the code is newer. Default true; not used with projects: […]." }
                             },
                             "required": ["query"]
                         }

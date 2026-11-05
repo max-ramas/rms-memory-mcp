@@ -229,6 +229,8 @@ pub async fn diagnose(workspace: &Workspace, options: DiagnoseOptions) -> Result
                         Ok(freshness) => notes.push(freshness.describe()),
                         Err(e) => notes.push(format!("index freshness unavailable: {e:#}")),
                     }
+                    let code = crate::code_layer::index_info(workspace, &store).await;
+                    notes.push(describe_code_index(&code));
                     match fts_coverage_finding(&store, writer_active).await {
                         Some((true, message)) => issues.push(message),
                         Some((false, message)) => notes.push(message),
@@ -527,6 +529,25 @@ pub async fn diagnose(workspace: &Workspace, options: DiagnoseOptions) -> Result
         checks,
         notices,
     })
+}
+
+fn describe_code_index(info: &serde_json::Value) -> String {
+    let status = info["status"].as_str().unwrap_or("unknown");
+    let mode = info["mode"].as_str().unwrap_or("?");
+    match status {
+        "fresh" => format!(
+            "code index ({mode}): fresh, {} file(s)",
+            info["files"].as_u64().unwrap_or(0)
+        ),
+        "stale" => format!(
+            "code index ({mode}): {} changed and {} removed file(s) since the last index; `rms-memory reindex --code` refreshes it",
+            info["changed_since_index"].as_u64().unwrap_or(0),
+            info["removed_since_index"].as_u64().unwrap_or(0)
+        ),
+        _ => format!(
+            "code index ({mode}): not built; semantic code search and call-graph hints are unavailable (`rms-memory config --code-index-mode manual`, then `rms-memory reindex --code`)"
+        ),
+    }
 }
 
 /// `(note, "kind (line n), ...")` for notes containing credentials with a

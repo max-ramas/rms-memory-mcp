@@ -49,6 +49,7 @@ pub fn render_cli_help(subcommand: &str) -> String {
 // Internal modules (hidden from docs.rs but available to the binary)
 #[doc(hidden)]
 pub mod cli;
+pub mod code_layer;
 #[doc(hidden)]
 pub mod commands;
 #[doc(hidden)]

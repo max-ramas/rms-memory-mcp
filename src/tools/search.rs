@@ -64,6 +64,9 @@ pub struct UnifiedSearchResult {
     /// Graph neighbors when `include_graph_neighbors` is set.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub graph_neighbors: Option<Vec<serde_json::Value>>,
+    /// Vault notes that mention this code file or symbol (decisions, patterns).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub related_notes: Option<Vec<serde_json::Value>>,
     /// `proposed` / `implemented` / `verified-in-runtime` for hits from `patterns/` notes.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub pattern_status: Option<String>,
@@ -89,6 +92,7 @@ impl UnifiedSearchResult {
             pinned: result.pinned,
             file_history: None,
             graph_neighbors: None,
+            related_notes: None,
             pattern_status: None,
         }
     }
@@ -112,6 +116,7 @@ impl UnifiedSearchResult {
             pinned: None,
             file_history: None,
             graph_neighbors: None,
+            related_notes: None,
             pattern_status: None,
         }
     }
@@ -199,6 +204,9 @@ pub struct SearchEnvelope {
     pub max_relevance: Option<f32>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub retrieval_mode: Option<String>,
+    /// State of the code index (fresh / stale / not indexed) when the code corpus was searched.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub code_index: Option<serde_json::Value>,
     pub results: Vec<UnifiedSearchResult>,
 }
 
@@ -215,6 +223,7 @@ impl SearchEnvelope {
             injected_ids,
             max_relevance,
             retrieval_mode,
+            code_index: None,
             results,
         }
     }
@@ -230,6 +239,7 @@ impl SearchEnvelope {
             injected_ids: Vec::new(),
             max_relevance,
             retrieval_mode,
+            code_index: None,
             results: Vec::new(),
         }
     }
@@ -354,6 +364,10 @@ async fn execute_inner(
         .get("include_graph_neighbors")
         .and_then(|value| value.as_bool())
         .unwrap_or(false);
+    let include_notes = args
+        .get("include_notes")
+        .and_then(|value| value.as_bool())
+        .unwrap_or(true);
     let corpus = forced_corpus.unwrap_or(Corpus::parse(
         args.get("corpus").and_then(|value| value.as_str()),
     )?);
@@ -366,6 +380,7 @@ async fn execute_inner(
         args.get("pattern_status").and_then(|value| value.as_str()),
     )?;
     let project_keys = parse_projects_arg(args)?;
+    let federated = project_keys.is_some();
     reject_federated_include_file_history(include_file_history, project_keys.is_some())?;
     reject_federated_include_graph_neighbors(include_graph_neighbors, project_keys.is_some())?;
     let indexer = ctx
@@ -465,10 +480,60 @@ async fn execute_inner(
             .map_err(|error| anyhow!("include_graph_neighbors query failed: {error:#}"))?;
     }
 
+    if !federated && corpus != Corpus::Vault {
+        attach_code_layer(ctx, &mut envelope, include_notes).await;
+    }
+
     Ok(envelope)
 }
 
 /// Federated search must not attach sticky-bind file history (wrong project).
+/// Adds the code-index state and the vault notes that talk about each code hit. Best effort:
+/// a failure here must never turn a good search into an error.
+async fn attach_code_layer(ctx: &AppContext, envelope: &mut SearchEnvelope, include_notes: bool) {
+    let (Some(store), Ok(workspace)) = (ctx.store.as_ref(), super::graph::workspace_from_ctx(ctx))
+    else {
+        return;
+    };
+    envelope.code_index = Some(crate::code_layer::index_info(&workspace, store).await);
+    if !include_notes || envelope.decision != SearchDecision::Inject {
+        return;
+    }
+    let Some(root) = ctx.workspace_root.as_ref() else {
+        return;
+    };
+    let notes = crate::code_layer::NoteIndex::for_vault(root);
+    // One lookup per file, attached to its first hit, so notes are not repeated per symbol.
+    let mut symbols_by_file: Vec<(String, Vec<String>)> = Vec::new();
+    for result in envelope.results.iter().filter(|r| r.source == "code") {
+        match symbols_by_file.iter_mut().find(|(p, _)| *p == result.path) {
+            Some((_, symbols)) => symbols.extend(result.qualified_symbol.clone()),
+            None => symbols_by_file.push((
+                result.path.clone(),
+                result.qualified_symbol.clone().into_iter().collect(),
+            )),
+        }
+    }
+    for (path, symbols) in symbols_by_file {
+        let symbol_refs: Vec<&str> = symbols.iter().map(String::as_str).collect();
+        let related: Vec<serde_json::Value> = notes
+            .related(&path, &symbol_refs, 3)
+            .iter()
+            .map(|note| note.to_json(Some(&workspace.code_path.join(&path))))
+            .collect();
+        if related.is_empty() {
+            continue;
+        }
+        if let Some(first) = envelope
+            .results
+            .iter_mut()
+            .find(|r| r.source == "code" && r.path == path)
+        {
+            first.related_notes = Some(related);
+        }
+    }
+}
+
 fn reject_federated_include_file_history(
     include_file_history: bool,
     federated: bool,
@@ -1072,6 +1137,7 @@ mod tests {
             pinned: None,
             file_history: None,
             graph_neighbors: None,
+            related_notes: None,
             pattern_status: None,
         }
     }

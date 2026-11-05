@@ -75,18 +75,33 @@ pub async fn execute(
             // Lazy catch-up before query (event-driven; no interval poll).
             let catch_up = catch_up_file_history(store, code_path).await?;
             let rows = store.query_file_history(path, limit).await?;
+            let related_notes: Vec<serde_json::Value> = ctx
+                .workspace_root
+                .as_ref()
+                .map(|root| {
+                    crate::code_layer::NoteIndex::for_vault(root)
+                        .related(path, &[], 3)
+                        .iter()
+                        .map(|note| note.to_json(Some(&code_path.join(path))))
+                        .collect()
+                })
+                .unwrap_or_default();
+            let mut payload = serde_json::json!({
+                "path": path,
+                "catch_up": {
+                    "noop": catch_up.noop,
+                    "from_sha": catch_up.from_sha,
+                    "to_sha": catch_up.to_sha,
+                    "commits_scanned": catch_up.commits_scanned,
+                    "rows_upserted": catch_up.rows_upserted,
+                },
+                "commits": rows_to_json(&rows, include_message),
+            });
+            if !related_notes.is_empty() {
+                payload["related_notes"] = serde_json::json!(related_notes);
+            }
             Ok(super::response::json_text_response(&serde_json::to_string(
-                &serde_json::json!({
-                    "path": path,
-                    "catch_up": {
-                        "noop": catch_up.noop,
-                        "from_sha": catch_up.from_sha,
-                        "to_sha": catch_up.to_sha,
-                        "commits_scanned": catch_up.commits_scanned,
-                        "rows_upserted": catch_up.rows_upserted,
-                    },
-                    "commits": rows_to_json(&rows, include_message),
-                }),
+                &payload,
             )?))
         }
         other => Err(anyhow::anyhow!(

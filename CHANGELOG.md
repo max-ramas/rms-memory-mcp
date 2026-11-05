@@ -5,6 +5,10 @@ All notable changes to this project will be documented in this file.
 ## [Unreleased]
 
 ### Added
+- Code layer: `rms_code_search` / `rms_search` (`corpus: code|all`) report `code_index` (`fresh`, `stale` with the number of changed files, or `not_indexed` with the exact command to enable it), and attach `related_notes` per file: the decisions and patterns that mention that file or symbol, flagged `code_changed_since_note` when the code is newer than the note. `include_notes: false` turns it off. `rms_file_history` returns the same `related_notes`. See `docs/code-layer.md`.
+- `rms_graph` neighbors show how many edges are unconfirmed name-based hints; neighbors attached to search hits now carry `resolution` and `confidence`.
+- Pattern staleness check says where a missing symbol went (`git grep`), so a move or rename is told apart from a deletion.
+- `rms-memory doctor` reports the code index state.
 - **`rms-memory update`:** checks the RMS update center (`update.rms-ds.com`) and installs a newer binary. The release manifest signature (minisign) and the archive checksum are verified before anything runs; the new binary must report the expected version before it replaces the old one; the previous binary is kept (`--rollback`). Package-manager installs (brew, cargo, .deb) are left to their package manager unless `--force`. Also `--check`, `--yes`, `--json`.
 - **Install scripts use the update center:** `install.sh` / `install.ps1` download from `update.rms-ds.com` (sha256 from the signed manifest, signature checked when `minisign` is installed) and fall back to GitHub Releases.
 - **Release workflow publishes `release.json` + signature** for the update center when the `RELEASE_SIGNING_KEY` secret is set (skipped with a warning otherwise).
