@@ -1,6 +1,6 @@
 # RMS Memory GUI
 
-**Current version:** GUI `1.4.0` with MCP `1.4.0` (unified numbering).
+**Current version:** GUI `1.4.1` with MCP `1.4.1` (unified numbering).
 This release adds Continuity panels for index freshness, git branch, memory hygiene and closed checkpoints, an embedding-model picker in Settings, HTML/CSS/C#/PHP/Kotlin/SQL code languages, respect for read-only Obsidian vaults and doctor credential findings.
 
 > ### 🔒 Privacy promise
