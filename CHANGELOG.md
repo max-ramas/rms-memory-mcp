@@ -4,8 +4,10 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [1.4.2] - 2026-11-07
+
 ### Fixed
-- **Memory after the embedding model is released (Linux):** on glibc the memory freed when the idle server drops the model stayed resident (about 700 MB of a ~1.1 GB process, measured with 269 notes), because glibc keeps freed heap pages. The server now hands those pages back (`malloc_trim`) right after loading and after releasing the model; with periodic trimming the same experiment dropped the idle process to about 100 MB. No change on macOS and Windows. Reported in an issue; per-search growth was measured and is a warm-up plateau, not a leak.
+- **Memory after the embedding model is released (Linux):** on glibc the memory freed when the idle server drops the model stayed resident (about 700 MB of a ~1.1 GB process, measured with 269 notes), because glibc keeps freed heap pages. The server now hands those pages back (`malloc_trim`) right after loading and after releasing the model; on a real Linux release build the idle process now drops to about 100 MB after the model is released (was about 700 MB), and the loaded and peak size are about a quarter lower. No change on macOS and Windows. Reported in an issue; per-search growth was measured and is a warm-up plateau, not a leak.
 
 ## [1.4.1] - 2026-11-05
 
