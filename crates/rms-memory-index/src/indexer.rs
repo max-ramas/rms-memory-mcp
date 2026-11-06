@@ -10,6 +10,23 @@ use std::time::{Duration, Instant};
 /// larger batches permanently grow every long-lived server process.
 const EMBED_BATCH_SIZE: usize = 8;
 
+/// Gives free heap pages back to the operating system.
+///
+/// On Linux with glibc the memory an ONNX session frees stays in the process heap: after the
+/// embedding model is dropped (idle release) a server can keep ~700 MB resident for nothing, and
+/// it does not shrink on its own. `malloc_trim` returns those pages (measured: ~700 MB -> ~100 MB
+/// after a release). A no-op on other platforms, whose allocators return memory themselves.
+pub fn trim_heap() {
+    #[cfg(all(target_os = "linux", target_env = "gnu"))]
+    {
+        // SAFETY: `malloc_trim` only asks the allocator to release unused pages; it has no
+        // preconditions and does not touch live allocations.
+        unsafe {
+            libc::malloc_trim(0);
+        }
+    }
+}
+
 pub struct Indexer {
     engine: Engine,
     profile: EmbeddingProfile,
@@ -194,6 +211,8 @@ impl Indexer {
             && session.is_none()
         {
             *session = Some(Box::new(Self::load_fastembed(model.clone())?));
+            // Loading briefly holds a second copy of the weights; hand its pages back.
+            trim_heap();
         }
         Ok(())
     }
@@ -205,7 +224,13 @@ impl Indexer {
             return false;
         }
         match &mut self.engine {
-            Engine::Fastembed { session, .. } => session.take().is_some(),
+            Engine::Fastembed { session, .. } => {
+                let released = session.take().is_some();
+                if released {
+                    trim_heap();
+                }
+                released
+            }
             Engine::Ollama { .. } => false,
         }
     }
@@ -1380,5 +1405,16 @@ mod sync_tests {
                 .unwrap()
                 .contains("always run the linter")
         );
+    }
+
+    #[test]
+    fn trimming_the_heap_is_safe_to_repeat_and_keeps_live_data() {
+        // `trim_heap` runs after every model load and release; it must never disturb live memory.
+        let kept: Vec<Vec<u8>> = (0..64).map(|i| vec![i as u8; 4096]).collect();
+        super::trim_heap();
+        super::trim_heap();
+        for (i, block) in kept.iter().enumerate() {
+            assert!(block.iter().all(|b| *b == i as u8));
+        }
     }
 }

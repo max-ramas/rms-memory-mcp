@@ -5938,6 +5938,7 @@ dependencies = [
  "ignore",
  "lance-index",
  "lancedb",
+ "libc",
  "octorus-tree-sitter-vue3",
  "ort",
  "pathdiff",
