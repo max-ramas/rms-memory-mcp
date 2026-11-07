@@ -63,7 +63,7 @@ jobs:
           all_rows = [
             {
               "id": "linux-x64",
-              "os": "ubuntu-latest",
+              "os": "ubuntu-24.04",
               "target": "x86_64-unknown-linux-gnu",
               "archive_ext": "tar.gz",
               "use_cross": False,
@@ -218,6 +218,20 @@ jobs:
             cargo build --release
           fi
         shell: bash
+
+      - name: Check the glibc baseline (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          set -euo pipefail
+          TD="${CARGO_TARGET_DIR:-target}"
+          # The binary must run on Ubuntu 24.04 / Debian 13 and newer. A runner image
+          # with a newer glibc silently raises this (1.4.0-1.4.2 needed GLIBC_2.43).
+          MAX=$(objdump -T "$TD/release/rms-memory" | grep -o 'GLIBC_[0-9.]*' | sed 's/GLIBC_//' | sort -uV | tail -1)
+          echo "highest GLIBC symbol required: $MAX"
+          if [ "$(printf '%s\n' 2.39 "$MAX" | sort -V | tail -1)" != "2.39" ]; then
+            echo "::error::rms-memory needs GLIBC_$MAX, newer than the 2.39 baseline (Ubuntu 24.04)"
+            exit 1
+          fi
 
       - name: Install Packaging Tools (Linux)
         if: runner.os == 'Linux'
