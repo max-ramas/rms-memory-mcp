@@ -4,6 +4,11 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [1.4.3] - 2026-11-07
+
+### Fixed
+- **Linux x64 binary, `.deb` and `.rpm` did not start on Debian 13, Ubuntu 24.04 and older (`GLIBC_2.43 not found`):** releases 1.4.0-1.4.2 were built on the newest CI image, whose glibc is newer than most systems have. The Linux x64 release is now built on Ubuntu 24.04 (like the ARM one), and the release job fails if the binary needs glibc newer than 2.39. Linux ARM and macOS/Windows builds were not affected.
+
 ## [1.4.2] - 2026-11-07
 
 ### Fixed
