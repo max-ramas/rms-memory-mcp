@@ -341,7 +341,7 @@ rms-memory embedding use bge-m3              # or: ollama:nomic-embed-text (loca
 | Command | Description |
 |---|---|
 | `rms-memory serve [--http] [--port 7337]` | Starts the JSON-RPC stdio server (auto-triggered by your IDE). `--http` serves MCP Streamable HTTP on `127.0.0.1` instead, with a bearer token. |
-| `rms-memory init` | Registers a project into the global registry. `--dry-run` supported. `--full` forces creation of all IDE rule templates. In an interactive terminal it offers to install the optional GUI (default answer No, asked at most once per 7 days) and ends with a one-line reminder while the GUI is missing; `RMS_MEMORY_NO_TIPS=1` turns both off, as well as the rare hint after `install` and `update`. |
+| `rms-memory init` | Registers a project into the global registry. `--dry-run` supported. `--full` forces creation of all IDE rule templates. |
 | `rms-memory inject-rules [--all]` | Re-injects managed IDE rule blocks with the concrete registry `project` key (existing files only, unless `--full`). Use after template updates. Fail-closed: a single unregistered path is refused rather than injected with a guessed key — run `init` there first, or use `--all` to refresh every registered project. |
 | `rms-memory import` | Scans for existing docs (`README.md`, `docs/`, `ADR/`) and imports them — interactively or via `--auto-import`. `--obsidian <DIR> [--into obsidian] [--dry-run]` copies an Obsidian vault (notes, attachments, folders) into the project vault without touching the source or overwriting files. |
 | `rms-memory install` | Hooks the server into supported IDEs. `--dry-run` supported. |
