@@ -2,7 +2,7 @@
 
 # 🧠 RMS Memory MCP
 
-**Version:** `1.3.0` (2026-10-13) · companion GUI `1.3.0` (unified numbering)
+**Latest release:** see [GitHub Releases](https://github.com/max-ramas/rms-memory-mcp/releases) · `rms-memory update` installs it · the optional companion GUI is released separately
 
 **Persistent, local-first memory for your AI coding agents.**
 
@@ -84,7 +84,7 @@ You're developing a single project but switching between different agents — Cu
 | 🧊 **Concurrent bind cache (v1.0.9)** | Up to 4 warm Store+watcher pairs (LRU); multi-root IDE sessions stop thrashing open/close. |
 | 🧱 **Cargo workspace (v1.0.9+)** | `rms-memory-{core,index,vault,cli}` path crates under `crates/`; public umbrella `rms-memory-mcp` keeps stable module paths for the GUI. `cli` hosts cycle-free `gc`/`prune` (1.1.1). See [docs/crate-split.md](./docs/crate-split.md). |
 | 📦 **Unified Releases** | Public assets use `rms_memory_mcp_<version>_<target>.*` / `rms_memory_gui_<version>_*` on the **same** `vX.Y.Z` tag (MCP + GUI share numbering). Unversioned names are no longer published. |
-| 🪶 **Small idle footprint (v1.3.0)** | Each `serve` process loads the embedding model only when it needs to embed and releases it after 5 idle minutes (`RMS_MEMORY_MODEL_IDLE_SECS`), so many IDEs with an idle server cost about 50 MB each instead of a model copy each. |
+| 🪶 **Small idle footprint (v1.3.0)** | Each `serve` process loads the embedding model only when it needs to embed and releases it after 5 idle minutes (`RMS_MEMORY_MODEL_IDLE_SECS`), so many IDEs with an idle server cost about 50 MB each instead of a model copy each. Since 1.4.2 on Linux the freed memory is also handed back to the system (an idle process drops to about 100 MB instead of staying near 700 MB). |
 | ⚙️ **Dynamic Auto-Installer** | `rms-memory install` scans your system and wires itself into every supported IDE. |
 | 📜 **Rules-as-Code Patching** | Non-destructive AST patching of `.cursorrules`, `.zed/assistant.md`, etc. Opt-in by default. |
 | 🧪 **Durable Vault Writes** | `rms_write` creates rolling `.bak` backups and atomically replaces `create`/`replace` targets after fsync, so interrupted writes never expose a truncated Markdown file. Optional `dry_run` previews create/update/noop without touching disk or the index (fingerprint ignores volatile audit stamps). |
@@ -341,7 +341,7 @@ rms-memory embedding use bge-m3              # or: ollama:nomic-embed-text (loca
 | Command | Description |
 |---|---|
 | `rms-memory serve [--http] [--port 7337]` | Starts the JSON-RPC stdio server (auto-triggered by your IDE). `--http` serves MCP Streamable HTTP on `127.0.0.1` instead, with a bearer token. |
-| `rms-memory init` | Registers a project into the global registry. `--dry-run` supported. `--full` forces creation of all IDE rule templates. |
+| `rms-memory init` | Registers a project into the global registry. `--dry-run` supported. `--full` forces creation of all IDE rule templates. In an interactive terminal it offers to install the optional GUI (default answer No, asked at most once per 7 days) and ends with a one-line reminder while the GUI is missing; `RMS_MEMORY_NO_TIPS=1` turns both off, as well as the rare hint after `install` and `update`. |
 | `rms-memory inject-rules [--all]` | Re-injects managed IDE rule blocks with the concrete registry `project` key (existing files only, unless `--full`). Use after template updates. Fail-closed: a single unregistered path is refused rather than injected with a guessed key — run `init` there first, or use `--all` to refresh every registered project. |
 | `rms-memory import` | Scans for existing docs (`README.md`, `docs/`, `ADR/`) and imports them — interactively or via `--auto-import`. `--obsidian <DIR> [--into obsidian] [--dry-run]` copies an Obsidian vault (notes, attachments, folders) into the project vault without touching the source or overwriting files. |
 | `rms-memory install` | Hooks the server into supported IDEs. `--dry-run` supported. |
@@ -354,8 +354,8 @@ rms-memory embedding use bge-m3              # or: ollama:nomic-embed-text (loca
 | `rms-memory prune [--older-than-days N] [--apply]` | Archives superseded notes older than N days (default 30) under `artifacts/pruned/YYYY-MM-DD/`. Dry-run by default; never deletes. Distinct from `gc` (orphan DBs) and from supersession (lifecycle marking). |
 | `rms-memory file-history catch-up\|reindex\|query` | Derived `code_path` git file→commit cache (Lance). `reindex` requires `--project`. Prefer MCP `rms_file_history` for agents. |
 | `rms-memory update [--check\|--yes\|--rollback\|--force\|--json]` | Checks the RMS update server and installs a newer binary (signature, size and sha256 verified, atomic swap, `--rollback` restores the previous one). |
-| `rms-memory gui [--download-only\|--no-open\|--yes\|--json]` | Installs the optional desktop GUI (14-day trial) from the update server and opens it; opens it when it is already installed. |
-| `rms-memory stats [--days N] [--json] [--reset]` | Local, content-free statistics: how many characters each tool returned to agents (see `docs/token-usage.md`). Never sent anywhere. |
+| `rms-memory gui [--download-only\|--no-open\|--yes\|--json]` | Installs the optional desktop GUI (14-day trial) from the update server and opens it; opens it when it is already installed. Downloads are labelled `src=cli` on the update server. |
+| `rms-memory stats [--days N] [--json] [--reset]` | Local, content-free statistics: how many characters each tool returned to agents (see `docs/token-usage.md`). Never sent anywhere; `RMS_MEMORY_NO_STATS=1` turns the recording off. |
 | `rms-memory wiki ...` | Generates wiki context packs from the vault and the code index (same data as `rms_wiki_pack`). |
 | `rms-memory features` | Live GUI/AI status banner + capability catalog (`GUI`/`AI` tags; soft yellow when GUI absent, gray when installed). Informational only — MCP core is never paywalled. |
 | `rms-memory graph status\|ensure\|neighbors\|path\|snapshot\|export-dot\|…` | Durable knowledge graph (same actions as MCP `rms_graph`). Mutations require `--project`. |
