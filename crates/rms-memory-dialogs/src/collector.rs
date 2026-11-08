@@ -861,7 +861,8 @@ impl Reader {
         let mut r = dec
             .decrypt(std::iter::once(id as &dyn age::Identity))
             .map_err(|e| e.to_string())?;
-        let mut out = Vec::new();
+        // age adds ~0.1% overhead, so the ciphertext length is a tight capacity: no doubling reallocations
+        let mut out = Vec::with_capacity(data.len());
         r.read_to_end(&mut out).map_err(|e| e.to_string())?;
         Ok(out)
     }
@@ -1120,7 +1121,8 @@ pub fn collect(cp: &Path, watch: bool, interval: u64, index: bool) -> Result<(),
         } else {
             let (n, s, f) = collect_once(&c2);
             println!("copied {n}, unchanged {s}, failed {f}");
-            if index {
+            // an idle pass must not load and rewrite the whole index
+            if index && (n > 0 || !crate::index::exists(&c2)) {
                 let (sessions, turns) = crate::index::update(cp)?;
                 println!("indexed {sessions} sessions, {turns} turns");
             }

@@ -33,6 +33,10 @@ fn path(c: &Config) -> PathBuf {
     })
 }
 
+pub(crate) fn exists(c: &Config) -> bool {
+    path(c).exists()
+}
+
 fn e<T: ToString>(x: T) -> String {
     x.to_string()
 }

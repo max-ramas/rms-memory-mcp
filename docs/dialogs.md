@@ -84,6 +84,13 @@ Only what a person and an assistant said is indexed: tool output, reasoning and 
 left out. SQLite FTS5; with an encrypted archive the index is encrypted too and loaded into memory
 for a query, so no plaintext of your dialogs is written to disk.
 
+## Resources (measured, release build, 1632 sessions, 4.5 GB encrypted archive)
+
+- First full pass (collect + index): 137 s, 55,031 turns, index 84 MB, peak 1.4 GB (the largest single session, a 409 MB Cursor export, is held in memory while it is encrypted).
+- Background collector (`collect`, no passphrase): 50 MB peak, about 3 s per pass, 0.09 s when nothing changed; it does not unlock the key.
+- Anything that unlocks the key (`read`, `session`, `search`, `index`, `restore`, `verify`, `collect --index` when sessions changed) pays about 550 MB and 1.3 s once per process: that is scrypt, a memory-hard key derivation by design, freed right after unlocking. Index update and search add up to about 300 MB while the index is in memory.
+- No leak: 12 consecutive `--watch --index` passes returned to 9-26 MB between passes with no upward trend; open files stayed at 18.
+
 ## Limits
 
 Many small segments for a session edited every minute until compaction; names are visible in
