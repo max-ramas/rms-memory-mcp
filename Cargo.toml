@@ -5,6 +5,7 @@ members = [
     "crates/rms-memory-index",
     "crates/rms-memory-vault",
     "crates/rms-memory-cli",
+    "crates/rms-memory-dialogs",
 ]
 resolver = "3"
 
@@ -47,6 +48,7 @@ regex = "1.12.4"
 semver = "1.0.28"
 rms-memory-core = { path = "crates/rms-memory-core" }
 rms-memory-cli = { path = "crates/rms-memory-cli" }
+rms-memory-dialogs = { path = "crates/rms-memory-dialogs" }
 rms-memory-index = { path = "crates/rms-memory-index" }
 rms-memory-vault = { path = "crates/rms-memory-vault" }
 serde = { version = "1.0.228", features = ["derive"] }

@@ -71,6 +71,8 @@ pub enum Commands {
     Features(crate::commands::features::FeaturesArgs),
     /// Query/mutate the durable knowledge graph (MCP-first; same actions as rms_graph)
     Graph(crate::commands::graph::GraphArgs),
+    /// Collect AI-assistant dialogs from local caches into an (optionally encrypted) archive
+    Dialogs(crate::commands::dialogs::DialogsArgs),
     /// Choose the embedding model and measure retrieval quality on your vault
     Embedding {
         #[command(subcommand)]
@@ -107,6 +109,7 @@ impl Cli {
             Commands::Stats(args) => args.run(scope).await,
             Commands::Features(args) => args.run(scope).await,
             Commands::Graph(args) => args.run(scope).await,
+            Commands::Dialogs(args) => args.run(scope).await,
             Commands::Embedding { command } => command.run(scope).await,
         }
     }
@@ -144,6 +147,7 @@ fn maybe_print_help_status_banner() {
         "update",
         "gui",
         "stats",
+        "dialogs",
     ];
     if args.iter().any(|a| SUBCOMMANDS.contains(&a.as_str())) {
         return;

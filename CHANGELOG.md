@@ -4,6 +4,9 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Added
+- **`rms-memory dialogs`:** an optional, local archive of your AI-assistant dialogs. It copies the session files that Claude Code, Codex, Antigravity, OpenCode, Cursor and Zed already keep on your disk (OpenCode, Cursor and Zed as readable JSON exports) into one folder tree; it does not intercept traffic or touch the tools. Credential stores (OpenCode accounts, Cursor settings, Gemini OAuth) are never read. Optional age encryption with a passphrase-protected key, append-only segments with generations, `verify --deep`, and `restore` (back to the original tool locations, never overwriting). `collect --index` builds a full-text index of user and assistant turns only (encrypted with the archive), used by `dialogs search` and `dialogs session`. In `collect-and-serve` mode only, the MCP server also offers `rms_dialogs_search` and `rms_dialogs_read`; in any other mode those tools do not exist. Off by default; nothing is collected until you run `dialogs init`.
+
 ## [1.4.3] - 2026-11-07
 
 ### Fixed
