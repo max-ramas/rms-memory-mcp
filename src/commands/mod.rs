@@ -1,4 +1,5 @@
 pub mod config;
+pub mod dialogs;
 pub mod embedding;
 pub mod features;
 pub mod file_history;

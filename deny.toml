@@ -43,6 +43,14 @@ ignore = [
   "RUSTSEC-2026-0398",
   "RUSTSEC-2026-0403",
   "RUSTSEC-2026-0410",
+  # basic-toml 0.1.10 and proc-macro-error2 2.0.1 are flagged as unmaintained.
+  # Both are compile-time proc-macro helpers reached only through
+  # age 0.11 -> i18n-embed-fl / i18n-config (age's own translation macros) for
+  # rms-memory-dialogs. They run at build time, never in the shipped binary's
+  # request path, and unmaintained is not a vulnerability. Re-check when age
+  # moves to 0.12 (not taken now: it changes the archive encryption API).
+  "RUSTSEC-2026-0374",
+  "RUSTSEC-2026-0173",
 ]
 
 [bans]

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Builds a macOS installer (.pkg) that installs the `rms-memory` binary into /usr/local/bin.
-# Unsigned (no Apple Developer ID yet): after a browser download macOS asks to confirm once
-# (right-click > Open); `curl` downloads and the one-line installer are not affected.
+# Signed with a "Developer ID Installer" identity when INSTALLER_IDENTITY is set (CI does this and then
+# notarizes and staples the result with scripts/notarize-macos.sh). Without it the package is unsigned.
 #
 # Usage: package-macos-pkg.sh <version> <path to rms-memory binary> <out dir> [arch-suffix]
 # Output: <out dir>/rms_memory_mcp_<version>_aarch64-apple-darwin.pkg
@@ -28,5 +28,7 @@ cat > "$WORK/distribution.xml" <<XML
 </installer-gui-script>
 XML
 FINAL="$OUT/rms_memory_mcp_${VERSION}_${TARGET}.pkg"
-productbuild --distribution "$WORK/distribution.xml" --package-path "$WORK" "$FINAL" >/dev/null
+SIGN=()
+[[ -n "${INSTALLER_IDENTITY:-}" ]] && SIGN=(--sign "$INSTALLER_IDENTITY" --timestamp)
+productbuild --distribution "$WORK/distribution.xml" --package-path "$WORK" ${SIGN[@]+"${SIGN[@]}"} "$FINAL" >/dev/null
 echo "$FINAL"

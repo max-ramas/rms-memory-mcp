@@ -1036,7 +1036,8 @@ impl McpServer {
                 }
                 Ok(result)
             }
-            "tools/list" => Ok(json!({
+            "tools/list" => {
+                let mut list = json!({
                 "tools": [
                     {
                         "name": "rms_search",
@@ -1328,11 +1329,23 @@ impl McpServer {
                         }
                     }
                 ]
-            })),
+                });
+                // Dialog tools exist only while the owner runs `collect_and_serve`.
+                if crate::tools::dialogs::served()
+                    && let Some(tools) = list["tools"].as_array_mut()
+                {
+                    tools.extend(crate::tools::dialogs::tool_definitions());
+                }
+                Ok(list)
+            }
             "tools/call" => {
                 let params = params.unwrap_or(json!({}));
                 let name = params["name"].as_str().unwrap_or("");
                 let args = params["arguments"].as_object().cloned().unwrap_or_default();
+
+                if crate::tools::dialogs::is_dialogs_tool(name) {
+                    return crate::tools::dialogs::execute(name, &args).await;
+                }
 
                 if name == "rms_remind" {
                     return crate::tools::remind::execute(&args);

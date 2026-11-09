@@ -4,6 +4,14 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [1.5.0] - 2026-11-09
+
+### Added
+- **`rms-memory dialogs`:** an optional, local archive of your AI-assistant dialogs. It copies the session files that Claude Code, Codex, Antigravity, OpenCode, Cursor and Zed already keep on your disk (OpenCode, Cursor and Zed as readable JSON exports) into one folder tree; it does not intercept traffic or touch the tools. Credential stores (OpenCode accounts, Cursor settings, Gemini OAuth) are never read. Optional age encryption with a passphrase-protected key, append-only segments with generations, `verify --deep`, and `restore` (back to the original tool locations, never overwriting). `collect --index` builds a full-text index of user and assistant turns only (encrypted with the archive), used by `dialogs search` and `dialogs session`. In `collect-and-serve` mode only, the MCP server also offers `rms_dialogs_search` and `rms_dialogs_read`; in any other mode those tools do not exist. Off by default; nothing is collected until you run `dialogs init`.
+
+### Changed
+- **macOS binary and installer are signed and notarized:** the `rms-memory` binary is signed with an Apple Developer ID Application certificate (hardened runtime) and notarized by Apple; the `.pkg` installer is signed with a Developer ID Installer certificate, notarized and stapled. macOS no longer asks to confirm the installer on first open. Windows builds are not code-signed yet.
+
 ## [1.4.3] - 2026-11-07
 
 ### Fixed
