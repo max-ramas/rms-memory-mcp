@@ -104,25 +104,11 @@ the launcher permission failure reported by the AppImage catalog for 1.2.0.
 The catalog's test of the newly published installer remains an independent
 distribution check.
 
-### Known macOS distribution issue
+### macOS signing and notarization
 
-There is **no Apple Developer account yet**, so notarized CI macOS installers are
-deferred. Until then, ship macOS builds **manually** (`pnpm tauri build` locally)
-or accept Gatekeeper warnings on unsigned downloads. macOS may show an
-**“app is damaged”** or unverified-developer dialog on first launch — that is
-Gatekeeper, not a corrupt binary.
-
-Before proceeding, verify the installer checksum against `rms_memory_gui_SHA256SUMS.txt` when
-one is published with the release. Then open the app with either method:
-
-1. **System Settings → Privacy & Security** → **Open Anyway** beside RMS Memory.
-2. Or clear quarantine:
-
-   ```bash
-   xattr -r -d com.apple.quarantine /Applications/RMS\ Memory.app
-   ```
-
-   Replace the path if the app lives elsewhere.
+macOS installers are signed with an Apple Developer ID certificate and notarized by Apple, so they open
+without a Gatekeeper warning. Verify the installer checksum against `rms_memory_gui_SHA256SUMS.txt` when
+one is published with the release.
 
 ## Publication and trust boundary
 
@@ -141,12 +127,8 @@ artifacts. On the GUI repository, the required
 as a GitHub Actions secret and is never embedded in the application or checked
 into either repository.
 
-Desktop installer signing will eventually run in the private GUI release
-workflow. Until an Apple Developer account and platform certificates exist,
-macOS builds may be distributed **unsigned** (local `pnpm tauri build`). On
-first launch Gatekeeper may warn that the app is damaged or from an unidentified
-developer — clear quarantine or use **Open Anyway** as documented in the GUI
-`README.md`. Before installing any published asset, verify checksums against
+Desktop installers are signed in the private GUI release workflow: macOS with Developer ID and
+notarization. Windows installers are not signed yet. Before installing any published asset, verify checksums against
 `SHA256SUMS.txt` when present. Do not install executables from an unverified
 fork.
 

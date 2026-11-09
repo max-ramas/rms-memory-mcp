@@ -109,7 +109,7 @@ You're developing a single project but switching between different agents — Cu
 
 Also as: [macOS .tar.gz](https://update.rms-ds.com/get/rms-memory-mcp/tar.gz?platform=darwin&arch=arm64&src=readme) · [Windows .zip](https://update.rms-ds.com/get/rms-memory-mcp/zip?platform=windows&arch=amd64&src=readme) · Linux x64 [.tar.gz](https://update.rms-ds.com/get/rms-memory-mcp/tar.gz?platform=linux&arch=amd64&src=readme) / [.rpm](https://update.rms-ds.com/get/rms-memory-mcp/rpm?platform=linux&arch=amd64&src=readme) · Linux ARM64 [.tar.gz](https://update.rms-ds.com/get/rms-memory-mcp/tar.gz?platform=linux&arch=arm64&src=readme) / [.rpm](https://update.rms-ds.com/get/rms-memory-mcp/rpm?platform=linux&arch=arm64&src=readme)
 
-The installers put `rms-memory` on your `PATH` (`/usr/local/bin` on macOS, `Program Files\RMS Memory MCP` on Windows). Always the newest stable release. The macOS and Windows installers are not code-signed yet: macOS asks to confirm a browser-downloaded `.pkg` once (right-click, Open), and Windows SmartScreen may warn before the `.msi` runs.
+The installers put `rms-memory` on your `PATH` (`/usr/local/bin` on macOS, `Program Files\RMS Memory MCP` on Windows). Always the newest stable release. The macOS installer and binary are signed with an Apple Developer ID and notarized, so macOS opens them without a warning. The Windows installer is not code-signed yet, so SmartScreen may warn before the `.msi` runs.
 
 </div>
 
@@ -215,9 +215,8 @@ platforms, installer verification and release-distribution policy.
 
 GUI source is private, but desktop installers are published as binary assets
 on this repository's [GitHub Releases](https://github.com/max-ramas/rms-memory-mcp/releases)
-under the matching `v<version>` tag. Until Apple/Windows signing certificates
-exist, macOS builds may be unsigned — see [GUI-README.md](./GUI-README.md) for
-Gatekeeper notes. The private GUI workflow transfers only the completed
+under the matching `v<version>` tag. macOS builds are signed with Developer ID and
+notarized; Windows builds are not signed yet — see [GUI-README.md](./GUI-README.md). The private GUI workflow transfers only the completed
 `.dmg`, `.msi`/`.exe`, `.AppImage`, `.deb`, and `.rpm` installer files (plus
 `SHA256SUMS.txt` when present). With updater signing enabled, the GUI pipeline
 mirrors signed `latest.json`, companion `.sig` files, and macOS `*.app.tar.gz`
