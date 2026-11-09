@@ -6288,7 +6288,7 @@ dependencies = [
 
 [[package]]
 name = "rms-memory-cli"
-version = "1.4.3"
+version = "1.5.0"
 dependencies = [
  "anyhow",
  "blake3",
@@ -6300,7 +6300,7 @@ dependencies = [
 
 [[package]]
 name = "rms-memory-core"
-version = "1.4.3"
+version = "1.5.0"
 dependencies = [
  "anyhow",
  "blake3",
@@ -6323,7 +6323,7 @@ dependencies = [
 
 [[package]]
 name = "rms-memory-dialogs"
-version = "1.4.3"
+version = "1.5.0"
 dependencies = [
  "age",
  "clap",
@@ -6339,7 +6339,7 @@ dependencies = [
 
 [[package]]
 name = "rms-memory-index"
-version = "1.4.3"
+version = "1.5.0"
 dependencies = [
  "anyhow",
  "blake3",
@@ -6387,7 +6387,7 @@ dependencies = [
 
 [[package]]
 name = "rms-memory-mcp"
-version = "1.4.3"
+version = "1.5.0"
 dependencies = [
  "anyhow",
  "blake3",
@@ -6437,7 +6437,7 @@ dependencies = [
 
 [[package]]
 name = "rms-memory-vault"
-version = "1.4.3"
+version = "1.5.0"
 dependencies = [
  "anyhow",
  "blake3",
