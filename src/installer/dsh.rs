@@ -3,6 +3,8 @@
 //! dsh does not read JSON MCP configs like the other IDEs. Its profile is a stack of loader patches and the
 //! user layer is `~/.dsh/profiles/desktop/cordis.patch.yml`: a top-level YAML array of entries. An MCP server is
 //! an entry that configures `@deepseek-ai/dsh-mcp-client`; its tools then appear as `mcp__rms-memory__<tool>`.
+//! A NEW row must be added with an `- insert:` item (a bare `- id: ...` item targets an existing row and the
+//! loader warns `patch: entry not found`); this is the shape of dsh's own `templates/mcp/cordis.patch.yml`.
 //!
 //! The server must be registered as an MCP server. The agent's `bash` tool runs in a `workspace-write` sandbox
 //! where `~/.rms-memory` is not writable, so the agent must write memory through the RMS Memory tools and never
@@ -28,28 +30,41 @@ fn entry(executable: &str) -> String {
     let command =
         serde_json::to_string(executable).unwrap_or_else(|_| "\"rms-memory\"".to_string());
     format!(
-        "- id: {ENTRY_ID}\n  name: \"@deepseek-ai/dsh-mcp-client\"\n  config:\n    serverName: rms-memory\n    transport: stdio\n    command: {command}\n    args: [\"serve\"]\n    failOnStartupError: false\n"
+        "- insert:\n    - id: {ENTRY_ID}\n      name: \"@deepseek-ai/dsh-mcp-client\"\n      config:\n        serverName: rms-memory\n        transport: stdio\n        command: {command}\n        args: [\"serve\"]\n        failOnStartupError: false\n"
     )
 }
 
-/// Removes the managed entry, leaving every other line untouched.
+/// Removes the managed entry, leaving every other line untouched. Also removes the bare `- id:` form written by
+/// an early development build, which the loader ignores.
 pub fn remove(original: &str) -> String {
+    let lines: Vec<&str> = original.split_inclusive('\n').collect();
     let mut out = String::with_capacity(original.len());
-    let mut skipping = false;
-    for line in original.split_inclusive('\n') {
-        let bare = line.trim_end_matches(['\n', '\r']);
-        if bare.trim_end() == format!("- id: {ENTRY_ID}") {
-            skipping = true;
+    let mut i = 0;
+    while i < lines.len() {
+        let bare = lines[i].trim_end_matches(['\n', '\r']).trim_end();
+        let next_bare = lines
+            .iter()
+            .skip(i + 1)
+            .map(|l| l.trim_end_matches(['\n', '\r']).trim())
+            .find(|l| !l.is_empty());
+        let managed_insert =
+            bare == "- insert:" && next_bare == Some(format!("- id: {ENTRY_ID}").as_str());
+        let legacy = bare == format!("- id: {ENTRY_ID}");
+        if managed_insert || legacy {
+            i += 1;
+            // The entry is indented under its first line; the first non-indented, non-blank line ends it.
+            while i < lines.len() {
+                let l = lines[i].trim_end_matches(['\n', '\r']);
+                if l.is_empty() || l.starts_with(' ') || l.starts_with('\t') {
+                    i += 1;
+                } else {
+                    break;
+                }
+            }
             continue;
         }
-        if skipping {
-            // The entry is indented under its `- id:` line; the first non-indented, non-blank line ends it.
-            if bare.is_empty() || bare.starts_with(' ') || bare.starts_with('\t') {
-                continue;
-            }
-            skipping = false;
-        }
-        out.push_str(line);
+        out.push_str(lines[i]);
+        i += 1;
     }
     out
 }
@@ -74,10 +89,10 @@ mod tests {
     fn appends_the_entry_and_keeps_existing_ones() {
         let out = inject(SAMPLE, "/usr/local/bin/rms-memory");
         assert!(out.starts_with(SAMPLE));
-        assert!(out.contains("- id: mcp-rms-memory\n"));
-        assert!(out.contains("serverName: rms-memory\n"));
-        assert!(out.contains("command: \"/usr/local/bin/rms-memory\"\n"));
-        assert!(out.contains("args: [\"serve\"]\n"));
+        assert!(out.contains("- insert:\n    - id: mcp-rms-memory\n"));
+        assert!(out.contains("        serverName: rms-memory\n"));
+        assert!(out.contains("        command: \"/usr/local/bin/rms-memory\"\n"));
+        assert!(out.contains("        args: [\"serve\"]\n"));
     }
 
     #[test]
@@ -137,5 +152,24 @@ mod tests {
         assert!(!is_installed(home.path()));
         std::fs::create_dir_all(home.path().join(".dsh/profiles/desktop")).unwrap();
         assert!(is_installed(home.path()));
+    }
+
+    #[test]
+    fn the_legacy_bare_entry_is_replaced_by_the_insert_form() {
+        let legacy = format!(
+            "{SAMPLE}- id: mcp-rms-memory\n  name: \"@deepseek-ai/dsh-mcp-client\"\n  config:\n    serverName: rms-memory\n    transport: stdio\n    command: \"/old/rms-memory\"\n    args: [\"serve\"]\n    failOnStartupError: false\n"
+        );
+        assert_eq!(remove(&legacy), SAMPLE);
+        let fixed = inject(&legacy, "/new/rms-memory");
+        assert!(fixed.starts_with(SAMPLE));
+        assert!(fixed.contains("- insert:\n    - id: mcp-rms-memory\n"));
+        assert!(!fixed.contains("/old/rms-memory"));
+        assert_eq!(fixed.matches("mcp-rms-memory").count(), 1);
+    }
+
+    #[test]
+    fn another_insert_block_is_never_touched() {
+        let other = format!("{SAMPLE}- insert:\n    - id: someone-else\n      name: \"@x/y\"\n");
+        assert_eq!(remove(&other), other);
     }
 }
