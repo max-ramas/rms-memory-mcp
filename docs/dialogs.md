@@ -26,9 +26,10 @@ rms-memory dialogs session claude-code/<project>/<file>.jsonl
 | OpenCode | `opencode.db`, tables `session`, `message`, `part` only | readable JSONL export |
 | Cursor | `state.vscdb`, keys `composerData:*` and `bubbleId:*` only | readable JSONL export |
 | Zed | `threads.db`, table `threads` | readable JSON export |
+| DeepSeek Harness | `~/.dsh/sessions/<project>/session-<id>/session.v4.jsonl.zstd` only | readable JSONL export (zstd decompressed; a session that is still being written is read up to its last complete frame) |
 
 Never read: OpenCode `credential`/`account`/`control_account`/`auth.json`, Cursor `ItemTable`,
-Gemini OAuth and credential files. Only the paths above are opened (allow-list).
+Gemini OAuth and credential files, DeepSeek Harness `~/.dsh/.credentials.yaml`. Only the paths above are opened (allow-list).
 
 ## Modes
 
@@ -76,7 +77,7 @@ dialogs restore --to DIR | --native         native puts original files back, nev
 `RMS_DIALOGS_TIMING=1` prints time per source.
 
 Restore: Claude Code, Codex and Antigravity keep original bytes (the tool can resume the session);
-OpenCode, Cursor and Zed are readable exports (searchable, not resumable).
+OpenCode, Cursor, Zed and DeepSeek Harness are readable exports (searchable, not resumable).
 
 ## Search index
 
