@@ -52,7 +52,7 @@ Stop re-explaining your architecture to Cursor, Zed, and Claude Code and other I
 
 ## The Problem
 
-You're developing a single project but switching between different agents — Cursor, Zed, Claude Code, OpenCode, etc. Every one of them loses context of architectural decisions, system requirements, and user preferences the moment you close the tab. You end up re-explaining the same things over and over, or copy-pasting a stale `CLAUDE.md` between tools.
+You're developing a single project but switching between different agents — Cursor, Zed, Claude Code, OpenCode, DeepSeek Harness, etc. Every one of them loses context of architectural decisions, system requirements, and user preferences the moment you close the tab. You end up re-explaining the same things over and over, or copy-pasting a stale `CLAUDE.md` between tools.
 
 **RMS Memory MCP** bridges this gap: a single, isolated, centralized Markdown vault — perfectly structured for LLM consumption — that any MCP-compatible IDE can read from and write to.
 
@@ -234,7 +234,7 @@ The fastest way to get every IDE on your machine connected:
 rms-memory install
 ```
 
-This scans `~/.config/` and `~/Library/Application Support/` and hooks `rms-memory` directly into **Cursor**, **Zed**, **Claude Code**, **OpenCode**, and others — no manual JSON editing.
+This scans `~/.config/` and `~/Library/Application Support/` and hooks `rms-memory` directly into **Cursor**, **Zed**, **Claude Code**, **OpenCode**, **DeepSeek Harness**, and others — no manual JSON editing.
 
 ### Generated Wiki namespace
 
@@ -367,7 +367,7 @@ rms-memory embedding use bge-m3              # or: ollama:nomic-embed-text (loca
 | `rms-memory projects remove <key>` | Removes an erroneous project registration while preserving its vault files. |
 | `rms-memory projects attach-obsidian <PATH> [--key KEY]` | Registers an existing Obsidian vault in place, read-only: indexed and searchable, never modified. The read-only flag is kept in `~/.rms-memory` (`registry.toml` and `read-only-vaults`); if that directory is deleted or recreated, attach the vault again. |
 | `rms-memory embedding list\|use <id>\|eval` | Lists the bundled embedding models, switches the model (`ollama:<model>` for a local Ollama), or scores retrieval quality (hit@1, hit@k, MRR) on the project's vault, for embeddings alone and hybrid search. Restart MCP servers after `use`; the next sync builds the model's index. |
-| `rms-memory dialogs init\|mode\|collect\|index\|search\|session\|status\|read\|restore\|verify` | Optional local archive of your AI-assistant dialogs (Claude Code, Codex, Antigravity, OpenCode, Cursor, Zed), read from the files those tools already keep on disk; nothing is intercepted and nothing is sent anywhere. `init --encrypt` encrypts every file with [age](https://age-encryption.org) (passphrase only needed to read). Modes: `off`, `collect`, `collect-and-serve`. `collect --index` also builds a full-text index of user and assistant turns (encrypted when the archive is); `search` and `session` read it. See `docs/dialogs.md`. |
+| `rms-memory dialogs init\|mode\|collect\|index\|search\|session\|status\|read\|restore\|verify` | Optional local archive of your AI-assistant dialogs (Claude Code, Codex, Antigravity, OpenCode, Cursor, Zed, DeepSeek Harness), read from the files those tools already keep on disk; nothing is intercepted and nothing is sent anywhere. `init --encrypt` encrypts every file with [age](https://age-encryption.org) (passphrase only needed to read). Modes: `off`, `collect`, `collect-and-serve`. `collect --index` also builds a full-text index of user and assistant turns (encrypted when the archive is); `search` and `session` read it. See `docs/dialogs.md`. |
 | `rms-memory hook --event <e>` | Editor-agnostic continuity hook (`session_start`, `pre_compact`, `session_stop`); JSON on stdout. `--project <key>` or unique cwd resolution (fail-closed); `--apply` creates/updates or closes a checkpoint. |
 | **All commands** | Accept `--scope <id>` to target arbitrary isolated vaults (threads, leads, etc.). |
 
@@ -574,6 +574,9 @@ Live MCP requests have been verified for `rms_search(corpus=vault|code|all)` and
 | Codex | ✅ | — |
 | VS Code | ✅ | — |
 | Antigravity | ✅ | — |
+| DeepSeek Harness | ✅ | project `AGENTS.md` |
+
+**DeepSeek Harness.** `rms-memory install` registers the server in its desktop profile (`~/.dsh/profiles/desktop/cordis.patch.yml`, the `@deepseek-ai/dsh-mcp-client` entry) and `rms-memory uninstall` removes it again; restart the app and the tools appear as `mcp__rms-memory__*`. The agent's `bash` tool runs in a `workspace-write` sandbox where `~/.rms-memory` is not writable, so the agent has to write memory through the RMS Memory tools (`rms_write`, ...) and never by calling the `rms-memory` CLI from a shell. The injected `AGENTS.md` rules say exactly that. `rms-memory dialogs` can also archive and search its sessions (`~/.dsh/sessions`).
 
 ## 📄 License
 

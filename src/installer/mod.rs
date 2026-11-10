@@ -1,3 +1,4 @@
+pub mod dsh;
 pub mod hooks;
 pub mod macos;
 pub mod patcher;
@@ -89,7 +90,7 @@ pub async fn run_installer_with_executable(
         }
     }
 
-    if valid_targets.is_empty() {
+    if valid_targets.is_empty() && !dsh::is_installed(home) {
         println!("[!] No IDE configurations found.");
         return Ok(());
     }
@@ -229,12 +230,93 @@ pub async fn run_installer_with_executable(
         }
     }
 
+    if let Err(error) = install_dsh(home, &executable_str, auto_yes, dry_run) {
+        eprintln!("[⚠️] DeepSeek Harness: {error:#}");
+    }
+
     println!("[✅] Installation sweep completed.");
     if let Err(error) = hooks::install_l3_adapters(home, &executable_str, dry_run) {
         eprintln!("[⚠️] L3 continuity adapters: {error:#}");
     }
     print_capability_matrix(&executable_str);
     Ok(())
+}
+
+/// Registers the MCP server in the DeepSeek Harness desktop profile (a YAML patch layer).
+fn install_dsh(home: &Path, executable: &str, auto_yes: bool, dry_run: bool) -> Result<()> {
+    if !dsh::is_installed(home) {
+        return Ok(());
+    }
+    let path = dsh::patch_path(home);
+    let original = fs::read_to_string(&path).unwrap_or_default();
+    let patched = dsh::inject(&original, executable);
+    if patched == original {
+        println!(
+            "[✅] Already configured in DeepSeek Harness ({})",
+            path.display()
+        );
+        return Ok(());
+    }
+    if dry_run {
+        println!("\n[DRY-RUN] Planning to patch: {}", path.display());
+        return Ok(());
+    }
+    if !auto_yes {
+        let write_changes = Confirm::with_theme(&ColorfulTheme::default())
+            .with_prompt(format!(
+                "[!] Found DeepSeek Harness ({}). Write changes?",
+                path.display()
+            ))
+            .default(true)
+            .interact()?;
+        if !write_changes {
+            println!("Skipping {}", path.display());
+            return Ok(());
+        }
+    }
+    if path.exists() {
+        let _ = fs::copy(&path, format!("{}.bak", path.to_string_lossy()));
+    }
+    fs::write(&path, patched).with_context(|| format!("cannot write {}", path.display()))?;
+    println!(
+        "[✅] Successfully added to DeepSeek Harness ({}). Restart the app; the tools appear as mcp__rms-memory__*.",
+        path.display()
+    );
+    Ok(())
+}
+
+/// Removes the managed entry from the DeepSeek Harness profile. Returns whether anything changed.
+fn uninstall_dsh(home: &Path, auto_yes: bool, dry_run: bool) -> Result<bool> {
+    let path = dsh::patch_path(home);
+    let Ok(original) = fs::read_to_string(&path) else {
+        return Ok(false);
+    };
+    let removed = dsh::remove(&original);
+    if removed == original {
+        return Ok(false);
+    }
+    if dry_run {
+        println!(
+            "[DRY-RUN] Planning to remove rms-memory from DeepSeek Harness ({})",
+            path.display()
+        );
+        return Ok(true);
+    }
+    if !auto_yes {
+        let ok = Confirm::with_theme(&ColorfulTheme::default())
+            .with_prompt(format!(
+                "Remove rms-memory from DeepSeek Harness ({})?",
+                path.display()
+            ))
+            .default(true)
+            .interact()?;
+        if !ok {
+            return Ok(false);
+        }
+    }
+    let _ = fs::copy(&path, format!("{}.bak", path.to_string_lossy()));
+    fs::write(&path, removed)?;
+    Ok(true)
 }
 
 /// Honest per-level integration report (Mind-style): what this installer
@@ -349,6 +431,18 @@ pub async fn run_uninstaller(auto_yes: bool, dry_run: bool) -> Result<()> {
                 }
             }
         }
+    }
+
+    match uninstall_dsh(home, auto_yes, dry_run) {
+        Ok(true) => {
+            println!(
+                "[🗑️] Removed from DeepSeek Harness ({})",
+                dsh::patch_path(home).display()
+            );
+            uninstalled += 1;
+        }
+        Ok(false) => {}
+        Err(error) => eprintln!("[⚠️] DeepSeek Harness uninstall: {error:#}"),
     }
 
     if uninstalled == 0 {

@@ -4,6 +4,17 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [1.5.1] - 2026-11-10
+
+### Added
+- **Added DeepSeek Harness support.** `rms-memory install` registers the MCP server in the DeepSeek Harness desktop profile (`~/.dsh/profiles/desktop/cordis.patch.yml`); the entry is idempotent, follows a moved binary, keeps a `.bak` copy and is removed by `rms-memory uninstall`. The tools appear as `mcp__rms-memory__*` after a restart.
+- **`rms-memory dialogs` reads DeepSeek Harness sessions** (`~/.dsh/sessions/**/session.v4.jsonl.zstd`): your messages and the assistant's answers are archived and searchable (tool name `deepseek-harness`); runtime context, reasoning and tool calls stay out, and the credentials file in `~/.dsh` is never read.
+
+- **Rules for sandboxed harnesses:** the managed block that `rms-memory init` / `inject-rules` writes into `AGENTS.md` (and the other general rule files) now names the per-client tool names (`mcp__rms-memory__rms_*` in DeepSeek Harness) and forbids calling the `rms-memory` CLI through a shell tool.
+
+### Notes
+- The agent's sandbox does not allow writing to `~/.rms-memory`, so memory must be written through the MCP tools, not the CLI.
+
 ## [1.5.0] - 2026-11-09
 
 ### Added
