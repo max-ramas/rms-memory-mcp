@@ -30,7 +30,7 @@ pub fn tool_definitions() -> Vec<Value> {
                 "type": "object",
                 "properties": {
                     "query": { "type": "string", "description": "Words to find; all must occur, the last is a prefix." },
-                    "tool": { "type": "string", "description": "Optional: claude-code, codex, antigravity, opencode, cursor or zed." },
+                    "tool": { "type": "string", "description": "Optional: claude-code, codex, antigravity, opencode, cursor, zed or deepseek-harness." },
                     "project": { "type": "string", "description": "Optional project folder name." },
                     "limit": { "type": "integer", "minimum": 1, "maximum": 50, "default": 10 }
                 },

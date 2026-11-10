@@ -562,6 +562,64 @@ fn discover_zed(out: &mut Vec<Found>) {
     }
 }
 
+/// Project of a DeepSeek Harness session: last component of the `cwd` in its header line (first line of the stream).
+fn deepseek_project(file: &Path) -> Option<String> {
+    use std::io::BufRead;
+    let dec = zstd::Decoder::new(fs::File::open(file).ok()?).ok()?;
+    let mut first = String::new();
+    std::io::BufReader::new(dec.take(64 * 1024))
+        .read_line(&mut first)
+        .ok()?;
+    let v: serde_json::Value = serde_json::from_str(first.trim()).ok()?;
+    v["cwd"].as_str().map(last_component)
+}
+
+/// Decompresses a session stream. The file is appended to while a session runs, so a truncated final frame is
+/// not an error: everything decoded up to that point is kept.
+fn read_zstd_stream(file: &Path) -> Result<Vec<u8>, String> {
+    let mut dec = zstd::Decoder::new(fs::File::open(file).map_err(|e| e.to_string())?)
+        .map_err(|e| e.to_string())?;
+    let mut buf = Vec::new();
+    let res = dec.read_to_end(&mut buf);
+    if buf.is_empty() {
+        res.map_err(|e| e.to_string())?;
+    }
+    Ok(buf)
+}
+
+/// DeepSeek Harness: ~/.dsh/sessions/<project>/session-<id>/session.v4.jsonl.zstd -> readable JSONL.
+/// Only that exact file name is read: ~/.dsh also holds `.credentials.yaml`, which is never touched.
+fn discover_deepseek(out: &mut Vec<Found>) {
+    let root = home().join(".dsh/sessions");
+    let Ok(projects) = fs::read_dir(&root) else {
+        return;
+    };
+    for pd in projects.flatten().filter(|d| d.path().is_dir()) {
+        let Ok(sessions) = fs::read_dir(pd.path()) else {
+            continue;
+        };
+        for sd in sessions.flatten().filter(|d| d.path().is_dir()) {
+            let file = sd.path().join("session.v4.jsonl.zstd");
+            let Ok(meta) = fs::metadata(&file) else {
+                continue;
+            };
+            let id = sanitize(&sd.file_name().to_string_lossy());
+            let project = deepseek_project(&file)
+                .unwrap_or_else(|| sanitize(&pd.file_name().to_string_lossy()));
+            let src = file.clone();
+            out.push(Found {
+                key: format!("deepseek-harness:{id}"),
+                src: PathBuf::new(),
+                tool: "deepseek-harness",
+                project,
+                name: format!("{id}.jsonl"),
+                sig: Some((meta.len(), mtime_secs(&meta))),
+                kind: Kind::Export(Box::new(move || read_zstd_stream(&src))),
+            });
+        }
+    }
+}
+
 fn state_path(c: &Config) -> PathBuf {
     c.out.join(".state.json")
 }
@@ -699,13 +757,14 @@ fn store(
 fn collect_once(c: &Config) -> (usize, usize, usize) {
     let mut found = Vec::new();
     let timing = std::env::var_os("RMS_DIALOGS_TIMING").is_some();
-    let sources: [(&str, Discover); 6] = [
+    let sources: [(&str, Discover); 7] = [
         ("claude-code", discover_claude),
         ("codex", discover_codex),
         ("antigravity", discover_antigravity),
         ("opencode", discover_opencode),
         ("cursor", discover_cursor),
         ("zed", discover_zed),
+        ("deepseek-harness", discover_deepseek),
     ];
     for (name, discover) in sources {
         let t = std::time::Instant::now();
@@ -1071,13 +1130,14 @@ fn count_files(dir: &Path) -> usize {
 // Public API used by the `rms-memory dialogs` command and the MCP tools.
 // ---------------------------------------------------------------------------
 
-pub const TOOLS: [&str; 6] = [
+pub const TOOLS: [&str; 7] = [
     "claude-code",
     "codex",
     "antigravity",
     "opencode",
     "cursor",
     "zed",
+    "deepseek-harness",
 ];
 
 pub fn init(cp: &Path, out: Option<PathBuf>, encrypt: bool) -> Result<(), String> {

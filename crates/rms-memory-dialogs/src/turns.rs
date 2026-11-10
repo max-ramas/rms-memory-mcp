@@ -270,6 +270,64 @@ fn zed(data: &[u8]) -> Vec<Turn> {
     out
 }
 
+/// Epoch milliseconds as an RFC 3339 UTC timestamp (no date crate needed).
+fn rfc3339_from_ms(ms: i64) -> String {
+    let secs = ms.div_euclid(1000);
+    let days = secs.div_euclid(86_400);
+    let rem = secs.rem_euclid(86_400);
+    // Howard Hinnant's civil-from-days.
+    let z = days + 719_468;
+    let era = z.div_euclid(146_097);
+    let doe = z.rem_euclid(146_097);
+    let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365;
+    let y = yoe + era * 400;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let d = doy - (153 * mp + 2) / 5 + 1;
+    let m = if mp < 10 { mp + 3 } else { mp - 9 };
+    let y = if m <= 2 { y + 1 } else { y };
+    format!(
+        "{y:04}-{m:02}-{d:02}T{:02}:{:02}:{:02}Z",
+        rem / 3600,
+        rem % 3600 / 60,
+        rem % 60
+    )
+}
+
+/// DeepSeek Harness: ~/.dsh/sessions/**/session.v4.jsonl.zstd, already decompressed to JSONL events.
+/// Only what a person typed (`user/message` with source kind `user`) and the assistant's `text` blocks are kept;
+/// runtime context, skill catalogs, reasoning and tool calls are left out.
+fn deepseek(data: &[u8]) -> Vec<Turn> {
+    let mut out = Vec::new();
+    for v in lines(data) {
+        let ts = v["time"].as_i64().map(rfc3339_from_ms);
+        let d = &v["data"];
+        match v["type"].as_str() {
+            Some("user/message") if d["source"]["kind"].as_str() == Some("user") => {
+                push(
+                    &mut out,
+                    "user",
+                    ts,
+                    &join_text_blocks(&d["content"], "text"),
+                );
+            }
+            Some("assistant/message") => {
+                let text = d["message"]["content"]
+                    .as_array()
+                    .into_iter()
+                    .flatten()
+                    .filter(|b| b["type"].as_str() == Some("text"))
+                    .filter_map(|b| b["text"].as_str())
+                    .collect::<Vec<_>>()
+                    .join("\n");
+                push(&mut out, "assistant", ts, &text);
+            }
+            _ => {}
+        }
+    }
+    out
+}
+
 /// Turns of one archived logical file. `tool` is the archive folder name, `name` the logical file name.
 pub fn extract(tool: &str, name: &str, data: &[u8]) -> Vec<Turn> {
     match tool {
@@ -279,6 +337,7 @@ pub fn extract(tool: &str, name: &str, data: &[u8]) -> Vec<Turn> {
         "opencode" => opencode(data),
         "cursor" => cursor(data),
         "zed" => zed(data),
+        "deepseek-harness" => deepseek(data),
         _ => Vec::new(),
     }
 }
@@ -377,5 +436,31 @@ mod tests {
             ["do it", "done"]
         );
         assert!(antigravity("x.db", b"bin").is_empty());
+    }
+
+    #[test]
+    fn deepseek_keeps_people_and_answers_only() {
+        let d = br#"{"type":"session","id":"s"}
+{"type":"user/message","time":1794276539388,"data":{"source":{"kind":"user"},"content":[{"type":"text","text":"hello"}]}}
+{"type":"user/message","time":1794276539389,"data":{"source":{"kind":"runtime-context"},"content":[{"type":"text","text":"Current runtime context"}]}}
+{"type":"assistant/message","time":1794276540000,"data":{"message":{"content":[{"type":"reasoning","text":"thinking"},{"type":"text","text":"answer"},{"type":"tool_use","name":"bash"}]}}}
+{"type":"tool/result","data":{}}
+"#;
+        let t = deepseek(d);
+        assert_eq!(
+            t.iter()
+                .map(|x| (x.role, x.text.as_str()))
+                .collect::<Vec<_>>(),
+            [("user", "hello"), ("assistant", "answer")]
+        );
+        assert_eq!(t[0].ts.as_deref(), Some("2026-11-10T02:08:59Z"));
+        assert!(extract("deepseek-harness", "s.jsonl", d).len() == 2);
+    }
+
+    #[test]
+    fn rfc3339_handles_epoch_and_leap_days() {
+        assert_eq!(rfc3339_from_ms(0), "1970-01-01T00:00:00Z");
+        assert_eq!(rfc3339_from_ms(951_782_400_000), "2000-02-29T00:00:00Z");
+        assert_eq!(rfc3339_from_ms(1_709_164_800_000), "2024-02-29T00:00:00Z");
     }
 }

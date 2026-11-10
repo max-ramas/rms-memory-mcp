@@ -574,6 +574,9 @@ Live MCP requests have been verified for `rms_search(corpus=vault|code|all)` and
 | Codex | ✅ | — |
 | VS Code | ✅ | — |
 | Antigravity | ✅ | — |
+| DeepSeek Harness | ✅ | project `AGENTS.md` |
+
+**DeepSeek Harness.** `rms-memory install` registers the server in its desktop profile (`~/.dsh/profiles/desktop/cordis.patch.yml`, the `@deepseek-ai/dsh-mcp-client` entry) and `rms-memory uninstall` removes it again; restart the app and the tools appear as `mcp__rms-memory__*`. The agent's `bash` tool runs in a `workspace-write` sandbox where `~/.rms-memory` is not writable, so the agent has to write memory through the RMS Memory tools (`rms_write`, ...) and never by calling the `rms-memory` CLI from a shell. The injected `AGENTS.md` rules say exactly that. `rms-memory dialogs` can also archive and search its sessions (`~/.dsh/sessions`).
 
 ## 📄 License
 
